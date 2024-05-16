@@ -2,6 +2,8 @@ use crate::bytetrie::{BytesTrieMap, ByteTrieNode, ShortTrieMap, CoFree};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::{mem, ptr};
+use std::arch::x86_64::{__m256i, _mm256_and_si256, _mm256_extract_epi64, _mm256_or_si256};
+use ethnum::u256;
 
 pub trait Lattice: Sized {
     fn join(&self, other: &Self) -> Self;
@@ -207,23 +209,64 @@ impl <K : Copy + Eq + Hash, V : Copy + Lattice> Lattice for HashMap<K, V> {
         HashMap::new()
     }
 }
+pub trait u64s {
+    fn u64s(&self) -> &[u64; 4];
+    fn u64(&self, i: u8) -> u64;
+    fn i64s(&self) -> &[i64; 4];
+    fn u64s_mut(&mut self) -> &mut [u64; 4];
+}
+impl u64s for u256 {
+    #[inline]
+    fn u64s(&self) -> &[u64; 4] {
+        unsafe { &*(self.0.as_ptr() as *const [u64; 4]) }
+    }
 
+    fn u64(&self, i: u8) -> u64 {
+        self.u64s()[i as usize]
+    }
 
+    fn i64s(&self) -> &[i64; 4] {
+        unsafe { &*(self.0.as_ptr() as *const [i64; 4]) }
+    }
+
+    #[inline]
+    fn u64s_mut(&mut self) -> &mut [u64; 4] {
+        unsafe { &mut *(self.0.as_mut_ptr() as *mut [u64; 4]) }
+    }
+}
+impl u64s for __m256i {
+    #[inline]
+    fn u64s(&self) -> &[u64; 4] {
+        // unsafe { &*(ptr::from_ref(self) as *const [u64; 4]) }
+        todo!()
+    }
+
+    fn u64(&self, i: u8) -> u64 {
+        match i {
+            0 => { unsafe { _mm256_extract_epi64::<0>(*self) as u64 } }
+            1 => { unsafe { _mm256_extract_epi64::<1>(*self) as u64 } }
+            2 => { unsafe { _mm256_extract_epi64::<2>(*self) as u64 } }
+            3 => { unsafe { _mm256_extract_epi64::<3>(*self) as u64 } }
+            _ => { unreachable!() }
+        }
+    }
+
+    fn i64s(&self) -> &[i64; 4] {
+        unsafe { &*(ptr::from_ref(self) as *const [i64; 4]) }
+    }
+
+    #[inline]
+    fn u64s_mut(&mut self) -> &mut [u64; 4] {
+        unsafe { &mut *(ptr::from_ref(self) as *mut [u64; 4]) }
+    }
+}
 impl<V : Copy + Lattice> Lattice for ByteTrieNode<V> {
     // #[inline(never)]
     fn join(&self, other: &Self) -> Self {
-        let jm: [u64; 4] = [self.mask[0] | other.mask[0],
-            self.mask[1] | other.mask[1],
-            self.mask[2] | other.mask[2],
-            self.mask[3] | other.mask[3]];
-        let mm: [u64; 4] = [self.mask[0] & other.mask[0],
-            self.mask[1] & other.mask[1],
-            self.mask[2] & other.mask[2],
-            self.mask[3] & other.mask[3]];
+        let jm: __m256i = unsafe { _mm256_or_si256(self.mask, other.mask) };
+        let mm: __m256i = unsafe { _mm256_and_si256(self.mask, other.mask) };
 
-        let jmc = [jm[0].count_ones(), jm[1].count_ones(), jm[2].count_ones(), jm[3].count_ones()];
-
-        let l = (jmc[0] + jmc[1] + jmc[2] + jmc[3]) as usize;
+        let l = unsafe { ByteTrieNode::<V>::ones(jm) };
         let mut v = Vec::with_capacity(l);
         unsafe { v.set_len(l) }
 
@@ -232,12 +275,12 @@ impl<V : Copy + Lattice> Lattice for ByteTrieNode<V> {
         let mut c = 0;
 
         for i in 0..4 {
-            let mut lm = jm[i];
+            let mut lm = jm.u64(i as u8);
             while lm != 0 {
                 // this body runs at most 256 times, in the case there is 100% overlap between full nodes
                 let index = lm.trailing_zeros();
                 // println!("{}", index);
-                if ((1u64 << index) & mm[i]) != 0 {
+                if ((1u64 << index) & mm.u64(i as u8)) != 0 {
                     let lv = unsafe { self.values.get_unchecked(l) };
                     let rv = unsafe { other.values.get_unchecked(r) };
                     let jv = lv.join(rv);
@@ -245,7 +288,7 @@ impl<V : Copy + Lattice> Lattice for ByteTrieNode<V> {
                     unsafe { *v.get_unchecked_mut(c) = jv; }
                     l += 1;
                     r += 1;
-                } else if ((1u64 << index) & self.mask[i]) != 0 {
+                } else if ((1u64 << index) & self.mask.u64(i as u8)) != 0 {
                     let lv = unsafe { self.values.get_unchecked(l) };
                     // println!("pushing lv {:?}", lv);
                     unsafe { *v.get_unchecked_mut(c) = lv.clone(); }
@@ -268,18 +311,10 @@ impl<V : Copy + Lattice> Lattice for ByteTrieNode<V> {
         // TODO this technically doesn't need to calculate and iterate over jm
         // iterating over mm and calculating m such that the following suffices
         // c_{self,other} += popcnt(m & {self,other})
-        let jm: [u64; 4] = [self.mask[0] | other.mask[0],
-            self.mask[1] | other.mask[1],
-            self.mask[2] | other.mask[2],
-            self.mask[3] | other.mask[3]];
-        let mm: [u64; 4] = [self.mask[0] & other.mask[0],
-            self.mask[1] & other.mask[1],
-            self.mask[2] & other.mask[2],
-            self.mask[3] & other.mask[3]];
+        let jm: __m256i = unsafe { _mm256_or_si256(self.mask, other.mask) };
+        let mm: __m256i = unsafe { _mm256_and_si256(self.mask, other.mask) };
 
-        let mmc = [mm[0].count_ones(), mm[1].count_ones(), mm[2].count_ones(), mm[3].count_ones()];
-
-        let l = (mmc[0] + mmc[1] + mmc[2] + mmc[3]) as usize;
+        let l = unsafe { ByteTrieNode::<V>::ones(mm) } as usize;
         let mut v = Vec::with_capacity(l);
         unsafe { v.set_len(l) }
 
@@ -288,11 +323,11 @@ impl<V : Copy + Lattice> Lattice for ByteTrieNode<V> {
         let mut c = 0;
 
         for i in 0..4 {
-            let mut lm = jm[i];
+            let mut lm = jm.u64(i as u8);
             while lm != 0 {
                 let index = lm.trailing_zeros();
 
-                if ((1u64 << index) & mm[i]) != 0 {
+                if ((1u64 << index) & mm.u64(i as u8)) != 0 {
                     let lv = unsafe { self.values.get_unchecked(l) };
                     let rv = unsafe { other.values.get_unchecked(r) };
                     let jv = lv.meet(rv);
@@ -300,7 +335,7 @@ impl<V : Copy + Lattice> Lattice for ByteTrieNode<V> {
                     l += 1;
                     r += 1;
                     c += 1;
-                } else if ((1u64 << index) & self.mask[i]) != 0 {
+                } else if ((1u64 << index) & self.mask.u64(i as u8)) != 0 {
                     l += 1;
                 } else {
                     r += 1;
@@ -316,39 +351,39 @@ impl<V : Copy + Lattice> Lattice for ByteTrieNode<V> {
         ByteTrieNode::new()
     }
 
-    fn join_all(xs: Vec<&Self>) -> Self {
-        let mut jm: [u64; 4] = [0, 0, 0, 0];
-        for x in xs.iter() {
-            jm[0] |= x.mask[0];
-            jm[1] |= x.mask[1];
-            jm[2] |= x.mask[2];
-            jm[3] |= x.mask[3];
-        }
-
-        let jmc = [jm[0].count_ones(), jm[1].count_ones(), jm[2].count_ones(), jm[3].count_ones()];
-
-        let l = (jmc[0] + jmc[1] + jmc[2] + jmc[3]) as usize;
-        let mut v = Vec::with_capacity(l);
-        unsafe { v.set_len(l) }
-
-        let mut c = 0;
-
-        for i in 0..4 {
-            let mut lm = jm[i];
-            while lm != 0 {
-                // this body runs at most 256 times, in the case there is 100% overlap between full nodes
-                let index = lm.trailing_zeros();
-
-                let to_join: Vec<&V> = xs.iter().enumerate().filter_map(|(i, x)| x.get(i as u8)).collect();
-                unsafe { *v.get_unchecked_mut(c) = Lattice::join_all(to_join); }
-
-                lm ^= 1u64 << index;
-                c += 1;
-            }
-        }
-
-        return ByteTrieNode::<V>{ mask: jm, values: v };
-    }
+    // fn join_all(xs: Vec<&Self>) -> Self {
+    //     let mut jm: [u64; 4] = [0, 0, 0, 0];
+    //     for x in xs.iter() {
+    //         jm[0] |= x.mask[0];
+    //         jm[1] |= x.mask[1];
+    //         jm[2] |= x.mask[2];
+    //         jm[3] |= x.mask[3];
+    //     }
+    //
+    //     let jmc = [jm[0].count_ones(), jm[1].count_ones(), jm[2].count_ones(), jm[3].count_ones()];
+    //
+    //     let l = (jmc[0] + jmc[1] + jmc[2] + jmc[3]) as usize;
+    //     let mut v = Vec::with_capacity(l);
+    //     unsafe { v.set_len(l) }
+    //
+    //     let mut c = 0;
+    //
+    //     for i in 0..4 {
+    //         let mut lm = jm[i];
+    //         while lm != 0 {
+    //             // this body runs at most 256 times, in the case there is 100% overlap between full nodes
+    //             let index = lm.trailing_zeros();
+    //
+    //             let to_join: Vec<&V> = xs.iter().enumerate().filter_map(|(i, x)| x.get(i as u8)).collect();
+    //             unsafe { *v.get_unchecked_mut(c) = Lattice::join_all(to_join); }
+    //
+    //             lm ^= 1u64 << index;
+    //             c += 1;
+    //         }
+    //     }
+    //
+    //     return ByteTrieNode::<V>{ mask: jm, values: v };
+    // }
 }
 
 impl <V : Copy + PartialDistributiveLattice> DistributiveLattice for ByteTrieNode<V> {
@@ -356,11 +391,11 @@ impl <V : Copy + PartialDistributiveLattice> DistributiveLattice for ByteTrieNod
         let mut btn = self.clone();
 
         for i in 0..4 {
-            let mut lm = self.mask[i];
+            let mut lm = self.mask.u64(i);
             while lm != 0 {
                 let index = lm.trailing_zeros();
 
-                if ((1u64 << index) & other.mask[i]) != 0 {
+                if ((1u64 << index) & other.mask.u64(i)) != 0 {
                     let lv = unsafe { self.get_unchecked(64*(i as u8)) };
                     let rv = unsafe { other.get_unchecked(64*(i as u8) + (index as u8)) };
                     match lv.psubtract(rv) {
