@@ -9,6 +9,11 @@ edition = "2021"
 #ahash = "0.8.11"
 #hashbrown = "0.14.3"
 #roaring = "0.10.3"
+mimalloc = "0.1.41"
+#tikv-jemallocator = "0.5.4"
+rayon = "1.10.0"
+memmap = "0.7.0"
+libc = "0.2.153"
 
 [build]
-rustflags = "-C opt-level=3 -C target-cpu=native"
+rustflags = "-C link-args=-Wl,-zstack-size=16 -C opt-level=3 -C target-cpu=native -C lto=fat -C target-feature=+avx2,+avx,+sse2,+avx512f,+avx512bw,+avx512vl"
