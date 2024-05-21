@@ -1,4 +1,4 @@
-use crate::bytetrie::{CoFree, ByteTrieNodePtr, load_mask, store_new, load_values, store, store_prepared};
+use crate::bytetrie::*;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::{mem, ptr};
@@ -226,59 +226,111 @@ impl<V : Copy + Lattice> Lattice for ByteTrieNodePtr<V> {
     fn join(&self, other: &Self) -> Self {
         if self.index == 0 { return *other }
         if other.index == 0 { return *self }
-        let sm = unsafe { *load_mask(*self) };
-        let sv = load_values(*self);
-        let om = unsafe { *load_mask(*other) };
-        let ov = load_values(*other);
-        let jm: [u64; 4] = [sm[0] | om[0],
-            sm[1] | om[1],
-            sm[2] | om[2],
-            sm[3] | om[3]];
-        let mm: [u64; 4] = [sm[0] & om[0],
-            sm[1] & om[1],
-            sm[2] & om[2],
-            sm[3] & om[3]];
-
+        let srm = unsafe { *load_rmask(*self) };
+        let svm = unsafe { *load_vmask(*self) };
+        let srv = load_rvalues(*self);
+        let svv = load_vvalues(*self);
+        let orm = unsafe { *load_rmask(*other) };
+        let ovm = unsafe { *load_vmask(*other) };
+        let orv = load_rvalues(*other);
+        let ovv = load_vvalues(*other);
+        let jrm: [u64; 4] = [srm[0] | orm[0],
+            srm[1] | orm[1],
+            srm[2] | orm[2],
+            srm[3] | orm[3]];
+        let jvm: [u64; 4] = [svm[0] | ovm[0],
+            svm[1] | ovm[1],
+            svm[2] | ovm[2],
+            svm[3] | ovm[3]];
+        let mrm: [u64; 4] = [srm[0] & orm[0],
+            srm[1] & orm[1],
+            srm[2] & orm[2],
+            srm[3] & orm[3]];
+        let mvm: [u64; 4] = [svm[0] & ovm[0],
+            svm[1] & ovm[1],
+            svm[2] & ovm[2],
+            svm[3] & ovm[3]];
         // let jmc = [jm[0].count_ones(), jm[1].count_ones(), jm[2].count_ones(), jm[3].count_ones()];
 
         // let l = (jmc[0] + jmc[1] + jmc[2] + jmc[3]) as usize;
-        let res = store_prepared(jm);
+        let res = store_prepared(jrm, jvm);
 
-        let mut v: *mut V = load_values(res);
+        let mut rv: *mut ByteTrieNodePtr<V> = load_rvalues(res);
+        let mut vv: *mut V = load_vvalues(res);
 
-        let mut l = 0;
-        let mut r = 0;
-        let mut c = 0;
+        {
+            let mut l = 0;
+            let mut r = 0;
+            let mut c = 0;
 
-        for i in 0..4 {
-            let mut lm = jm[i];
-            debug_assert!(c < 256);
-            while lm != 0 {
-                // this body runs at most 256 times, in the case there is 100% overlap between full nodes
-                let index = lm.trailing_zeros();
-                // println!("{}", index);
-                if ((1u64 << index) & mm[i]) != 0 {
-                    let lv = unsafe { &*sv.offset(l) };
-                    let rv = unsafe { &*ov.offset(r) };
-                    let jv = lv.join(rv);
-                    // println!("pushing lv rv j {:?} {:?} {:?}", lv, rv, jv);
-                    unsafe { *v.offset(c) = jv; }
-                    l += 1;
-                    r += 1;
+            for i in 0..4 {
+                let mut lm = jrm[i];
+                debug_assert!(c < 256);
+                while lm != 0 {
+                    // this body runs at most 256 times, in the case there is 100% overlap between full nodes
+                    let index = lm.trailing_zeros();
+                    // println!("{}", index);
+                    if ((1u64 << index) & mrm[i]) != 0 {
+                        let left_v = unsafe { ptr::read(srv.offset(l)) };
+                        let right_v = unsafe { ptr::read(orv.offset(r)) };
+                        let joined_v = left_v.join(&right_v);
+                        // println!("pushing lv rv j {:?} {:?} {:?}", lv, rv, jv);
+                        unsafe { ptr::write(rv.offset(c), joined_v); }
+                        l += 1;
+                        r += 1;
+                    }
+                    else if ((1u64 << index) & srm[i]) != 0 {
+                        let left_v = unsafe { ptr::read(srv.offset(l)) };
+                        // println!("pushing lv {:?}", lv);
+                        unsafe { ptr::write(rv.offset(c), left_v); }
+                        l += 1;
+                    } else {
+                        let right_v = unsafe { ptr::read(orv.offset(r)) };
+                        // println!("pushing rv {:?}", rv);
+                        unsafe { ptr::write(rv.offset(c),  right_v) };
+                        r += 1;
+                    }
+                    lm ^= 1u64 << index;
+                    c += 1;
                 }
-                else if ((1u64 << index) & sm[i]) != 0 {
-                    let lv = unsafe { &*sv.offset(l) };
-                    // println!("pushing lv {:?}", lv);
-                    unsafe { *v.offset(c) = lv.clone(); }
-                    l += 1;
-                } else {
-                    let rv = unsafe { &*ov.offset(r) };
-                    // println!("pushing rv {:?}", rv);
-                    unsafe { *v.offset(c) = rv.clone() };
-                    r += 1;
+            }
+        }
+
+        {
+            let mut l = 0;
+            let mut r = 0;
+            let mut c = 0;
+
+            for i in 0..4 {
+                let mut lm = jvm[i];
+                debug_assert!(c < 256);
+                while lm != 0 {
+                    // this body runs at most 256 times, in the case there is 100% overlap between full nodes
+                    let index = lm.trailing_zeros();
+                    // println!("{}", index);
+                    if ((1u64 << index) & mvm[i]) != 0 {
+                        let left_v = unsafe { ptr::read(svv.offset(l)) };
+                        let right_v = unsafe { ptr::read(ovv.offset(r)) };
+                        let joined_v = left_v.join(&right_v);
+                        // println!("pushing lv rv j {:?} {:?} {:?}", lv, rv, jv);
+                        unsafe { ptr::write(vv.offset(c), joined_v); }
+                        l += 1;
+                        r += 1;
+                    }
+                    else if ((1u64 << index) & svm[i]) != 0 {
+                        let left_v = unsafe { ptr::read(svv.offset(l)) };
+                        // println!("pushing lv {:?}", lv);
+                        unsafe { ptr::write(vv.offset(c), left_v); }
+                        l += 1;
+                    } else {
+                        let right_v = unsafe { ptr::read(ovv.offset(r)) };
+                        // println!("pushing rv {:?}", rv);
+                        unsafe { ptr::write(vv.offset(c), right_v) };
+                        r += 1;
+                    }
+                    lm ^= 1u64 << index;
+                    c += 1;
                 }
-                lm ^= 1u64 << index;
-                c += 1;
             }
         }
 
@@ -286,61 +338,62 @@ impl<V : Copy + Lattice> Lattice for ByteTrieNodePtr<V> {
     }
 
     fn meet(&self, other: &Self) -> Self {
-        if self.index == 0 { return ByteTrieNodePtr::null() }
-        if other.index == 0 { return ByteTrieNodePtr::null() }
-        // TODO this technically doesn't need to calculate and iterate over jm
-        // iterating over mm and calculating m such that the following suffices
-        // c_{self,other} += popcnt(m & {self,other})
-        let sm = unsafe { *load_mask(*self) };
-        let sv = load_values(*self);
-        let om = unsafe { *load_mask(*other) };
-        let ov = load_values(*other);
-        let jm: [u64; 4] = [sm[0] | om[0],
-            sm[1] | om[1],
-            sm[2] | om[2],
-            sm[3] | om[3]];
-        let mm: [u64; 4] = [sm[0] & om[0],
-            sm[1] & om[1],
-            sm[2] & om[2],
-            sm[3] & om[3]];
-
-        // let mmc = [mm[0].count_ones(), mm[1].count_ones(), mm[2].count_ones(), mm[3].count_ones()];
-
-        // let l = (mmc[0] + mmc[1] + mmc[2] + mmc[3]) as usize;
-        // let mut v = Vec::with_capacity(l);
-        // unsafe { v.set_len(l) }
-
-        let res = store_prepared(mm);
-        let mut v: *mut V = load_values(res);
-
-
-        let mut l = 0;
-        let mut r = 0;
-        let mut c = 0;
-
-        for i in 0..4 {
-            let mut lm = jm[i];
-            while lm != 0 {
-                let index = lm.trailing_zeros();
-
-                if ((1u64 << index) & mm[i]) != 0 {
-                    let lv = unsafe { &*sv.offset(l) };
-                    let rv = unsafe { &*ov.offset(r) };
-                    let jv = lv.meet(rv);
-                    unsafe { *v.offset(c) = jv; }
-                    l += 1;
-                    r += 1;
-                    c += 1;
-                } else if ((1u64 << index) & sm[i]) != 0 {
-                    l += 1;
-                } else {
-                    r += 1;
-                }
-                lm ^= 1u64 << index;
-            }
-        }
-
-        return res;
+        todo!()
+        // if self.index == 0 { return ByteTrieNodePtr::null() }
+        // if other.index == 0 { return ByteTrieNodePtr::null() }
+        // // TODO this technically doesn't need to calculate and iterate over jm
+        // // iterating over mm and calculating m such that the following suffices
+        // // c_{self,other} += popcnt(m & {self,other})
+        // let sm = unsafe { *load_mask(*self) };
+        // let sv = load_values(*self);
+        // let om = unsafe { *load_mask(*other) };
+        // let ov = load_values(*other);
+        // let jm: [u64; 4] = [sm[0] | om[0],
+        //     sm[1] | om[1],
+        //     sm[2] | om[2],
+        //     sm[3] | om[3]];
+        // let mm: [u64; 4] = [sm[0] & om[0],
+        //     sm[1] & om[1],
+        //     sm[2] & om[2],
+        //     sm[3] & om[3]];
+        //
+        // // let mmc = [mm[0].count_ones(), mm[1].count_ones(), mm[2].count_ones(), mm[3].count_ones()];
+        //
+        // // let l = (mmc[0] + mmc[1] + mmc[2] + mmc[3]) as usize;
+        // // let mut v = Vec::with_capacity(l);
+        // // unsafe { v.set_len(l) }
+        //
+        // let res = store_prepared(mm);
+        // let mut v: *mut V = load_values(res);
+        //
+        //
+        // let mut l = 0;
+        // let mut r = 0;
+        // let mut c = 0;
+        //
+        // for i in 0..4 {
+        //     let mut lm = jm[i];
+        //     while lm != 0 {
+        //         let index = lm.trailing_zeros();
+        //
+        //         if ((1u64 << index) & mm[i]) != 0 {
+        //             let lv = unsafe { &*sv.offset(l) };
+        //             let rv = unsafe { &*ov.offset(r) };
+        //             let jv = lv.meet(rv);
+        //             unsafe { *v.offset(c) = jv; }
+        //             l += 1;
+        //             r += 1;
+        //             c += 1;
+        //         } else if ((1u64 << index) & sm[i]) != 0 {
+        //             l += 1;
+        //         } else {
+        //             r += 1;
+        //         }
+        //         lm ^= 1u64 << index;
+        //     }
+        // }
+        //
+        // return res;
     }
 
     fn bottom() -> Self {

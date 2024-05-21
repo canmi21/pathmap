@@ -14,12 +14,15 @@ use libc::exit;
 impl <V : Debug> Debug for ByteTrieNodePtr<V> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         unsafe {
-        let m = &*load_mask(*self);
+        let rm = &*load_rmask(*self);
+        let vm = &*load_vmask(*self);
         // let l = Utils::len(m);
         write!(f,
-               "Node(mask: {:b} {:b} {:b} {:b}, values: {:?}) @ {}-{}",
-               m[0], m[1], m[2], m[3],
-               load_values(*self),
+               "Node(rmask: {:b} {:b} {:b} {:b}, rmask: {:b} {:b} {:b} {:b}, rvalues: {:?}, vvalues: {:?}) @ {}-{}",
+               rm[0], rm[1], rm[2], rm[3],
+               vm[0], vm[1], vm[2], vm[3],
+               load_rvalues(*self),
+               load_vvalues(*self),
                self.thread, self.index)
         }
     }
@@ -27,54 +30,58 @@ impl <V : Debug> Debug for ByteTrieNodePtr<V> {
 
 pub struct BytesTrieMapIter<'a, V> {
     prefix: Vec<u8>,
-    btnis: Vec<ByteTrieNodeIter<'a, CoFree<V>>>,
+    rtrace: Vec<ByteTrieNodeIter<'a, ByteTrieNodePtr<V>>>,
+    vtrace: Vec<ByteTrieNodeIter<'a, V>>,
 }
 
 impl <'a, V> BytesTrieMapIter<'a, V> {
-    fn new(btm: ByteTrieNodePtr<CoFree<V>>) -> Self {
+    fn new(btm: ByteTrieNodePtr<V>) -> Self {
+        unsafe {
         Self {
             prefix: vec![],
-            btnis: vec![ByteTrieNodeIter::new(btm)],
+            rtrace: vec![ByteTrieNodeIter::new(&*load_rmask(btm), load_rvalues(btm))],
+            vtrace: vec![ByteTrieNodeIter::new(&*load_vmask(btm), load_vvalues(btm))],
+        }
         }
     }
 }
 
-impl <'a, V : Clone + 'a> Iterator for BytesTrieMapIter<'a, V> {
-    type Item = (Vec<u8>, &'a V);
-
-    fn next(&mut self) -> Option<(Vec<u8>, &'a V)> {
-        loop {
-            match self.btnis.last_mut() {
-                None => { return None }
-                Some(mut last) => {
-                    let n: Option<(u8, &'a CoFree<V>)> = last.next();
-                    match n {
-                        None => {
-                            self.prefix.pop();
-                            self.btnis.pop();
-                        }
-                        Some((b, cf)) => {
-                            let mut k = self.prefix.clone();
-                            k.push(b);
-
-                            if cf.rec.index != 0 {
-                                self.prefix = k.clone();
-                                self.btnis.push(ByteTrieNodeIter::new(cf.rec));
-                            }
-
-                            match cf.value.as_ref() {
-                                None => {}
-                                Some(v) => {
-                                    return Some((k, v))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+// impl <'a, V : Clone + 'a> Iterator for BytesTrieMapIter<'a, V> {
+//     type Item = (Vec<u8>, &'a V);
+//
+//     fn next(&mut self) -> Option<(Vec<u8>, &'a V)> {
+//         loop {
+//             match self.btnis.last_mut() {
+//                 None => { return None }
+//                 Some(mut last) => {
+//                     let n: Option<(u8, &'a V)> = last.next();
+//                     match n {
+//                         None => {
+//                             self.prefix.pop();
+//                             self.btnis.pop();
+//                         }
+//                         Some((b, cf)) => {
+//                             let mut k = self.prefix.clone();
+//                             k.push(b);
+//
+//                             if cf.rec.index != 0 {
+//                                 self.prefix = k.clone();
+//                                 self.btnis.push(ByteTrieNodeIter::new(cf.rec));
+//                             }
+//
+//                             match cf.value.as_ref() {
+//                                 None => {}
+//                                 Some(v) => {
+//                                     return Some((k, v))
+//                                 }
+//                             }
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone, Copy)]
 pub struct CoFree<V> {
@@ -189,19 +196,23 @@ pub fn mmap_ptr(id: u8, cnt: u32) -> *mut u8 {
     unsafe { MMAP.offset((((id as isize) << 32) | (cnt as isize)) << 12) }
 }
 
-pub fn store_prepared<T>(mask: [u64; 4]) -> ByteTrieNodePtr<T> {
+pub fn store_prepared<T>(rmask: [u64; 4], vmask: [u64; 4]) -> ByteTrieNodePtr<T> {
     unsafe {
         let mut thread = 0;
         let mut i = 0;
-        let l = Utils::len(&mask);
+        let l = Utils::len(&rmask);
 
         ID_CNT.with(|mut R| {
             let (id, CNT) = unsafe { *R.get() };
             let mut MEM: *mut u64 = mmap_ptr(id, CNT) as *mut u64;
-            MEM.write(mask[0]);
-            MEM.offset(1).write(mask[1]);
-            MEM.offset(2).write(mask[2]);
-            MEM.offset(3).write(mask[3]);
+            MEM.write(rmask[0]);
+            MEM.offset(1).write(rmask[1]);
+            MEM.offset(2).write(rmask[2]);
+            MEM.offset(3).write(rmask[3]);
+            MEM.offset(4).write(vmask[0]);
+            MEM.offset(5).write(vmask[1]);
+            MEM.offset(6).write(vmask[2]);
+            MEM.offset(7).write(vmask[3]);
             thread = id;
             i = CNT as u32;
             *R.get() = (id, CNT + 2);
@@ -210,32 +221,38 @@ pub fn store_prepared<T>(mask: [u64; 4]) -> ByteTrieNodePtr<T> {
     }
 }
 
-pub fn store<T>(mask: [u64; 4], values: *mut T) -> ByteTrieNodePtr<T> {
+pub fn store<T>(rmask: [u64; 4], rvalues: *mut ByteTrieNodePtr<T>, vmask: [u64; 4], vvalues: *mut T) -> ByteTrieNodePtr<T> {
     unsafe {
         let mut thread = 0;
         let mut i = 0;
-        let l = Utils::len(&mask);
-        let s = (l*mem::size_of::<T>()/8) as u32;
+        let rl = Utils::len(&rmask);
+        let vl = Utils::len(&vmask);
 
         ID_CNT.with(|mut R| {
             let (id, CNT) = unsafe { *R.get() };
             let mut MEM: *mut u64 = mmap_ptr(id, CNT) as *mut u64;
-            MEM.write(mask[0]);
-            MEM.offset(1).write(mask[1]);
-            MEM.offset(2).write(mask[2]);
-            MEM.offset(3).write(mask[3]);
-            ptr::copy_nonoverlapping::<u64>(values as *mut u64, MEM.offset(4), s as usize);
+            MEM.write(rmask[0]);
+            MEM.offset(1).write(rmask[1]);
+            MEM.offset(2).write(rmask[2]);
+            MEM.offset(3).write(rmask[3]);
+            MEM.offset(4).write(vmask[0]);
+            MEM.offset(5).write(vmask[1]);
+            MEM.offset(6).write(vmask[2]);
+            MEM.offset(7).write(vmask[3]);
+            debug_assert_eq!(mem::size_of::<ByteTrieNodePtr<T>>(), mem::size_of::<u64>());
+            ptr::copy_nonoverlapping::<u64>(rvalues as *mut u64, MEM.offset(8), rl);
+            ptr::copy_nonoverlapping::<T>(vvalues, MEM.offset(8 + 256) as *mut T, vl);
             thread = id;
             i = CNT as u32;
             *R.get() = (id, CNT + 2);
         });
         // CNT += 4 + s as isize;
         // CNT += 4 + 256*(mem::size_of::<T>()/8) as isize;
-        return ByteTrieNodePtr{ thread: thread, size: l as u8, index: i, pd: PhantomData::default() };
+        return ByteTrieNodePtr{ thread: thread, size: rl as u8, index: i, pd: PhantomData::default() };
     }
 }
 
-pub fn load_mask<T>(node: ByteTrieNodePtr<T>) -> *mut [u64; 4] {
+pub fn load_rmask<T>(node: ByteTrieNodePtr<T>) -> *mut [u64; 4] {
     unsafe {
         ID_CNT.with(|mut R| {
             let (id, _) = unsafe { *R.get() };
@@ -244,17 +261,34 @@ pub fn load_mask<T>(node: ByteTrieNodePtr<T>) -> *mut [u64; 4] {
     }
 }
 
-pub fn load_values<T>(node: ByteTrieNodePtr<T>) -> *mut T {
+pub fn load_vmask<T>(node: ByteTrieNodePtr<T>) -> *mut [u64; 4] {
     unsafe {
         ID_CNT.with(|mut R| {
             let (id, _) = unsafe { *R.get() };
-            mmap_ptr(id, node.index).byte_offset(32) as *mut T
+            mmap_ptr(id, node.index).byte_offset(32) as *mut [u64; 4]
         })
     }
 }
 
+pub fn load_rvalues<T>(node: ByteTrieNodePtr<T>) -> *mut ByteTrieNodePtr<T> {
+    unsafe {
+        ID_CNT.with(|mut R| {
+            let (id, _) = unsafe { *R.get() };
+            mmap_ptr(id, node.index).byte_offset(64) as *mut ByteTrieNodePtr<T>
+        })
+    }
+}
 
-impl <V : Clone + Debug> ByteTrieNodePtr<CoFree<V>> {
+pub fn load_vvalues<T>(node: ByteTrieNodePtr<T>) -> *mut T {
+    unsafe {
+        ID_CNT.with(|mut R| {
+            let (id, _) = unsafe { *R.get() };
+            mmap_ptr(id, node.index).byte_offset(64 + 8*256) as *mut T
+        })
+    }
+}
+
+impl <V : Clone + Debug> ByteTrieNodePtr<V> {
     pub fn new() -> Self {
         store_new()
     }
@@ -283,9 +317,9 @@ impl <V : Clone + Debug> ByteTrieNodePtr<CoFree<V>> {
     //     }
     // }
 
-    pub fn items<'a>(&'a self) -> impl Iterator<Item=(Vec<u8>, &'a V)> + 'a {
-        BytesTrieMapIter::new(*self)
-    }
+    // pub fn items<'a>(&'a self) -> impl Iterator<Item=(Vec<u8>, &'a V)> + 'a {
+    //     BytesTrieMapIter::new(*self)
+    // }
 
     pub fn contains(self, k: &[u8]) -> bool {
         self.get(k).is_some()
@@ -300,36 +334,24 @@ impl <V : Clone + Debug> ByteTrieNodePtr<CoFree<V>> {
             if k.len() > 1 {
                 for i in 0..k.len() - 1 {
                     // println!("at key {i} {}", k[i]);
-                    let cf = &mut *Utils::update(&mut *load_mask(node), load_values(node), k[i], || CoFree { rec: ByteTrieNodePtr::null(), value: None });
+                    let cf = &mut *Utils::update(&mut *load_rmask(node), load_rvalues(node), k[i], ByteTrieNodePtr::null);
 
-                    node = if cf.rec.index != 0 { cf.rec } else {
+                    node = if cf.index != 0 { *cf } else {
                         let ptr = store_new();
                         // println!("created new {} {:?}", ptr.index, ptr);
-                        cf.rec = ptr;
+                        *cf = ptr;
                         ptr
                     }
                 }
             }
 
             let lk = k[k.len() - 1];
-            let m = &mut *load_mask(node);
-            let vs = load_values(node);
-            match Utils::get(m, vs, lk) {
-                Some(cf) => {
-                    match (*cf).value {
-                        None => {
-                            (*cf).value = Some(v);
-                            false
-                        }
-                        Some(_) => {
-                            true
-                        }
-                    }
-                }
-                None => {
-                    let cf = CoFree { rec: ByteTrieNodePtr::null(), value: Some(v) };
-                    Utils::insert(m, vs, lk, cf)
-                }
+            let m = &mut *load_vmask(node);
+            let vs = load_vvalues(node);
+            if Utils::contains(m, lk) {
+                true
+            } else {
+                Utils::insert(m, vs, lk, v)
             }
         }
     }
@@ -363,12 +385,12 @@ impl <V : Clone + Debug> ByteTrieNodePtr<CoFree<V>> {
             if k.len() > 1 {
                 for i in 0..k.len() - 1 {
                     unsafe {
-                        let cf = &mut *Utils::update(&mut *load_mask(node), load_values(node), k[i], || CoFree { rec: ByteTrieNodePtr::null(), value: None });
+                        let cf = &mut *Utils::update(&mut *load_rmask(node), load_rvalues(node), k[i], ByteTrieNodePtr::null);
 
-                        node = if cf.rec.index != 0 { cf.rec } else {
+                        node = if cf.index != 0 { *cf } else {
                             let ptr = store_new();
                             // println!("created new {} {:?}", ptr.index, ptr);
-                            cf.rec = ptr;
+                            *cf = ptr;
                             ptr
                         }
                     }
@@ -376,8 +398,7 @@ impl <V : Clone + Debug> ByteTrieNodePtr<CoFree<V>> {
             }
 
             let lk = k[k.len() - 1];
-            let cf = Utils::update(&mut *load_mask(node), load_values(node), lk, || CoFree { rec: ByteTrieNodePtr::null(), value: None }).as_mut().unwrap();
-            cf.value.get_or_insert_with(default)
+            &mut *Utils::update(&mut *load_vmask(node), load_vvalues(node), lk, default)
             }
         }
 
@@ -387,22 +408,19 @@ impl <V : Clone + Debug> ByteTrieNodePtr<CoFree<V>> {
 
             if k.len() > 1 {
                 for i in 0..k.len() - 1 {
-                    match Utils::get(&*load_mask(node), load_values(node), k[i]) {
+                    match Utils::get(&*load_rmask(node), load_rvalues(node), k[i]) {
                         Some(cf) => {
-                            if (*cf).rec.index != 0 { node = (*cf).rec } else { return None }
+                            if (&*cf).index != 0 { node = *cf } else { return None }
                         }
                         None => { return None }
                     }
                 }
             }
 
-            match Utils::get(&*load_mask(node), load_values(node), k[k.len() - 1]) {
+            match Utils::get(&*load_vmask(node), load_vvalues(node), k[k.len() - 1]) {
                 None => { None }
-                Some(cf) => {
-                    match cf.as_ref().unwrap().value.as_ref() {
-                        None => { None }
-                        Some(v) => { Some(v) }
-                    }
+                Some(v) => {
+                    Some(v.as_ref().unwrap())
                 }
             }
             }
@@ -410,8 +428,8 @@ impl <V : Clone + Debug> ByteTrieNodePtr<CoFree<V>> {
 
         pub fn len(self) -> usize {
             unsafe {
-            return (*slice_from_raw_parts(load_values(self), Utils::len(&*load_mask(self)))).iter().rfold(0, |t, cf| unsafe {
-                t + cf.value.is_some() as usize + (if cf.rec.index == 0 { 0 } else { cf.rec.len() })
+            return (*slice_from_raw_parts(load_rvalues(self), Utils::len(&*load_rmask(self)))).iter().rfold(Utils::len(&*load_vmask(self)), |t, btnp| unsafe {
+                t + (if btnp.index == 0 { 0 } else { btnp.len() })
             });
             }
         }
@@ -511,13 +529,12 @@ pub struct ByteTrieNodeIter<'a, V> {
 }
 
 impl <'a, V> ByteTrieNodeIter<'a, V> {
-    fn new(btn: ByteTrieNodePtr<V>) -> Self {
-        let m = load_mask(btn);
+    fn new(m: &'a [u64; 4], values: *mut V) -> Self {
         Self {
             i: 0,
-            w: unsafe { (*m)[0] },
-            m: unsafe { &*m },
-            v: load_values(btn)
+            w: m[0],
+            m: m,
+            v: values
         }
     }
 }
