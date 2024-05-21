@@ -1,5 +1,5 @@
 /target
 .idea
 Cargo.lock
-src/bytetrie_alloc.rs
-src/bytetrie_alloc_simd.rs
+notes/bytetrie_alloc.rs
+notes/bytetrie_alloc_simd.rs

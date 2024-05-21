@@ -3,8 +3,8 @@ ByteTrie Allocator
 Here's a tentative allocator design for the ByteBitmapMap:
 Recall we're storing 256-bit (32-byte) bitmaps to branch with the bytes of a key
 We require value types to be 64 bits (8 bytes), and we can have at most 256 of them (256*8=2048 bytes)
-Defining the map pointer type as evict (1 bit), small (1 bit), revision (6/8 bits), children (8 bits), and page-index (32 bits)
-Defining a node (page-sized, 4096 bytes) as dense value memory (2048 bytes) and up to 64 revisions of the bitmaps (64*32=2048 bytes)
+Defining the map pointer type as evict (1 bit), small (1 bit), revision (6/8 bits), thread (8 bits), page-index (32 bits), item (12 bits)
+Defining a node (page-sized, 4096 bytes) as the mask (32 bytes), reserved masks (64 bytes)  dense value memory (2048 bytes) and up to 64 revisions of the bitmaps (64*32=2048 bytes)
 Defining a small node (shares a page with other nodes) as a shared dense value memory (2048 bytes) and indices (up to 256 indices/bytes)
 Creating a mmap: 4096*2^32 bytes
 ```
