@@ -1,6 +1,7 @@
 use std::fmt::{Debug, Formatter};
-use std::rc::Rc;
 use std::ptr::slice_from_raw_parts;
+
+use rclite::Rc;
 
 #[derive(Clone)]
 pub struct ByteTrieNode<V> {

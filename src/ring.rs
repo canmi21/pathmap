@@ -1,9 +1,10 @@
-use std::rc::Rc;
 
-use crate::bytetrie::{BytesTrieMap, ByteTrieNode, ShortTrieMap, CoFree};
 use std::collections::HashMap;
 use std::hash::Hash;
 
+use rclite::Rc;
+
+use crate::bytetrie::{BytesTrieMap, ByteTrieNode, ShortTrieMap, CoFree};
 use crate::bytetrie::NODE_CNT;
 
 pub trait Lattice: Sized {
