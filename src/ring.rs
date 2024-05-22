@@ -303,7 +303,7 @@ impl<V : Lattice + Clone> Lattice for ByteTrieNode<V> {
         }
 
         unsafe{ v.set_len(c); }
-        return ByteTrieNode::<V>{ mask: jm, values: v };
+        return ByteTrieNode::<V>{ mask: jm, values: v, parent_val: self.parent_val.join(&other.parent_val) };
     }
 
     fn join_into(&mut self, mut other: Self) {
@@ -351,6 +351,8 @@ impl<V : Lattice + Clone> Lattice for ByteTrieNode<V> {
                 c += 1;
             }
         }
+
+        //GOAT, gotta join_into the parent_vals
 
         unsafe { self.values.set_len(0) }
         unsafe { other.values.set_len(0) }
@@ -404,7 +406,7 @@ impl<V : Lattice + Clone> Lattice for ByteTrieNode<V> {
         }
 
         unsafe{ v.set_len(c); }
-        return ByteTrieNode::<V>{ mask: mm, values: v };
+        return ByteTrieNode::<V>{ mask: mm, values: v, parent_val: self.parent_val.meet(&other.parent_val)};
     }
 
     fn bottom() -> Self {
@@ -426,7 +428,6 @@ impl<V : Lattice + Clone> Lattice for ByteTrieNode<V> {
         let mut v = Vec::with_capacity(len);
 
         let mut c = 0;
-
         for i in 0..4 {
             let mut lm = jm[i];
             while lm != 0 {
@@ -442,8 +443,11 @@ impl<V : Lattice + Clone> Lattice for ByteTrieNode<V> {
             }
         }
 
+        let mut branch_val = None;
+        xs.iter().for_each(|x| branch_val = branch_val.join(&x.parent_val));
+
         unsafe{ v.set_len(c); }
-        return ByteTrieNode::<V>{ mask: jm, values: v };
+        return ByteTrieNode::<V>{ mask: jm, values: v, parent_val: branch_val };
     }
 }
 
@@ -606,50 +610,89 @@ impl<V : Clone + PartialDistributiveLattice> DistributiveLattice for ShortTrieMa
 
 impl<V : Clone + Lattice> Lattice for CoFree<V> {
     fn join(&self, other: &Self) -> Self {
-        CoFree {
-            rec: self.rec.join(&other.rec),
-            value: self.value.join(&other.value)
+        match self {
+            Self::Leaf(l_val) => {
+                match other {
+                    Self::Leaf(r_val) => Self::Leaf(l_val.join(r_val)),
+                    Self::Branch(r_subtree) => {
+                        let mut r_subtree = (**r_subtree).clone();
+                        match &mut r_subtree.parent_val {
+                            None => r_subtree.parent_val = Some(self.clone()),//Some(Self::Leaf(l_val.clone())),
+                            Some(r_val) => r_subtree.parent_val = Some(self.join(r_val))
+                        }
+                        Self::Branch(Rc::new(r_subtree))
+                    },
+                }
+            },
+            Self::Branch(l_subtree) => {
+                match other {
+                    Self::Leaf(r_val) => {
+                        let mut l_subtree = (**l_subtree).clone();
+                        match &mut l_subtree.parent_val {
+                            None => l_subtree.parent_val = Some(other.clone()),
+                            Some(l_val) => l_subtree.parent_val = Some(l_val.join(other))
+                        }
+                        Self::Branch(Rc::new(l_subtree))
+                    },
+                    Self::Branch(r_subtree) => {
+                        Self::Branch(Rc::new(l_subtree.join(&r_subtree)))
+                    }
+                }
+            }
         }
+        // CoFree {
+        //     rec: self.rec.join(&other.rec),
+        //     value: self.value.join(&other.value)
+        // }
     }
 
     fn join_into(&mut self, other: Self) {
-        self.rec.join_into(other.rec);
-        self.value.join_into(other.value);
+        //goat
+        // self.rec.join_into(other.rec);
+        // self.value.join_into(other.value);
     }
 
     fn meet(&self, other: &Self) -> Self {
-        CoFree {
-            rec: self.rec.meet(&other.rec),
-            value: self.value.meet(&other.value)
-        }
+        //GOAt placeholder
+        let l = ByteTrieNode::new();
+        CoFree::new_with_subtree(Rc::new(l))
+
+        // CoFree {
+        //     rec: self.rec.meet(&other.rec),
+        //     value: self.value.meet(&other.value)
+        // }
     }
 
     fn bottom() -> Self {
-        CoFree {
-            rec: None,
-            value: None
-        }
+        // let l = ByteTrieNode::new();
+        // CoFree::new_with_subtree(Rc::new(l))
+        unreachable!()
     }
 }
 
 impl<V : Clone + PartialDistributiveLattice> DistributiveLattice for CoFree<V> {
     fn subtract(&self, other: &Self) -> Self {
-        CoFree {
-            rec: self.rec.psubtract(&other.rec).unwrap_or(None),
-            value: self.value.subtract(&other.value)
-        }
+        //GOAt placeholder
+        let l = ByteTrieNode::new();
+        CoFree::new_with_subtree(Rc::new(l))
+        
+        // CoFree {
+        //     rec: self.rec.psubtract(&other.rec).unwrap_or(None),
+        //     value: self.value.subtract(&other.value)
+        // }
     }
 }
 
 impl<V : Clone + PartialDistributiveLattice> PartialDistributiveLattice for CoFree<V> {
     fn psubtract(&self, other: &Self) -> Option<Self> where Self: Sized {
-        // .unwrap_or(ptr::null_mut())
-        let r = self.rec.psubtract(&other.rec);
-        let v = self.value.subtract(&other.value);
-        match r {
-            None => { if v.is_none() { None } else { Some(CoFree{ rec: None, value: v }) } }
-            Some(sr) => { Some(CoFree{ rec: sr, value: v }) }
-        }
+        None
+        //GOAT
+        // let r = self.rec.psubtract(&other.rec);
+        // let v = self.value.subtract(&other.value);
+        // match r {
+        //     None => { if v.is_none() { None } else { Some(CoFree{ rec: None, value: v }) } }
+        //     Some(sr) => { Some(CoFree{ rec: sr, value: v }) }
+        // }
     }
 }
 

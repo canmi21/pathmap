@@ -6,7 +6,8 @@ use rclite::Rc;
 #[derive(Clone)]
 pub struct ByteTrieNode<V> {
     pub(crate) mask: [u64; 4],
-    pub(crate) values: Vec<V>
+    pub(crate) values: Vec<V>,
+    pub(crate) parent_val: Option<V>, //TODO, consider packing this into `values`
 }
 
 impl <V : Debug> Debug for ByteTrieNode<V> {
@@ -49,7 +50,7 @@ impl <'a, V : Clone> Iterator for BytesTrieMapIter<'a, V> {
                             let mut k = self.prefix.clone();
                             k.push(b);
 
-                            match &cf.rec {
+                            match cf.subtree() {
                                 None => {}
                                 Some(rec) => {
                                     self.prefix = k.clone();
@@ -57,7 +58,7 @@ impl <'a, V : Clone> Iterator for BytesTrieMapIter<'a, V> {
                                 }
                             }
 
-                            match &cf.value {
+                            match &cf.value() {
                                 None => {}
                                 Some(v) => {
                                     return Some((k, &v))
@@ -71,10 +72,84 @@ impl <'a, V : Clone> Iterator for BytesTrieMapIter<'a, V> {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub(crate) struct CoFree<V> {
-    pub(crate) rec: Option<Rc<ByteTrieNode<CoFree<V>>>>,
-    pub(crate) value: Option<V>
+#[derive(Debug, Clone)]
+pub(crate) enum CoFree<V> {
+    Branch(Rc<ByteTrieNode<CoFree<V>>>),
+    Leaf(V)
+}
+
+impl<V: Clone> CoFree<V> {
+    #[inline]
+    pub fn new_with_subtree(subtree: Rc<ByteTrieNode<CoFree<V>>>) -> Self {
+        Self::Branch(subtree)
+    }
+    #[inline]
+    pub fn new_with_val(val: V) -> Self {
+        Self::Leaf(val)
+    }
+    #[inline]
+    pub fn subtree(&self) -> Option<&ByteTrieNode<CoFree<V>>> {
+        match self {
+            Self::Branch(ptr) => Some(ptr),
+            Self::Leaf(_) => None
+        }
+    }
+    /// Returns a mutable version of the ByteTrieNode using copy-on-write semantics.
+    /// Promotes a Leaf to a Branch if called on a leaf
+    #[inline]
+    pub fn subtree_mut(&mut self) -> Option<&mut ByteTrieNode<CoFree<V>>> {
+        match self {
+            Self::Branch(ptr) => Some(Rc::make_mut(ptr)),
+            Self::Leaf(_) => {
+                let mut new_branch_cf = Self::Branch(Rc::new(ByteTrieNode::new()));
+                std::mem::swap(self, &mut new_branch_cf);
+                let old_val_cf = new_branch_cf;
+                let ptr = self.subtree_mut();
+                let btn = ptr.unwrap();
+                btn.parent_val = Some(old_val_cf);
+                Some(btn)
+            }
+        }
+    }
+    #[inline]
+    pub fn value(&self) -> Option<&V> {
+        match self {
+            Self::Leaf(v) => Some(v),
+            Self::Branch(ptr) => ptr.parent_val.as_ref().and_then(|cf| cf.value()),
+        }
+    }
+    #[inline]
+    pub fn value_mut(&mut self) -> Option<&mut V> {
+        match self {
+            Self::Leaf(v) => Some(v),
+            Self::Branch(ptr) => {
+                let ptr = Rc::make_mut(ptr);
+                ptr.parent_val.as_mut().and_then(|cf| cf.value_mut())
+            },
+        }
+    }
+    #[inline]
+    pub fn set_value(&mut self, val: V) -> Option<V> {
+        match self {
+            Self::Leaf(v) => {
+                let mut old_val = val;
+                core::mem::swap(&mut old_val, v);
+                Some(old_val)
+            },
+            Self::Branch(ptr) => {
+                let ptr = Rc::make_mut(ptr);
+                match &mut ptr.parent_val {
+                    None => {
+                        ptr.parent_val = Some(Self::new_with_val(val));
+                        None
+                    }
+                    Some(old_val_cf) => {
+                        old_val_cf.set_value(val)
+                    }
+                }
+            },
+        }
+    }
 }
 
 /// An iterator-like object that traverses key-value pairs in a [BytesTrieMap], however only one
@@ -115,7 +190,7 @@ impl <'a, V : Clone> BytesTrieMapCursor<'a, V> {
                                 self.prefix.push(b);
                             }
 
-                            match unsafe { cf.rec.as_ref() } {
+                            match  cf.subtree() {
                                 None => {
                                     self.nopush = true;
                                 }
@@ -125,7 +200,7 @@ impl <'a, V : Clone> BytesTrieMapCursor<'a, V> {
                                 }
                             }
 
-                            match &cf.value {
+                            match &cf.value() {
                                 None => {}
                                 Some(v) => {
                                     return Some((&self.prefix, v))
@@ -178,7 +253,7 @@ impl <V : Clone> BytesTrieMap<V> {
             for i in 0..k.len() - 1 {
                 match node.get(k[i]) {
                     Some(cf) => {
-                        match cf.rec.as_ref() {
+                        match cf.subtree() {
                             Some(r) => { node = r }
                             None => { return None }
                         }
@@ -188,11 +263,11 @@ impl <V : Clone> BytesTrieMap<V> {
             }
         }
 
-        node.get(k[k.len() - 1]).and_then(|cf| cf.rec.as_ref()).map(|subnode| 
+        node.get(k[k.len() - 1]).and_then(|cf| cf.subtree()).map(|subnode| 
             //SAFETY: the type-cast should be ok, because BytesTrieMap<V> is a #[repr(transparent)]
             // wrapper around ByteTrieNode<CoFree<V>>.
             //WARNING.  The cast_mut() is actually UNSAFE!!  See QUESTION above
-            unsafe{ &mut *((&**subnode) as *const ByteTrieNode<CoFree<V>>).cast_mut().cast()  }
+            unsafe{ &mut *((&*subnode) as *const ByteTrieNode<CoFree<V>>).cast_mut().cast()  }
         )
     }
 
@@ -209,36 +284,30 @@ impl <V : Clone> BytesTrieMap<V> {
     }
 
     /// Inserts `v` at into the map at `k`.  Panics if `k` has a zero length
+    /// NOTE: The usual Rust convention for insert is to return the old value if a value was replaced.
+    /// LP: I changed the behavior to always replace, rather than to do nothing and return true if
+    ///   the slot was occupied
     pub fn insert<K: AsRef<[u8]>>(&mut self, k: K, v: V) -> bool {
         let k = k.as_ref();
         let mut node = &mut self.root;
 
         if k.len() > 1 {
             for i in 0..k.len() - 1 {
-                let cf = node.update(k[i], || CoFree{rec: None, value: None});
-
-                if cf.rec.is_none() {
+                let cf = node.update(k[i], || {
                     let l = ByteTrieNode::new();
-                    cf.rec = Some(Rc::new(l));
-                }
-                node = Rc::make_mut(cf.rec.as_mut().unwrap());
+                    CoFree::new_with_subtree(Rc::new(l))
+                });
+
+                node = cf.subtree_mut().unwrap();
             }
         }
 
         let lk = k[k.len() - 1];
         if node.contains(lk) {
             let cf = unsafe{ node.get_unchecked_mut(lk) };
-            match cf.value {
-                None => {
-                    cf.value = Some(v);
-                    false
-                }
-                Some(_) => {
-                    true
-                }
-            }
+            cf.set_value(v).is_some()
         } else {
-            let cf = CoFree{ rec: None, value: Some(v) };
+            let cf = CoFree::new_with_val(v);
             node.insert(lk, cf)
         }
     }
@@ -270,19 +339,18 @@ impl <V : Clone> BytesTrieMap<V> {
 
         if k.len() > 1 {
             for i in 0..k.len() - 1 {
-                let cf = node.update(k[i], || CoFree{rec: None, value: None});
-
-                if cf.rec.is_none() {
+                let cf = node.update(k[i], || {
                     let l = ByteTrieNode::new();
-                    cf.rec = Some(Rc::new(l));
-                }
-                node = Rc::make_mut(cf.rec.as_mut().unwrap());
+                    CoFree::new_with_subtree(Rc::new(l))
+                });
+
+                node = cf.subtree_mut().unwrap();
             }
         }
 
         let lk = k[k.len() - 1];
-        let cf = node.update(lk, || CoFree{ rec: None, value: None });
-        cf.value.get_or_insert_with(default)
+        let cf = node.update(lk, || CoFree::new_with_val(default()));
+        cf.value_mut().unwrap()
     }
 
     pub fn get<K: AsRef<[u8]>>(&self, k: K) -> Option<&V> {
@@ -293,7 +361,7 @@ impl <V : Clone> BytesTrieMap<V> {
             for i in 0..k.len() - 1 {
                 match node.get(k[i]) {
                     Some(cf) => {
-                        match cf.rec.as_ref() {
+                        match cf.subtree() {
                             Some(r) => { node = r }
                             None => { return None }
                         }
@@ -304,19 +372,14 @@ impl <V : Clone> BytesTrieMap<V> {
         }
 
         match node.get(k[k.len() - 1]) {
-            None => { None }
-            Some(CoFree{ rec: _, value }) => {
-                match value {
-                    None => { None }
-                    Some(v) => { Some(v) }
-                }
-            }
+            None => None,
+            Some(cf) => cf.value()
         }
     }
 
     fn cofreelen(btn: &ByteTrieNode<CoFree<V>>) -> usize {
         return btn.values.iter().rfold(0, |t, cf| {
-            t + cf.value.is_some() as usize + cf.rec.as_ref().map(|r| Self::cofreelen(r)).unwrap_or(0)
+            t + cf.value().is_some() as usize + cf.subtree().map(|r| Self::cofreelen(r)).unwrap_or(0)
         });
     }
 
@@ -457,7 +520,8 @@ impl <V : Clone> ByteTrieNode<V> {
     pub fn new() -> Self {
         Self {
             mask: [0u64; 4],
-            values: Vec::new()
+            values: Vec::new(),
+            parent_val: None,
         }
     }
 

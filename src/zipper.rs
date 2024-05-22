@@ -67,7 +67,7 @@ impl <'a, V : Clone + Debug> ReadZipper<'a, V> {
         match self.focus.get(k) {
             None => { false }
             Some(cf) => unsafe {
-                match cf.rec.as_ref() {
+                match cf.subtree() {
                     None => { false }
                     Some(r) => {
                         self.path.push(k);
@@ -86,10 +86,10 @@ impl <'a, V : Clone + Debug> ReadZipper<'a, V> {
         let mut child = -1;
         // this is not DRY but I lost the fight to the Rust compiler
         let pair = if forward { self.focus.values.iter().enumerate().find(|(_, v)| {
-            let has_child = v.rec.is_some();
+            let has_child = v.subtree().is_some();
             if has_child { child += 1; child == (n as i32) } else { false }
         }) } else { self.focus.values.iter().rev().enumerate().find(|(_, v)| {
-            let has_child = v.rec.is_some();
+            let has_child = v.subtree().is_some();
             if has_child { child += 1; child == (n as i32) } else { false }
         }) };
         match pair {
@@ -131,7 +131,7 @@ impl <'a, V : Clone + Debug> ReadZipper<'a, V> {
                 debug_assert!(self.focus.contains(prefix));
                 self.ancestors.push(self.focus);
                 self.path.push(prefix);
-                self.focus = cf.rec.as_ref().unwrap();
+                self.focus = cf.subtree().as_ref().unwrap();
                 true
             }
         }
@@ -165,7 +165,7 @@ impl <'a, V : Clone + Debug> ReadZipper<'a, V> {
                     let sk = n | ((mask_i << 6) as u8);
                     // println!("candidate {}", sk);
                     debug_assert!(parent.contains(sk));
-                    match unsafe { parent.get_unchecked(sk).rec.as_ref() } {
+                    match unsafe { parent.get_unchecked(sk).subtree().as_ref() } {
                         None => {
                             // println!("{} {}", k, sk);
                             continue
