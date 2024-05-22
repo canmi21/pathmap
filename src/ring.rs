@@ -4,6 +4,8 @@ use crate::bytetrie::{BytesTrieMap, ByteTrieNode, ShortTrieMap, CoFree};
 use std::collections::HashMap;
 use std::hash::Hash;
 
+use crate::bytetrie::NODE_CNT;
+
 pub trait Lattice: Sized {
     fn join(&self, other: &Self) -> Self;
     fn join_into(&mut self, other: Self) {
@@ -301,6 +303,7 @@ impl<V : Lattice + Clone> Lattice for ByteTrieNode<V> {
         }
 
         unsafe{ v.set_len(c); }
+        NODE_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         return ByteTrieNode::<V>{ mask: jm, values: v };
     }
 
@@ -402,6 +405,7 @@ impl<V : Lattice + Clone> Lattice for ByteTrieNode<V> {
         }
 
         unsafe{ v.set_len(c); }
+        NODE_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         return ByteTrieNode::<V>{ mask: mm, values: v };
     }
 
@@ -441,6 +445,7 @@ impl<V : Lattice + Clone> Lattice for ByteTrieNode<V> {
         }
 
         unsafe{ v.set_len(c); }
+        NODE_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         return ByteTrieNode::<V>{ mask: jm, values: v };
     }
 }

@@ -8,6 +8,13 @@ pub struct ByteTrieNode<V> {
     pub(crate) values: Vec<V>
 }
 
+pub static COFREE_CNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+pub static NODE_CNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+// pub static COFREE_BOTH_CNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+pub static COFREE_PTR_CNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+pub static COFREE_V_CNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
 impl <V : Debug> Debug for ByteTrieNode<V> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f,
@@ -159,8 +166,18 @@ pub struct BytesTrieMap<V> {
     pub(crate) root: ByteTrieNode<CoFree<V>>
 }
 
+#[repr(C)]
+struct RcBox<T: ?Sized> {
+    strong: std::cell::Cell<usize>,
+    weak: std::cell::Cell<usize>,
+    value: T,
+}
+
 impl <V : Clone> BytesTrieMap<V> {
     pub fn new() -> Self {
+
+        println!("sizeof RcBox<ByteTrieNode<CoFree<V>>> = {}", core::mem::size_of::<RcBox<ByteTrieNode<CoFree<V>>>>());
+
         Self {
             root: ByteTrieNode::new()
         }
@@ -214,9 +231,13 @@ impl <V : Clone> BytesTrieMap<V> {
 
         if k.len() > 1 {
             for i in 0..k.len() - 1 {
-                let cf = node.update(k[i], || CoFree{rec: None, value: None});
+                let cf = node.update(k[i], || {
+                    COFREE_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    CoFree{rec: None, value: None }
+                });
 
                 if cf.rec.is_none() {
+                    COFREE_PTR_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     let l = ByteTrieNode::new();
                     cf.rec = Some(Rc::new(l));
                 }
@@ -229,6 +250,7 @@ impl <V : Clone> BytesTrieMap<V> {
             let cf = unsafe{ node.get_unchecked_mut(lk) };
             match cf.value {
                 None => {
+                    COFREE_V_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     cf.value = Some(v);
                     false
                 }
@@ -237,6 +259,8 @@ impl <V : Clone> BytesTrieMap<V> {
                 }
             }
         } else {
+            COFREE_V_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            COFREE_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             let cf = CoFree{ rec: None, value: Some(v) };
             node.insert(lk, cf)
         }
@@ -269,9 +293,13 @@ impl <V : Clone> BytesTrieMap<V> {
 
         if k.len() > 1 {
             for i in 0..k.len() - 1 {
-                let cf = node.update(k[i], || CoFree{rec: None, value: None});
+                let cf = node.update(k[i], || {
+                    COFREE_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    CoFree{rec: None, value: None}
+                });
 
                 if cf.rec.is_none() {
+                    COFREE_PTR_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     let l = ByteTrieNode::new();
                     cf.rec = Some(Rc::new(l));
                 }
@@ -280,7 +308,11 @@ impl <V : Clone> BytesTrieMap<V> {
         }
 
         let lk = k[k.len() - 1];
-        let cf = node.update(lk, || CoFree{ rec: None, value: None });
+        let cf = node.update(lk, || {
+            COFREE_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            COFREE_V_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            CoFree{ rec: None, value: None }
+        });
         cf.value.get_or_insert_with(default)
     }
 
@@ -454,6 +486,7 @@ impl <'a, V : Clone> Iterator for ByteTrieNodeIter<'a, V> {
 
 impl <V : Clone> ByteTrieNode<V> {
     pub fn new() -> Self {
+        NODE_CNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         Self {
             mask: [0u64; 4],
             values: Vec::new()
