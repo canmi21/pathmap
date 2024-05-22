@@ -111,6 +111,7 @@ impl <T> Clone for ByteTrieNodePtr<T> {
 impl <T> Copy for ByteTrieNodePtr<T> {}
 
 impl <T> ByteTrieNodePtr<T> {
+    // #[inline(never)]
     pub(crate) fn null() -> ByteTrieNodePtr<T> {
         ID_CNT.with(|R| {
             let (id, _) = unsafe { *R.get() };
@@ -118,6 +119,7 @@ impl <T> ByteTrieNodePtr<T> {
         })
     }
 }
+
 #[inline(always)]
 fn threadid(thread: Thread) -> u64 {
     let name = format!("{:?}", thread.id());
@@ -133,7 +135,7 @@ pub fn register() {
     let mut l = REGISTRY.lock().unwrap();
     let mut k: u32 = l.not().trailing_zeros();
     *l ^= 1u128 << k;
-    println!("alloc {:?} {l} id={k}", id);
+    // println!("alloc {:?} {l} id={k}", id);
     ID_CNT.with(|mut R| {
         *R.get() = (k as u8, 1);
     })
@@ -147,7 +149,7 @@ pub fn unregister() {
         // madvise(addr, length, MADV_DONTNEED) != 0
         let mut l = REGISTRY.lock().unwrap();
         *l ^= 1u128 << id;
-        println!("dealloc {:?}, id={id},cnt={CNT}", threadid(std::thread::current()));
+        // println!("dealloc {:?}, id={id},cnt={CNT}", threadid(std::thread::current()));
     });
     }
 }
@@ -156,7 +158,7 @@ pub static mut MMAP: *mut u8 = ptr::null_mut();
 static mut REGISTRY: std::sync::Mutex<u128> = std::sync::Mutex::new(0);
 
 // pub static mut MEM1: *mut u64 = 0u64 as *mut u64;
-thread_local!(pub static ID_CNT: UnsafeCell<(u8, u32)> = UnsafeCell::new((1, 1)));
+thread_local!(static ID_CNT: UnsafeCell<(u8, u32)> = const { UnsafeCell::new((1, 1)) });
 
 pub fn init(threaded: bool) {
     unsafe {
@@ -176,115 +178,85 @@ pub fn init(threaded: bool) {
     println!("mmap {:?}", unsafe { MMAP });
 }
 
+// #[inline(never)]
 pub fn store_new<T>() -> ByteTrieNodePtr<T> {
     unsafe {
-        let s = (256*mem::size_of::<T>()/8) as u32;
-        let mut thread = 0;
-        let mut i = 0;
-        ID_CNT.with(|mut R| {
+        let (thread, i) = ID_CNT.with(|mut R| {
             let (id, CNT) = unsafe { *R.get() };
-            thread = id;
-            i = CNT;
             *R.get() = (id, CNT + 2);
+            (id, CNT)
         });
 
         return ByteTrieNodePtr{ thread: thread, size: 0, index: i, pd: PhantomData::default() };
     }
 }
 
-pub fn mmap_ptr(id: u8, cnt: u32) -> *mut u8 {
-    unsafe { MMAP.offset((((id as isize) << 32) | (cnt as isize)) << 12) }
+// // #[inline(never)]
+pub fn mmap_ptr(id: u8, cnt: u32, offset: u16) -> *mut u8 {
+    unsafe { MMAP.offset(((((id as isize) << 32) | (cnt as isize)) << 12) | (offset as isize)) }
 }
 
+// #[inline(never)]
 pub fn store_prepared<T>(rmask: [u64; 4], vmask: [u64; 4]) -> ByteTrieNodePtr<T> {
     unsafe {
-        let mut thread = 0;
-        let mut i = 0;
-        let l = Utils::len(&rmask);
-
-        ID_CNT.with(|mut R| {
+        // let l = Utils::len(&rmask);
+        let (thread, i) = ID_CNT.with(|mut R| {
             let (id, CNT) = unsafe { *R.get() };
-            let mut MEM: *mut u64 = mmap_ptr(id, CNT) as *mut u64;
-            MEM.write(rmask[0]);
-            MEM.offset(1).write(rmask[1]);
-            MEM.offset(2).write(rmask[2]);
-            MEM.offset(3).write(rmask[3]);
-            MEM.offset(4).write(vmask[0]);
-            MEM.offset(5).write(vmask[1]);
-            MEM.offset(6).write(vmask[2]);
-            MEM.offset(7).write(vmask[3]);
-            thread = id;
-            i = CNT as u32;
+            let mut MEM: *mut u64 = mmap_ptr(id, CNT, 0) as *mut u64;
+            ptr::write(MEM as *mut [u64; 4], rmask);
+            ptr::write(MEM.offset(4) as *mut [u64; 4], vmask);
             *R.get() = (id, CNT + 2);
+            (id, CNT)
         });
-        return ByteTrieNodePtr{ thread: thread, size: l as u8, index: i, pd: PhantomData::default() };
+        return ByteTrieNodePtr{ thread: thread, size: 0, index: i, pd: PhantomData::default() };
     }
 }
 
+// #[inline(never)]
 pub fn store<T>(rmask: [u64; 4], rvalues: *mut ByteTrieNodePtr<T>, vmask: [u64; 4], vvalues: *mut T) -> ByteTrieNodePtr<T> {
     unsafe {
-        let mut thread = 0;
-        let mut i = 0;
         let rl = Utils::len(&rmask);
         let vl = Utils::len(&vmask);
-
-        ID_CNT.with(|mut R| {
+        let (thread, i) = ID_CNT.with(|mut R| {
             let (id, CNT) = unsafe { *R.get() };
-            let mut MEM: *mut u64 = mmap_ptr(id, CNT) as *mut u64;
-            MEM.write(rmask[0]);
-            MEM.offset(1).write(rmask[1]);
-            MEM.offset(2).write(rmask[2]);
-            MEM.offset(3).write(rmask[3]);
-            MEM.offset(4).write(vmask[0]);
-            MEM.offset(5).write(vmask[1]);
-            MEM.offset(6).write(vmask[2]);
-            MEM.offset(7).write(vmask[3]);
+            let mut MEM: *mut u64 = mmap_ptr(id, CNT, 0) as *mut u64;
+            ptr::write(MEM as *mut [u64; 4], rmask);
+            ptr::write(MEM.offset(4) as *mut [u64; 4], vmask);
             debug_assert_eq!(mem::size_of::<ByteTrieNodePtr<T>>(), mem::size_of::<u64>());
             ptr::copy_nonoverlapping::<u64>(rvalues as *mut u64, MEM.offset(8), rl);
             ptr::copy_nonoverlapping::<T>(vvalues, MEM.offset(8 + 256) as *mut T, vl);
-            thread = id;
-            i = CNT as u32;
             *R.get() = (id, CNT + 2);
+            (id, CNT)
         });
-        // CNT += 4 + s as isize;
-        // CNT += 4 + 256*(mem::size_of::<T>()/8) as isize;
         return ByteTrieNodePtr{ thread: thread, size: rl as u8, index: i, pd: PhantomData::default() };
     }
 }
 
+// #[inline(never)]
 pub fn load_rmask<T>(node: ByteTrieNodePtr<T>) -> *mut [u64; 4] {
     unsafe {
-        ID_CNT.with(|mut R| {
-            let (id, _) = unsafe { *R.get() };
-            mmap_ptr(id, node.index) as *mut [u64; 4]
-        })
+        mmap_ptr(node.thread, node.index, 0) as *mut [u64; 4]
     }
 }
 
+// #[inline(never)]
 pub fn load_vmask<T>(node: ByteTrieNodePtr<T>) -> *mut [u64; 4] {
     unsafe {
-        ID_CNT.with(|mut R| {
-            let (id, _) = unsafe { *R.get() };
-            mmap_ptr(id, node.index).byte_offset(32) as *mut [u64; 4]
-        })
+        mmap_ptr(node.thread, node.index, 32) as *mut [u64; 4]
     }
 }
 
+// #[inline(never)]
 pub fn load_rvalues<T>(node: ByteTrieNodePtr<T>) -> *mut ByteTrieNodePtr<T> {
     unsafe {
-        ID_CNT.with(|mut R| {
-            let (id, _) = unsafe { *R.get() };
-            mmap_ptr(id, node.index).byte_offset(64) as *mut ByteTrieNodePtr<T>
-        })
+        mmap_ptr(node.thread, node.index, 64) as *mut ByteTrieNodePtr<T>
     }
 }
 
+// #[inline(never)]
 pub fn load_vvalues<T>(node: ByteTrieNodePtr<T>) -> *mut T {
     unsafe {
-        ID_CNT.with(|mut R| {
-            let (id, _) = unsafe { *R.get() };
-            mmap_ptr(id, node.index).byte_offset(64 + 8*256) as *mut T
-        })
+        mmap_ptr(node.thread, node.index, 64 + 8*256) as *mut T
     }
 }
 
@@ -326,33 +298,21 @@ impl <V : Clone + Debug> ByteTrieNodePtr<V> {
     }
 
     pub fn insert(self, k: &[u8], v: V) -> bool {
+        // TODO break loop into "traversing known" and "creating new"
         unsafe {
-            // println!("insert {:?} {:?}", k, v);
-            assert!(k.len() >= 0);
+            debug_assert!(k.len() >= 0);
             let mut node = self;
 
             if k.len() > 1 {
                 for i in 0..k.len() - 1 {
-                    // println!("at key {i} {}", k[i]);
-                    let cf = &mut *Utils::update(&mut *load_rmask(node), load_rvalues(node), k[i], ByteTrieNodePtr::null);
-
-                    node = if cf.index != 0 { *cf } else {
-                        let ptr = store_new();
-                        // println!("created new {} {:?}", ptr.index, ptr);
-                        *cf = ptr;
-                        ptr
-                    }
+                    node = *Utils::update(&mut *load_rmask(node), load_rvalues(node), k[i], store_new);
                 }
             }
 
             let lk = k[k.len() - 1];
             let m = &mut *load_vmask(node);
             let vs = load_vvalues(node);
-            if Utils::contains(m, lk) {
-                true
-            } else {
-                Utils::insert(m, vs, lk, v)
-            }
+            Utils::insert(m, vs, lk, v)
         }
     }
 
@@ -377,6 +337,7 @@ impl <V : Clone + Debug> ByteTrieNodePtr<V> {
         //     return self.items().collect();
         // }
 
+        // #[inline(never)]
         pub fn update<F: FnOnce() -> V>(self, k: &[u8], default: F) -> &mut V {
             unsafe {
             assert!(k.len() >= 0);
@@ -562,12 +523,21 @@ impl <'a, V : Clone + 'a> Iterator for ByteTrieNodeIter<'a, V> {
 struct Utils {}
 
 impl Utils {
-    #[inline]
+    #[inline(always)]
+    pub fn contains_set(mask: &mut [u64; 4], k: u8) -> bool {
+        let mut w = &mut mask[((k & 0b11000000) >> 6) as usize];
+        let bit = 1u64 << (k & 0b00111111);
+        let r = 0 != (*w & bit);
+        *w |= bit;
+        r
+    }
+
+    // #[inline(never)]
     pub fn contains(mask: &[u64; 4], k: u8) -> bool {
         0 != (mask[((k & 0b11000000) >> 6) as usize] & (1u64 << (k & 0b00111111)))
     }
 
-    #[inline]
+    // #[inline(never)]
     pub fn left(mask: &[u64; 4], pos: u8) -> u8 {
         if pos == 0 { return 0 }
         let mut c = 0u8;
@@ -582,82 +552,52 @@ impl Utils {
         return c + (mask[3] & m).count_ones() as u8;
     }
 
-    #[inline]
+    // #[inline(never)]
     pub fn len(mask: &[u64; 4]) -> usize {
         return (mask[0].count_ones() + mask[1].count_ones() + mask[2].count_ones() + mask[3].count_ones()) as usize;
     }
 
-    #[inline]
+    // #[inline(never)]
     fn set(mask: &mut [u64; 4], k: u8) -> () {
         mask[((k & 0b11000000) >> 6) as usize] |= 1u64 << (k & 0b00111111);
     }
 
-    #[inline]
+    // #[inline(never)]
     fn clear(mask: &mut [u64; 4], k: u8) -> () {
         mask[((k & 0b11000000) >> 6) as usize] &= !(1u64 << (k & 0b00111111));
     }
 
+    // #[inline(never)]
     pub fn insert<V : Clone>(mask: &mut [u64; 4], values: *mut V, k: u8, v: V) -> bool {
-        let index = Self::left(mask, k) as usize;
-        if Self::contains(mask, k) {
+        // let index = Self::left(mask, k) as usize;
+        if Self::contains_set(mask, k) {
             // println!("overwriting {index}");
-            unsafe {
-                let ptr = values.add(index);
-                *ptr = v;
-            }
             true
         } else {
             unsafe {
-                let p = values.add(index);
-                let len = Self::len(mask);
-                // let len = 256;
-                // // println!("insert at {k} (index={index},len={len})");
-                // if index != len - 1 {
-                //     // ptr::copy(p, p.add(1), (len + 1) - index);
-                //     let mut i = len;
-                //     while i != index {
-                //         // println!("mov {} to {}", i - 1, i);
-                //         mem::swap(&mut *values.add(i), &mut *values.add(i - 1));
-                //         // ptr::write::<V>(values.add(i), (*values.add(i - 1)).clone());
-                //         // *values.add(i) = (*values.add(i - 1)).clone();
-                //         i -= 1;
-                //     }
-                // }
-                if index < len {
-                    // println!("k={} index={} len={}", k, index, len);
-                    ptr::copy(p, p.add(1), len - index);
-                }
-                // println!("write {index}");
-                ptr::write(p, v);
+                ptr::write(values.add(k as usize), v)
             }
-            Self::set(mask, k);
             false
         }
     }
 
+    // #[inline(never)]
     pub fn update<V, F : FnOnce() -> V>(mask: &mut [u64; 4], values: *mut V, k: u8, default: F) -> *mut V {
-        let index = Self::left(mask, k) as usize;
-        if !Self::contains(mask, k) {
-            let len = Self::len(mask);
-            unsafe {
-                let p = values.add(index);
-                if index < len {
-                    ptr::copy(p, p.add(1), len - index);
-                }
-                ptr::write(p, default());
-            }
-            Self::set(mask, k);
+        if !Self::contains_set(mask, k) {
+            // let len = Self::len(mask);
+            unsafe { ptr::write(values.add(k as usize), default()); }
         }
         unsafe {
-            values.add(index)
+            values.add(k as usize)
         }
     }
 
+    // #[inline(never)]
     pub fn get<V>(mask: &[u64; 4], values: *mut V, k: u8) -> Option<*mut V> {
         if Self::contains(mask, k) {
-            let ix = Self::left(mask, k) as usize;
+            // let ix = Self::left(mask, k) as usize;
             // println!("pos ix {} {} {:b}", pos, ix, self.mask);
-            return unsafe { Some(values.add(ix)) };
+            return unsafe { Some(values.add(k as usize)) };
         };
         return None;
     }

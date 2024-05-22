@@ -259,77 +259,61 @@ impl<V : Copy + Lattice> Lattice for ByteTrieNodePtr<V> {
         let mut vv: *mut V = load_vvalues(res);
 
         {
-            let mut l = 0;
-            let mut r = 0;
-            let mut c = 0;
-
             for i in 0..4 {
                 let mut lm = jrm[i];
-                debug_assert!(c < 256);
+
                 while lm != 0 {
                     // this body runs at most 256 times, in the case there is 100% overlap between full nodes
-                    let index = lm.trailing_zeros();
+                    let index = lm.trailing_zeros() as usize;
                     // println!("{}", index);
                     if ((1u64 << index) & mrm[i]) != 0 {
-                        let left_v = unsafe { ptr::read(srv.offset(l)) };
-                        let right_v = unsafe { ptr::read(orv.offset(r)) };
+                        let left_v = unsafe { ptr::read(srv.add(64*i + index)) };
+                        let right_v = unsafe { ptr::read(orv.add(64*i + index)) };
                         let joined_v = left_v.join(&right_v);
                         // println!("pushing lv rv j {:?} {:?} {:?}", lv, rv, jv);
-                        unsafe { ptr::write(rv.offset(c), joined_v); }
-                        l += 1;
-                        r += 1;
+                        unsafe { ptr::write(rv.add(64*i + index), joined_v); }
+
                     }
                     else if ((1u64 << index) & srm[i]) != 0 {
-                        let left_v = unsafe { ptr::read(srv.offset(l)) };
+                        let left_v = unsafe { ptr::read(srv.add(64*i + index)) };
                         // println!("pushing lv {:?}", lv);
-                        unsafe { ptr::write(rv.offset(c), left_v); }
-                        l += 1;
+                        unsafe { ptr::write(rv.add(64*i + index), left_v); }
                     } else {
-                        let right_v = unsafe { ptr::read(orv.offset(r)) };
+                        let right_v = unsafe { ptr::read(orv.add(64*i + index)) };
                         // println!("pushing rv {:?}", rv);
-                        unsafe { ptr::write(rv.offset(c),  right_v) };
-                        r += 1;
+                        unsafe { ptr::write(rv.add(64*i + index),  right_v) };
                     }
                     lm ^= 1u64 << index;
-                    c += 1;
                 }
             }
         }
 
         {
-            let mut l = 0;
-            let mut r = 0;
-            let mut c = 0;
-
             for i in 0..4 {
                 let mut lm = jvm[i];
-                debug_assert!(c < 256);
+
                 while lm != 0 {
                     // this body runs at most 256 times, in the case there is 100% overlap between full nodes
-                    let index = lm.trailing_zeros();
+                    let index = lm.trailing_zeros() as usize;
                     // println!("{}", index);
                     if ((1u64 << index) & mvm[i]) != 0 {
-                        let left_v = unsafe { ptr::read(svv.offset(l)) };
-                        let right_v = unsafe { ptr::read(ovv.offset(r)) };
+                        let left_v = unsafe { ptr::read(svv.add(64*i + index)) };
+                        let right_v = unsafe { ptr::read(ovv.add(64*i + index)) };
                         let joined_v = left_v.join(&right_v);
                         // println!("pushing lv rv j {:?} {:?} {:?}", lv, rv, jv);
-                        unsafe { ptr::write(vv.offset(c), joined_v); }
-                        l += 1;
-                        r += 1;
+                        unsafe { ptr::write(vv.add(64*i + index), joined_v); }
+
                     }
                     else if ((1u64 << index) & svm[i]) != 0 {
-                        let left_v = unsafe { ptr::read(svv.offset(l)) };
+                        let left_v = unsafe { ptr::read(svv.add(64*i + index)) };
                         // println!("pushing lv {:?}", lv);
-                        unsafe { ptr::write(vv.offset(c), left_v); }
-                        l += 1;
+                        unsafe { ptr::write(vv.add(64*i + index), left_v); }
                     } else {
-                        let right_v = unsafe { ptr::read(ovv.offset(r)) };
+                        let right_v = unsafe { ptr::read(ovv.add(64*i + index)) };
                         // println!("pushing rv {:?}", rv);
-                        unsafe { ptr::write(vv.offset(c), right_v) };
-                        r += 1;
+                        unsafe { ptr::write(vv.add(64*i + index),  right_v) };
                     }
                     lm ^= 1u64 << index;
-                    c += 1;
                 }
             }
         }
