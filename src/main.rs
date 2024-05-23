@@ -98,8 +98,12 @@ fn main() {
     println!("Done - nodes:{} cofrees:{}", NODE_CNT.load(core::sync::atomic::Ordering::Acquire), COFREE_CNT.load(core::sync::atomic::Ordering::Acquire));
     println!("Done - cofree_vs:{} cofree_ptrs:{}", COFREE_V_CNT.load(core::sync::atomic::Ordering::Acquire), COFREE_PTR_CNT.load(core::sync::atomic::Ordering::Acquire));
 
+    let (node_cnt, child_cnt, val_cnt) = map.count_ocupancy();
+    for i in 0..node_cnt.len() {
+        println!("level: {i} nodes: {} children: {} child_occupancy: {:4.2}% values: {}, value_occupancy: {:4.2}%", node_cnt[i], child_cnt[i], child_cnt[i] as f64 / node_cnt[i] as f64 / 255.0 * 100.0, val_cnt[i], val_cnt[i] as f64 / node_cnt[i] as f64 / 255.0 * 100.0);
+    }
 
-    std::thread::sleep(std::time::Duration::from_secs(30))
+    std::thread::sleep(std::time::Duration::from_secs(30));
 
 }
 

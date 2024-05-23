@@ -346,6 +346,60 @@ impl <V : Clone> BytesTrieMap<V> {
         }
     }
 
+    pub fn count_ocupancy(&self) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+
+        const DEPTH_SLOTS: usize = 60;
+        let mut value_occupied_total = vec![0usize; DEPTH_SLOTS];
+        let mut child_occupied_total = vec![0usize; DEPTH_SLOTS];
+        let mut node_count = vec![0usize; DEPTH_SLOTS];
+        node_count[0] = 1;
+
+        let mut cur_level = 0;
+        let mut node_iter_stack = vec![ByteTrieNodeIter::new(&self.root)];
+        loop {
+            match node_iter_stack.last_mut() {
+                None => { return (node_count, child_occupied_total, value_occupied_total); }
+                Some(last) => {
+                    match last.next() {
+                        None => {
+                            // self.prefix.pop();
+                            cur_level -= 1;
+                            node_iter_stack.pop();
+                        }
+                        Some((_b, cf)) => {
+                            // let mut k = self.prefix.clone();
+                            // k.push(b);
+
+                            match &cf.value {
+                                None => {}
+                                Some(v) => {
+                                    value_occupied_total[cur_level] += 1;
+
+                                    // return Some((k, &v))
+                                }
+                            }
+
+                            match &cf.rec {
+                                None => {}
+                                Some(rec) => {
+                                    // self.prefix = k.clone();
+
+                                    child_occupied_total[cur_level] += 1;
+                                    cur_level += 1;
+                                    node_count[cur_level] += 1;
+                                    node_iter_stack.push(ByteTrieNodeIter::new(&rec));
+                                }
+                            }
+
+                        }
+                    }
+                }
+            }
+        }
+
+
+    }
+
     fn cofreelen(btn: &ByteTrieNode<CoFree<V>>) -> usize {
         return btn.values.iter().rfold(0, |t, cf| {
             t + cf.value.is_some() as usize + cf.rec.as_ref().map(|r| Self::cofreelen(r)).unwrap_or(0)
