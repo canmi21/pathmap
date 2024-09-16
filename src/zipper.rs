@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::ptr;
 use crate::bit_sibling;
-use crate::bytetrie::{BytesTrieMap, ByteTrieNode, CoFree};
+use crate::trie_map::{BytesTrieMap, ByteTrieNode, CoFree};
 
 // CZ2 uses a stack machine
 // Store({a: 1}) // push

@@ -1,7 +1,7 @@
 #![allow(warnings)]
 pub mod ring;
 pub mod bytize;
-pub mod bytetrie;
+pub mod trie_map;
 pub mod zipper;
 
 
@@ -28,7 +28,7 @@ fn bit_sibling(pos: u8, x: u64, next: bool) -> u8 {
 mod tests {
     use std::collections::HashSet;
     use crate::bit_sibling;
-    use crate::bytetrie::BytesTrieMap;
+    use crate::trie_map::BytesTrieMap;
 
     #[test]
     fn btm_prefix() {

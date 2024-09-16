@@ -6,7 +6,7 @@ use std::ptr;
 use std::time::Instant;
 use ringmap::ring::*;
 use ringmap::bytize::*;
-use ringmap::bytetrie::BytesTrieMap;
+use ringmap::trie_map::BytesTrieMap;
 
 // #[global_allocator]
 // static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

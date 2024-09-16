@@ -146,7 +146,7 @@ pub(crate) struct CoFree<V> where V : Clone {
 /// ["Bitwise trie with bitmap" Wikipedia article](https://en.wikipedia.org/wiki/Bitwise_trie_with_bitmap).
 ///
 /// ```
-/// # use ringmap::bytetrie::BytesTrieMap;
+/// # use ringmap::trie_map::BytesTrieMap;
 /// let mut map = BytesTrieMap::<String>::new();
 /// map.insert("one", "1".to_string());
 /// map.insert("two", "2".to_string());

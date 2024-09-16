@@ -3,7 +3,7 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use divan::{Divan, Bencher, black_box};
 
 use ringmap::ring::*;
-use ringmap::bytetrie::BytesTrieMap;
+use ringmap::trie_map::BytesTrieMap;
 
 fn main() {
     // Run registered benchmarks.

@@ -1,4 +1,4 @@
-use crate::bytetrie::{BytesTrieMap, ByteTrieNode, ShortTrieMap, CoFree};
+use crate::trie_map::{BytesTrieMap, ByteTrieNode, ShortTrieMap, CoFree};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::{mem, ptr};
