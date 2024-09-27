@@ -8,7 +8,8 @@
 //! ## Move by Absolute Distance or by Trie Features
 //!
 //! Zippers may be moved either by stepping an absolute number of elements, or by jumping to features
-//! such as branches and values.  In general, moving by jumping will be faster.
+//! such as forks and values.  In general, moving by jumping will be faster because it can skip over
+//! multiple key bytes with one jump.
 //!
 //! The stepping methods are:
 //! - [descend_indexed_branch](zipper::Zipper::descend_indexed_branch)
@@ -518,7 +519,7 @@ impl<'a, 'k, V : Clone> ReadZipper<'a, 'k, V> {
         }
     }
 
-    /// Identical in effect to [Self::descend_to] with a 1-byte key argument
+    /// Identical in effect to [descend_to](Self::descend_to) with a 1-byte key argument
     pub fn descend_to_byte(&mut self, k: u8) -> bool {
         self.prepare_buffers();
         debug_assert!(self.is_regularized());
@@ -533,7 +534,7 @@ impl<'a, 'k, V : Clone> ReadZipper<'a, 'k, V> {
         self.focus_node.node_contains_partial_key(self.node_key())
     }
 
-    /// Ascends the zipper up a single byte.  Equivalent to `ascend(1)`
+    /// Ascends the zipper up a single byte.  Equivalent to [`ascend(1)`](Self::ascend)
     pub fn ascend_byte(&mut self) -> bool {
         if self.excess_key_len() == 0 {
             match self.ancestors.pop() {
@@ -549,7 +550,9 @@ impl<'a, 'k, V : Clone> ReadZipper<'a, 'k, V> {
     }
 
     /// Systematically advances to the next value accessible from the zipper, traversing in a depth-first
-    /// order.  Returns a reference to the value
+    /// order
+    ///
+    /// Returns a reference to the value, or `None` if the focus has reached the root.
     pub fn to_next_val(&mut self) -> Option<&'a V> {
         self.prepare_buffers();
         loop {
@@ -600,7 +603,8 @@ impl<'a, 'k, V : Clone> ReadZipper<'a, 'k, V> {
         }
     }
 
-    /// Advances the zipper to visit every existing path within the trie in a depth-first order
+    /// Advances the zipper, one byte at a time, to visit every existing path within the trie in a 
+    /// depth-first order
     ///
     /// Returns `true` if the position of the zipper has moved, or `false` if the zipper has returned
     /// to the root
@@ -796,8 +800,11 @@ impl<'a, 'k, V : Clone> ReadZipper<'a, 'k, V> {
 
     /// Descends the zipper's focus one step into the first child branch in a depth-first traversal
     ///
-    /// NOTE: This method should have identical behavior to `descend_indexed_branch(0)`, although with
-    /// slightly less overhead
+    /// Returns `true` if the zipper's focus has descended, or `false` if the zipper was already at a leaf.
+    ///
+    /// NOTE: This method should have identical behavior to [descend_indexed_branch(0)](Self::descend_indexed_branch),
+    /// although with slightly less overhead.  Use this method in conjunction with [to_next_sibling_byte](Self::to_next_sibling_byte)
+    /// to efficiently iterate all child branches below the focus.
     pub fn descend_first_byte(&mut self) -> bool {
         self.prepare_buffers();
         debug_assert!(self.is_regularized());
@@ -839,8 +846,9 @@ impl<'a, 'k, V : Clone> ReadZipper<'a, 'k, V> {
         }
     }
 
-    /// GOAT, should unify this with to_sibling
+    /// Moves the focus from a child branch to the next adjacent sibling, sharing a parent one byte above the focus
     ///
+    /// Returns `true` if the zipper's focus has moved, or `false` if there is no adjacent sibling byte.
     pub fn to_next_sibling_byte(&mut self) -> bool {
         self.prepare_buffers();
         if self.prefix_buf.len() == 0 {
