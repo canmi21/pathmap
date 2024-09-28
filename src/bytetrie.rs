@@ -135,10 +135,132 @@ impl <'a, V : Clone> BytesTrieMapCursor<'a, V> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct CoFree<V> where V : Clone {
+pub struct CoFree<V> where V : Clone {
     pub(crate) rec: *mut ByteTrieNode<CoFree<V>>,
     pub(crate) value: Option<V>
 }
+
+// BOTH_EMPTY(, )
+// FIRST_EMPTY(, ab)
+// SECOND_EMPTY(pq, )
+// DISJOINT(abcd, xyz), DISJOINT(abc, xyzw), DISJOINT(abc, xyz)
+// PREFIX_OF(ab, abcd)
+// PREFIXED_BY(abcd, a)
+// SHARING(abc, abpq)
+// EQUALS(abcd, abcd)
+
+enum PrefixComparison {
+    BothEmpty,
+    FirstEmpty,
+    SecondEmpty,
+    Disjoint,
+    PrefixOf,
+    PrefixedBy,
+    Sharing,
+    Equals,
+}
+
+fn compare_prefix(left: &[u8], right: &[u8], n: &mut usize) -> PrefixComparison {
+    use PrefixComparison::*;
+    let left_len = left.len();
+    let right_len = right.len();
+    if left_len == 0 && right_len == 0 { return BothEmpty }
+    if left_len == 0 { return FirstEmpty }
+    if right_len == 0 { return SecondEmpty }
+    if unsafe { left.get_unchecked(0) != right.get_unchecked(0) } { return Disjoint }
+
+    *n = 1;
+    loop {
+        let left_finished = *n == left_len;
+        let right_finished = *n == right_len;
+        if left_finished && right_finished { return Equals }
+        if left_finished { return PrefixOf }
+        if right_finished { return PrefixedBy }
+        if unsafe { left.get_unchecked(*n) != right.get_unchecked(*n) } { return Sharing }
+        *n += 1;
+    }
+}
+
+pub fn insert_tail<K: AsRef<[u8]>>(btm: &mut BytesTrieMap<Box<[u8]>>, k: K) -> bool {
+    let k = k.as_ref();
+    let mut node = &mut btm.root;
+
+    for i in 0..k.len() - 1 {
+        let cf = node.update(k[i], || CoFree{rec: ptr::null_mut(), value: None});
+
+        node = match unsafe{ cf.rec.as_mut() } {
+            Some(r) => { r }
+            None => {
+                match cf.value.as_ref() {
+                    None => {
+                        cf.value = Some(k[i+1..].into());
+                    }
+                    Some(ab) => {
+                        use PrefixComparison::*;
+                        let existing = &ab[..];
+                        let inserting = &k[i+1..];
+                        let mut shared = 0;
+                        match compare_prefix(existing, inserting, &mut shared) {
+                            BothEmpty => { /* nothing needs to be done */ }
+                            FirstEmpty => { panic!("FirstEmpty not implemented yet") }
+                            SecondEmpty => { panic!("SecondEmpty not implemented yet") }
+                            Disjoint => {
+                                // add a node with the two diverging bytes added to it
+                                // as values, use the respective continuations
+                                let mut l = ByteTrieNode::new();
+                                l.insert(existing[0], CoFree{ rec: ptr::null_mut(), value: Some(existing[1..].into()) });
+                                l.insert(inserting[0], CoFree{ rec: ptr::null_mut(), value: Some(inserting[1..].into()) });
+
+                                let lbox =  Box::new(l);
+                                let ptr = Box::leak(lbox);
+                                cf.rec = ptr;
+                                cf.value = None;
+                            }
+                            PrefixOf => { panic!("PrefixOf not implemented yet") }
+                            PrefixedBy => { panic!("PrefixedBy not implemented yet") }
+                            Sharing => {
+                                // create a chain of length `shared`
+                                // add a node with the two diverging bytes added to it
+                                // as values, use the respective continuations
+                                let k_ = &existing[..shared];
+                                let mut l = ByteTrieNode::new();
+                                let mut node_ = &mut l;
+
+                                for i in 0..k_.len() {
+                                    let cf_ = node_.update(k_[i], || CoFree{rec: ptr::null_mut(), value: None});
+
+                                    node_ = match unsafe{ cf_.rec.as_mut() } {
+                                        Some(r) => { r }
+                                        None => {
+                                            let l_ = ByteTrieNode::new();
+                                            let ptr_ = Box::leak(Box::new(l_));
+                                            cf_.rec = ptr_;
+                                            unsafe{ &mut *ptr_ }
+                                        }
+                                    }
+                                }
+
+                                node_.insert(existing[shared], CoFree{ rec: ptr::null_mut(), value: Some(existing[shared + 1..].into()) });
+                                node_.insert(inserting[shared], CoFree{ rec: ptr::null_mut(), value: Some(inserting[shared + 1..].into()) });
+
+                                let lbox =  Box::new(l);
+                                let ptr = Box::leak(lbox);
+                                cf.rec = ptr;
+                                cf.value = None;
+                            }
+                            Equals => { /* nothing needs to be done */ }
+                        }
+                    }
+                }
+                return false
+            }
+        }
+    }
+
+    // todo if prefix
+    true
+}
+
 
 /// A map type that uses byte slices `&[u8]` as keys
 ///
