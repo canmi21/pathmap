@@ -1,6 +1,7 @@
 
 use core::fmt::{Debug, Formatter};
 use core::ptr;
+use core::cell::UnsafeCell;
 use std::collections::HashMap;
 
 //OPTIMIZATION QUESTION 2, a note on Rc vs. rclite: Rc's payload bloat is 16 bytes, while rclite's is much smaller <8 Bytes.
@@ -43,7 +44,6 @@ use crate::line_list_node::{LineListNode, merge_into_dense_node};
 //NOTE: This: `core::array::from_fn(|i| i as u8);` ought to work, but https://github.com/rust-lang/rust/issues/109341
 const ALL_BYTES: [u8; 256] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255];
 
-#[derive(Clone)]
 pub struct DenseByteNode<V> {
     pub mask: [u64; 4],
     #[cfg(all(feature = "all_dense_nodes", feature = "smallvec"))]
@@ -51,8 +51,26 @@ pub struct DenseByteNode<V> {
     #[cfg(all(not(feature = "all_dense_nodes"), feature = "smallvec"))]
     values: SmallVec<[CoFree<V>; 4]>,
     #[cfg(not(feature = "smallvec"))]
-    values: Vec<CoFree<V>>,
+    values: Vec<UnsafeCell<CoFree<V>>>,
 }
+
+impl<V: Clone> Clone for DenseByteNode<V> {
+    fn clone(&self) -> Self {
+        let mut values = Vec::with_capacity(self.values.len());
+        for cf in self.values.iter() {
+            let cf = unsafe{ &*cf.get() };
+            values.push(UnsafeCell::new(cf.clone()));
+        }
+        Self {
+            mask: self.mask,
+            values: values,
+        }
+    }
+}
+
+//GOAT, this is just a hack to test the extent of the perf cost of UnsafeCell
+unsafe impl<V: Send + Sync> Send for DenseByteNode<V> {}
+unsafe impl<V: Send + Sync> Sync for DenseByteNode<V> {}
 
 impl<V: Send + Sync> Default for DenseByteNode<V> {
     fn default() -> Self {
@@ -66,7 +84,7 @@ impl <V: Send + Sync> Debug for DenseByteNode<V> {
         // like serialization for inspection using standard tools.
         write!(f, "DenseByteNode {{count={}", self.values.len())?;
         self.for_each_item(|node, c, i| {
-            let cf = node.values.get(i).unwrap();
+            let cf = node.get_cf(i);
             let _ = write!(f, ", {c}:(val={} child={})", cf.value.is_some(), cf.rec.is_some());
         });
         write!(f, "}}")
@@ -116,6 +134,16 @@ impl<V: Send + Sync> DenseByteNode<V> {
     }
 
     #[inline]
+    fn get_cf(&self, i: usize) -> &CoFree<V> {
+        unsafe{ &*self.values.get_unchecked(i).get() }
+    }
+
+    #[inline]
+    fn get_cf_mut(&mut self, i: usize) -> &mut CoFree<V> {
+        unsafe{ &mut *self.values.get_unchecked_mut(i).get() }
+    }
+
+    #[inline]
     fn set(&mut self, k: u8) -> () {
         // println!("setting k {} : {} {:b}", k, ((k & 0b11000000) >> 6) as usize, 1u64 << (k & 0b00111111));
         self.mask[((k & 0b11000000) >> 6) as usize] |= 1u64 << (k & 0b00111111);
@@ -144,7 +172,7 @@ impl<V: Send + Sync> DenseByteNode<V> {
             let ix = self.left(k) as usize;
             self.set(k);
             let new_cf = CoFree {rec: None, value: None };
-            self.values.insert(ix, new_cf);
+            self.values.insert(ix, UnsafeCell::new(new_cf));
             true
         }
     }
@@ -155,14 +183,14 @@ impl<V: Send + Sync> DenseByteNode<V> {
     pub fn set_child(&mut self, k: u8, node: TrieNodeODRc<V>) -> Option<TrieNodeODRc<V>> {
         let ix = self.left(k) as usize;
         if self.contains(k) {
-            let cf = unsafe { self.values.get_unchecked_mut(ix) };
+            let cf = self.get_cf_mut(ix);
             let mut old_child = Some(node);
             core::mem::swap(&mut old_child, &mut cf.rec);
             old_child
         } else {
             self.set(k);
             let new_cf = CoFree {rec: Some(node), value: None };
-            self.values.insert(ix, new_cf);
+            self.values.insert(ix, UnsafeCell::new(new_cf));
             None
         }
     }
@@ -173,7 +201,7 @@ impl<V: Send + Sync> DenseByteNode<V> {
     pub fn join_child_into(&mut self, k: u8, node: TrieNodeODRc<V>) where V: Clone + Lattice {
         let ix = self.left(k) as usize;
         if self.contains(k) {
-            let cf = unsafe { self.values.get_unchecked_mut(ix) };
+            let cf = self.get_cf_mut(ix);
             match &mut cf.rec {
                 Some(existing_node) => {
                     let joined = existing_node.join(&node);
@@ -184,7 +212,7 @@ impl<V: Send + Sync> DenseByteNode<V> {
         } else {
             self.set(k);
             let new_cf = CoFree {rec: Some(node), value: None };
-            self.values.insert(ix, new_cf);
+            self.values.insert(ix, UnsafeCell::new(new_cf));
         }
     }
 
@@ -192,14 +220,14 @@ impl<V: Send + Sync> DenseByteNode<V> {
     pub fn set_val(&mut self, k: u8, val: V) -> Option<V> {
         let ix = self.left(k) as usize;
         if self.contains(k) {
-            let cf = unsafe { self.values.get_unchecked_mut(ix) };
+            let cf = self.get_cf_mut(ix);
             let result = core::mem::take(&mut cf.value);
             cf.value = Some(val);
             result
         } else {
             self.set(k);
             let new_cf = CoFree {rec: None, value: Some(val) };
-            self.values.insert(ix, new_cf);
+            self.values.insert(ix, UnsafeCell::new(new_cf));
             None
         }
     }
@@ -209,7 +237,7 @@ impl<V: Send + Sync> DenseByteNode<V> {
         let ix = self.left(k) as usize;
         debug_assert!(self.contains(k));
 
-        let cf = unsafe { self.values.get_unchecked_mut(ix) };
+        let cf = self.get_cf_mut(ix);
         let result = core::mem::take(&mut cf.value);
 
         if cf.rec.is_none() {
@@ -224,7 +252,7 @@ impl<V: Send + Sync> DenseByteNode<V> {
     pub fn join_val_into(&mut self, k: u8, val: V) where V: Lattice {
         let ix = self.left(k) as usize;
         if self.contains(k) {
-            let cf = unsafe { self.values.get_unchecked_mut(ix) };
+            let cf = self.get_cf_mut(ix);
             match &mut cf.value {
                 Some(existing_val) => {
                     let joined = existing_val.join(&val);
@@ -235,7 +263,7 @@ impl<V: Send + Sync> DenseByteNode<V> {
         } else {
             self.set(k);
             let new_cf = CoFree {rec: None, value: Some(val) };
-            self.values.insert(ix, new_cf);
+            self.values.insert(ix, UnsafeCell::new(new_cf));
         }
     }
 
@@ -303,7 +331,7 @@ impl<V: Send + Sync> DenseByteNode<V> {
     fn remove(&mut self, k: u8) -> Option<CoFree<V>> {
         if self.contains(k) {
             let ix = self.left(k) as usize;
-            let v = self.values.remove(ix);
+            let v = self.values.remove(ix).into_inner();
             self.clear(k);
             return Some(v);
         }
@@ -315,7 +343,7 @@ impl<V: Send + Sync> DenseByteNode<V> {
         if self.contains(k) {
             let ix = self.left(k) as usize;
             // println!("pos ix {} {} {:b}", pos, ix, self.mask);
-            unsafe { Some(self.values.get_unchecked(ix)) }
+            Some(self.get_cf(ix))
         } else {
             None
         }
@@ -325,7 +353,7 @@ impl<V: Send + Sync> DenseByteNode<V> {
     fn get_mut(&mut self, k: u8) -> Option<&mut CoFree<V>> {
         if self.contains(k) {
             let ix = self.left(k) as usize;
-            unsafe { Some(self.values.get_unchecked_mut(ix)) }
+            Some(self.get_cf_mut(ix))
         } else {
             None
         }
@@ -340,14 +368,14 @@ impl<V: Send + Sync> DenseByteNode<V> {
     pub unsafe fn get_unchecked(&self, k: u8) -> &CoFree<V> {
         let ix = self.left(k) as usize;
         // println!("pos ix {} {} {:b}", pos, ix, self.mask);
-        self.values.get_unchecked(ix)
+        self.get_cf(ix)
     }
 
     #[inline]
     unsafe fn get_unchecked_mut(&mut self, k: u8) -> &mut CoFree<V> {
         let ix = self.left(k) as usize;
         // println!("pos ix {} {} {:b}", pos, ix, self.mask);
-        self.values.get_unchecked_mut(ix)
+        self.get_cf_mut(ix)
     }
 
     #[inline]
@@ -428,7 +456,7 @@ impl<V: Send + Sync> DenseByteNode<V> {
         //Go over each populated entry in the node
         self.for_each_item(|self_node, key_byte, cf_idx| {
             if other.node_contains_partial_key(&[key_byte]) {
-                let cf = unsafe{ self_node.values.get_unchecked(cf_idx) };
+                let cf = self_node.get_cf(cf_idx);
                 let mut new_cf = CoFree::new();
 
                 //If there is a value at this key_byte, and the other node contains a value, subtract them
@@ -459,12 +487,12 @@ impl<V: Send + Sync> DenseByteNode<V> {
                 //If we ended up with a value or a link in the CF, insert it into a new node
                 if new_cf.rec.is_some() || new_cf.value.is_some() {
                     new_node.set(key_byte);
-                    new_node.values.push(new_cf);
+                    new_node.values.push(UnsafeCell::new(new_cf));
                 }
             } else {
                 new_node.set(key_byte);
-                let cf = unsafe{ self_node.values.get_unchecked(cf_idx) };
-                new_node.values.push(cf.clone());
+                let cf = self_node.get_cf(cf_idx);
+                new_node.values.push(UnsafeCell::new(cf.clone()));
             }
         });
         if new_node.is_empty() {
@@ -483,12 +511,12 @@ impl<V: Send + Sync> DenseByteNode<V> {
         //Go over each populated entry in the node
         self.for_each_item(|self_node, key_byte, cf_idx| {
             if other.node_contains_partial_key(&[key_byte]) {
-                let cf = unsafe{ self_node.values.get_unchecked(cf_idx) };
+                let cf = self_node.get_cf(cf_idx);
 
                 //If there is a comparable value in other, keep the whole cf
                 if let Some(_) = other.node_get_val(&[key_byte]) {
                     new_node.set(key_byte);
-                    new_node.values.push(cf.clone());
+                    new_node.values.push(UnsafeCell::new(cf.clone()));
                 } else {
 
                     //If there is an onward link in the CF and other node, continue the restriction recursively
@@ -506,7 +534,7 @@ impl<V: Send + Sync> DenseByteNode<V> {
                                 new_cf.rec = restricted; //GOAT, optimization opportunity to track when we can reuse a whole node unmodified. See commented out code above.
                                 if new_cf.rec.is_some() {
                                     new_node.set(key_byte);
-                                    new_node.values.push(new_cf);
+                                    new_node.values.push(UnsafeCell::new(new_cf));
                                 }
                             },
                             None => { }
@@ -812,7 +840,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for DenseByteNode<V> {
         let k = key[0];
         if self.contains(k) {
             let ix = self.left(k) as usize;
-            let cf = unsafe { self.values.get_unchecked_mut(ix) };
+            let cf = self.get_cf_mut(ix);
             match (cf.rec.is_some(), cf.value.is_some()) {
                 (true, true) => {
                     cf.rec = None;
@@ -900,6 +928,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for DenseByteNode<V> {
 
         //IMPL B "Arithmetic"
         return self.values.iter().rfold(0, |t, cf| {
+            let cf = unsafe{ &*cf.get() };
             t + cf.value.is_some() as usize + cf.rec.as_ref().map(|r| val_count_below_node(r, cache)).unwrap_or(0)
         });
     }
@@ -951,6 +980,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for DenseByteNode<V> {
         match pair {
             None => { return (None, None) }
             Some((item, cf)) => {
+                let cf = unsafe{ &*cf.get() };
                 (self.item_idx_to_prefix::<FORWARD>(item), cf.rec.as_ref().map(|cf| &*cf.borrow()))
             }
         }
@@ -960,7 +990,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for DenseByteNode<V> {
         debug_assert_eq!(key.len(), 0);
         debug_assert!(self.values.len() > 0);
 
-        let cf = unsafe{ self.values.get_unchecked(0) };
+        let cf = self.get_cf(0);
         let prefix = self.item_idx_to_prefix::<true>(0).unwrap() as usize;
         (Some(&ALL_BYTES[prefix..=prefix]), cf.rec.as_ref().map(|cf| &*cf.borrow()))
     }
@@ -1127,10 +1157,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for DenseByteNode<V> {
         match self.values.len() {
             0 => { None },
             1 => {
-                //WARNING: Don't be tempted to swap the node itself with its first child.  This feels like it
-                // might be an optimization, but it would be a memory leak because the other node will now
-                // hold an Rc to itself.
-                match self.values.pop().unwrap().rec {
+                match self.values.pop().unwrap().into_inner().rec {
                     Some(mut child) => {
                         if byte_cnt > 1 {
                             child.make_mut().drop_head_dyn(byte_cnt-1)
@@ -1144,6 +1171,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for DenseByteNode<V> {
             _ => {
                 let mut new_node = Self::new();
                 while let Some(cf) = self.values.pop() {
+                    let cf = cf.into_inner();
                     let child = if byte_cnt > 1 {
                         cf.rec.and_then(|mut child| child.make_mut().drop_head_dyn(byte_cnt-1))
                     } else {
@@ -1322,7 +1350,7 @@ impl<V: Lattice + Clone + Send + Sync> Lattice for DenseByteNode<V> {
         let jmc = [jm[0].count_ones(), jm[1].count_ones(), jm[2].count_ones(), jm[3].count_ones()];
 
         let len = (jmc[0] + jmc[1] + jmc[2] + jmc[3]) as usize;
-        let mut v: Vec<CoFree<V>> = Vec::with_capacity(len);
+        let mut v: Vec<UnsafeCell<CoFree<V>>> = Vec::with_capacity(len);
         let new_v = v.spare_capacity_mut();
 
         let mut l = 0;
@@ -1336,23 +1364,23 @@ impl<V: Lattice + Clone + Send + Sync> Lattice for DenseByteNode<V> {
                 let index = lm.trailing_zeros();
                 // println!("{}", index);
                 if ((1u64 << index) & mm[i]) != 0 {
-                    let lv = unsafe { self.values.get_unchecked(l) };
-                    let rv = unsafe { other.values.get_unchecked(r) };
+                    let lv = self.get_cf(l);
+                    let rv = other.get_cf(r);
                     let jv = lv.join(rv);
                     debug_assert!(jv.rec.is_some() || jv.value.is_some());
                     // println!("pushing lv rv j {:?} {:?} {:?}", lv, rv, jv);
-                    unsafe { new_v.get_unchecked_mut(c).write(jv) };
+                    unsafe { new_v.get_unchecked_mut(c).write(UnsafeCell::new(jv)) };
                     l += 1;
                     r += 1;
                 } else if ((1u64 << index) & self.mask[i]) != 0 {
-                    let lv = unsafe { self.values.get_unchecked(l) };
+                    let lv = self.get_cf(l);
                     // println!("pushing lv {:?}", lv);
-                    unsafe { new_v.get_unchecked_mut(c).write(lv.clone()) };
+                    unsafe { new_v.get_unchecked_mut(c).write(UnsafeCell::new(lv.clone())) };
                     l += 1;
                 } else {
-                    let rv = unsafe { other.values.get_unchecked(r) };
+                    let rv = other.get_cf(r);
                     // println!("pushing rv {:?}", rv);
-                    unsafe { new_v.get_unchecked_mut(c).write(rv.clone()) };
+                    unsafe { new_v.get_unchecked_mut(c).write(UnsafeCell::new(rv.clone())) };
                     r += 1;
                 }
                 lm ^= 1u64 << index;
@@ -1391,19 +1419,19 @@ impl<V: Lattice + Clone + Send + Sync> Lattice for DenseByteNode<V> {
                 let index = lm.trailing_zeros();
                 // println!("{}", index);
                 if ((1u64 << index) & mm[i]) != 0 {
-                    let mut lv = unsafe { std::ptr::read(self.values.get_unchecked_mut(l)) };
-                    let rv = unsafe { std::ptr::read(other.values.get_unchecked_mut(r)) };
+                    let mut lv = unsafe { std::ptr::read(self.values.get_unchecked_mut(l)) }.into_inner();
+                    let rv = unsafe { std::ptr::read(other.values.get_unchecked_mut(r)) }.into_inner();
                     lv.join_into(rv);
-                    unsafe { new_v.get_unchecked_mut(c).write(lv) };
+                    unsafe { new_v.get_unchecked_mut(c).write(UnsafeCell::new(lv)) };
                     l += 1;
                     r += 1;
                 } else if ((1u64 << index) & self.mask[i]) != 0 {
-                    let lv = unsafe { std::ptr::read(self.values.get_unchecked_mut(l)) };
-                    unsafe { new_v.get_unchecked_mut(c).write(lv) };
+                    let lv = unsafe { std::ptr::read(self.values.get_unchecked_mut(l)) }.into_inner();
+                    unsafe { new_v.get_unchecked_mut(c).write(UnsafeCell::new(lv)) };
                     l += 1;
                 } else {
-                    let rv = unsafe { std::ptr::read(other.values.get_unchecked_mut(r)) };
-                    unsafe { new_v.get_unchecked_mut(c).write(rv) };
+                    let rv = unsafe { std::ptr::read(other.values.get_unchecked_mut(r)) }.into_inner();
+                    unsafe { new_v.get_unchecked_mut(c).write(UnsafeCell::new(rv)) };
                     r += 1;
                 }
                 lm ^= 1u64 << index;
@@ -1447,11 +1475,11 @@ impl<V: Lattice + Clone + Send + Sync> Lattice for DenseByteNode<V> {
                 let index = lm.trailing_zeros();
 
                 if ((1u64 << index) & mm[i]) != 0 {
-                    let lv = unsafe { self.values.get_unchecked(l) };
-                    let rv = unsafe { other.values.get_unchecked(r) };
+                    let lv = self.get_cf(l);
+                    let rv = other.get_cf(r);
                     let jv = lv.meet(rv);
                     if jv.rec.is_some() || jv.value.is_some() {
-                        unsafe { new_v.get_unchecked_mut(c).write(jv) };
+                        unsafe { new_v.get_unchecked_mut(c).write(UnsafeCell::new(jv)) };
                         c += 1;
                     } else {
                         mm[i] ^= 1u64 << index;
@@ -1500,7 +1528,7 @@ impl<V: Lattice + Clone + Send + Sync> Lattice for DenseByteNode<V> {
 
                 let to_join: Vec<&CoFree<V>> = xs.iter().enumerate().filter_map(|(i, x)| x.get(i as u8)).collect();
                 let joined = Lattice::join_all(&to_join[..]);
-                unsafe { new_v.get_unchecked_mut(c).write(joined) };
+                unsafe { new_v.get_unchecked_mut(c).write(UnsafeCell::new(joined)) };
 
                 lm ^= 1u64 << index;
                 c += 1;
@@ -1551,7 +1579,7 @@ impl <V : PartialDistributiveLattice + Clone + Send + Sync> PartialDistributiveL
     }
 }
 
-impl <V: Clone> PartialQuantale for DenseByteNode<V> {
+impl <V: Clone + Send + Sync> PartialQuantale for DenseByteNode<V> {
     fn prestrict(&self, other: &Self) -> Option<Self> where Self: Sized {
         // TODO this technically doesn't need to calculate and iterate over jm
         // iterating over mm and calculating m such that the following suffices
@@ -1581,11 +1609,11 @@ impl <V: Clone> PartialQuantale for DenseByteNode<V> {
                 let index = lm.trailing_zeros();
 
                 if ((1u64 << index) & mm[i]) != 0 {
-                    let lv = unsafe { self.values.get_unchecked(l) };
-                    let rv = unsafe { other.values.get_unchecked(r) };
+                    let lv = self.get_cf(l);
+                    let rv = other.get_cf(r);
                     // println!("dense prestrict {}", index as usize + i*64);
                     if let Some(jv) = lv.prestrict(rv) {
-                        unsafe { new_v.get_unchecked_mut(c).write(jv) };
+                        unsafe { new_v.get_unchecked_mut(c).write(UnsafeCell::new(jv)) };
                         c += 1;
                     } else {
                         mm[i] ^= 1u64 << index;
