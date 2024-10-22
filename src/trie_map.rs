@@ -1,9 +1,9 @@
 use core::cell::UnsafeCell;
 
-use num_traits::{PrimInt, zero};
+use crate::ring::{DistributiveLattice, Lattice, PartialDistributiveLattice, PartialQuantale};
 use crate::trie_node::*;
 use crate::zipper::*;
-use crate::ring::{Lattice, DistributiveLattice, PartialDistributiveLattice, PartialQuantale};
+use num_traits::{zero, PrimInt};
 
 /// A map type that uses byte slices `&[u8]` as keys
 ///
@@ -36,7 +36,7 @@ impl<V: Clone + Send + Sync> Clone for BytesTrieMap<V> {
 impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     #[inline]
     pub(crate) fn root(&self) -> &TrieNodeODRc<V> {
-        unsafe{ &*self.root.get() }
+        unsafe { &*self.root.get() }
     }
     #[inline]
     pub(crate) fn root_mut(&mut self) -> &mut TrieNodeODRc<V> {
@@ -55,10 +55,20 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     /// Internal Method.  Creates a new BytesTrieMap with the supplied root node
     #[inline]
     pub(crate) fn new_with_root(root: TrieNodeODRc<V>) -> Self {
-        Self { root: UnsafeCell::new(root) }
+        Self {
+            root: UnsafeCell::new(root),
+        }
     }
 
-    pub fn range<const BE : bool, R : PrimInt + std::ops::AddAssign + num_traits::ToBytes + std::fmt::Display>(start: R, stop: R, step: R, value: V) -> BytesTrieMap<V> {
+    pub fn range<
+        const BE: bool,
+        R: PrimInt + std::ops::AddAssign + num_traits::ToBytes + std::fmt::Display,
+    >(
+        start: R,
+        stop: R,
+        step: R,
+        value: V,
+    ) -> BytesTrieMap<V> {
         // #[cfg(feature = "all_dense_nodes")]
         // we can extremely efficiently generate ranges, but currently we're limited to range(0, BASE**j, k < BASE)
         // let root = crate::dense_byte_node::_so_range(step as u8, 4);
@@ -74,11 +84,21 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
         let mut i = start;
         let positive = step > zero();
         loop {
-            if positive { if i >= stop { break } }
-            else { if i <= step { break } }
+            if positive {
+                if i >= stop {
+                    break;
+                }
+            } else {
+                if i <= step {
+                    break;
+                }
+            }
             // println!("{}", i);
-            if BE { zipper.descend_to(i.to_be_bytes()); }
-            else { zipper.descend_to(i.to_le_bytes()); }
+            if BE {
+                zipper.descend_to(i.to_be_bytes());
+            } else {
+                zipper.descend_to(i.to_le_bytes());
+            }
             zipper.set_value(value.clone());
             zipper.reset();
 
@@ -103,24 +123,47 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     pub fn read_zipper(&self) -> ReadZipperUntracked<V> {
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_path_internal(self.root().borrow().as_tagged(), &[], Some(0), None, None)
+            ReadZipperUntracked::new_with_node_and_path_internal(
+                self.root().borrow().as_tagged(),
+                &[],
+                Some(0),
+                None,
+                None,
+            )
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_path_internal(self.root().borrow().as_tagged(), &[], Some(0), None)
+            ReadZipperUntracked::new_with_node_and_path_internal(
+                self.root().borrow().as_tagged(),
+                &[],
+                Some(0),
+                None,
+            )
         }
     }
 
     /// Creates a new [ReadZipper] with the specified path from the root of the map; This method is much more
     /// efficient than read_zipper_at_path, but means the resulting zipper is bound by the `'path` lifetime
-    pub fn read_zipper_at_borrowed_path<'a, 'path>(&'a self, path: &'path[u8]) -> ReadZipperUntracked<'a, 'path, V> {
+    pub fn read_zipper_at_borrowed_path<'a, 'path>(
+        &'a self,
+        path: &'path [u8],
+    ) -> ReadZipperUntracked<'a, 'path, V> {
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_path(self.root().borrow(), path.as_ref(), Some(path.len()), None)
+            ReadZipperUntracked::new_with_node_and_path(
+                self.root().borrow(),
+                path.as_ref(),
+                Some(path.len()),
+                None,
+            )
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_path(self.root().borrow(), path.as_ref(), Some(path.len()))
+            ReadZipperUntracked::new_with_node_and_path(
+                self.root().borrow(),
+                path.as_ref(),
+                Some(path.len()),
+            )
         }
     }
 
@@ -128,11 +171,20 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     pub fn read_zipper_at_path<'a>(&'a self, path: &[u8]) -> ReadZipperUntracked<'a, 'static, V> {
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_cloned_path(self.root().borrow(), path.as_ref(), Some(path.len()), None)
+            ReadZipperUntracked::new_with_node_and_cloned_path(
+                self.root().borrow(),
+                path.as_ref(),
+                Some(path.len()),
+                None,
+            )
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_cloned_path(self.root().borrow(), path.as_ref(), Some(path.len()))
+            ReadZipperUntracked::new_with_node_and_cloned_path(
+                self.root().borrow(),
+                path.as_ref(),
+                Some(path.len()),
+            )
         }
     }
 
@@ -149,7 +201,10 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     }
 
     /// Creates a new [WriteZipper] with the specified path from the root of the map
-    pub fn write_zipper_at_path<'a, 'path>(&'a mut self, path: &'path[u8]) -> WriteZipperUntracked<'a, 'path, V> {
+    pub fn write_zipper_at_path<'a, 'path>(
+        &'a mut self,
+        path: &'path [u8],
+    ) -> WriteZipperUntracked<'a, 'path, V> {
         #[cfg(debug_assertions)]
         {
             WriteZipperUntracked::new_with_node_and_path(self.root_mut(), path, None)
@@ -162,14 +217,14 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
 
     /// Creates a [ZipperHead] at the root of the map
     pub fn zipper_head(&mut self) -> ZipperHead<V> {
-        let root = unsafe{ &mut *self.root.get() };
+        let root = unsafe { &mut *self.root.get() };
         ZipperHead::new(root)
     }
 
     /// Returns an iterator over all key-value pairs within the map
     ///
     /// NOTE: This is much less efficient than using the [read_zipper](Self::read_zipper) method
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item=(Vec<u8>, &'a V)> + 'a {
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item = (Vec<u8>, &'a V)> + 'a {
         self.read_zipper().into_iter()
     }
 
@@ -208,8 +263,8 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
         zipper.path_exists()
     }
 
-//GOAT, in light of PathMap's behavior holistically an a potential collision with WriteZipper::insert_prefix,
-// `insert` really should be called set_value
+    //GOAT, in light of PathMap's behavior holistically an a potential collision with WriteZipper::insert_prefix,
+    // `insert` really should be called set_value
     /// Inserts `v` into the map at `k`.  Panics if `k` has a zero length
     ///
     /// Returns `Some(replaced_val)` if an existing value was replaced, otherwise returns `None` if
@@ -218,7 +273,7 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
         let k = k.as_ref();
 
         //NOTE: Here is the old impl traversing without the zipper.  Kept here for benchmarking purposes
-        // However, the zipper version is basically identical performance, within the margin of error 
+        // However, the zipper version is basically identical performance, within the margin of error
         // traverse_to_leaf_static_result(&mut self.root, k,
         // |node, remaining_key| node.node_set_val(remaining_key, v),
         // |_new_leaf_node, _remaining_key| None)
@@ -274,21 +329,21 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     ///
     /// WARNING: This is not a cheap method. It may have an order-N cost
     pub fn val_count(&self) -> usize {
-        return val_count_below_root(self.root().borrow())
+        return val_count_below_root(self.root().borrow());
     }
 
-    /// Returns a new `BytesTrieMap` where the paths in `self` are restricted by the paths leading to 
+    /// Returns a new `BytesTrieMap` where the paths in `self` are restricted by the paths leading to
     /// values in `other`
     pub fn restrict(&self, other: &Self) -> Self {
         match self.root().borrow().prestrict_dyn(other.root().borrow()) {
             Some(new_root) => Self::new_with_root(new_root),
-            None => Self::new()
+            None => Self::new(),
         }
     }
 }
 
 impl<V: Clone + Send + Sync, K: AsRef<[u8]>> FromIterator<(K, V)> for BytesTrieMap<V> {
-    fn from_iter<I: IntoIterator<Item=(K, V)>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         let mut map = Self::new();
         for (key, val) in iter {
             map.insert(key, val);
@@ -311,7 +366,7 @@ impl<V: Clone + Lattice + Send + Sync> Lattice for BytesTrieMap<V> {
     fn meet(&self, other: &Self) -> Self {
         match self.root().meet(other.root()) {
             Some(new_root) => Self::new_with_root(new_root),
-            None => Self::new()
+            None => Self::new(),
         }
     }
 
@@ -326,24 +381,40 @@ impl<V: Clone + Send + Sync + PartialDistributiveLattice> DistributiveLattice fo
     }
 }
 
-impl<V: Clone + Send + Sync + PartialDistributiveLattice> PartialDistributiveLattice for BytesTrieMap<V> {
+impl<V: Clone + Send + Sync + PartialDistributiveLattice> PartialDistributiveLattice
+    for BytesTrieMap<V>
+{
     fn psubtract(&self, other: &Self) -> Option<Self> {
         let s = self.root().subtract(other.root());
-        if s.borrow().node_is_empty() { None }
-        else { Some(Self::new_with_root(s)) }
+        if s.borrow().node_is_empty() {
+            None
+        } else {
+            Some(Self::new_with_root(s))
+        }
     }
 }
 
 impl<V: Clone + Send + Sync> PartialQuantale for BytesTrieMap<V> {
-    fn prestrict(&self, other: &Self) -> Option<Self> where Self: Sized {
-        self.root().prestrict(other.root()).map(|r| Self::new_with_root(r) )
+    fn prestrict(&self, other: &Self) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        self.root()
+            .prestrict(other.root())
+            .map(|r| Self::new_with_root(r))
+    }
+}
+
+impl<V: Clone + Send + Sync> Default for BytesTrieMap<V> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::trie_map::*;
     use crate::ring::Lattice;
+    use crate::trie_map::*;
 
     #[test]
     fn map_test() {
@@ -407,10 +478,17 @@ mod tests {
         assert_eq!(map.get("bbbbbbbbbb012345678901234567891").unwrap(), &31);
 
         map.insert("cccccccccc012345678901234567890123456789", 40);
-        assert_eq!(map.get("cccccccccc012345678901234567890123456789").unwrap(), &40);
+        assert_eq!(
+            map.get("cccccccccc012345678901234567890123456789").unwrap(),
+            &40
+        );
 
         map.insert("dddddddddd01234567890123456789012345678901234", 45);
-        assert_eq!(map.get("dddddddddd01234567890123456789012345678901234").unwrap(), &45);
+        assert_eq!(
+            map.get("dddddddddd01234567890123456789012345678901234")
+                .unwrap(),
+            &45
+        );
 
         map.insert("eeeeeeeeee01234567890123456789012345678901234567890123456789012345678901234567890123456789", 90);
         assert_eq!(map.get("eeeeeeeeee01234567890123456789012345678901234567890123456789012345678901234567890123456789").unwrap(), &90);
@@ -419,8 +497,23 @@ mod tests {
     #[test]
     fn map_contains_path_test() {
         let mut btm = BytesTrieMap::new();
-        let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
-        rs.iter().enumerate().for_each(|(i, r)| { btm.insert(r.as_bytes(), i); });
+        let rs = [
+            "arrow",
+            "bow",
+            "cannon",
+            "roman",
+            "romane",
+            "romanus",
+            "romulus",
+            "rubens",
+            "ruber",
+            "rubicon",
+            "rubicundus",
+            "rom'i",
+        ];
+        rs.iter().enumerate().for_each(|(i, r)| {
+            btm.insert(r.as_bytes(), i);
+        });
 
         assert_eq!(btm.contains_path(b"can"), true);
         assert_eq!(btm.contains_path(b"cannon"), true);
@@ -464,8 +557,25 @@ mod tests {
 
     #[test]
     fn map_update_test() {
-        let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
-        let mut btm: BytesTrieMap<u64> = rs.into_iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
+        let rs = [
+            "arrow",
+            "bow",
+            "cannon",
+            "roman",
+            "romane",
+            "romanus",
+            "romulus",
+            "rubens",
+            "ruber",
+            "rubicon",
+            "rubicundus",
+            "rom'i",
+        ];
+        let mut btm: BytesTrieMap<u64> = rs
+            .into_iter()
+            .enumerate()
+            .map(|(i, k)| (k, i as u64))
+            .collect();
 
         let mut zipper = btm.write_zipper_at_path(b"cannon");
         assert_eq!(zipper.get_value_or_insert(42), &2);
@@ -479,7 +589,17 @@ mod tests {
     fn map_join_test() {
         let mut a = BytesTrieMap::<usize>::new();
         let mut b = BytesTrieMap::<usize>::new();
-        let rs = ["Abbotsford", "Abbottabad", "Abcoude", "Abdul Hakim", "Abdulino", "Abdullahnagar", "Abdurahmoni Jomi", "Abejorral", "Abelardo Luz"];
+        let rs = [
+            "Abbotsford",
+            "Abbottabad",
+            "Abcoude",
+            "Abdul Hakim",
+            "Abdulino",
+            "Abdullahnagar",
+            "Abdurahmoni Jomi",
+            "Abejorral",
+            "Abelardo Luz",
+        ];
         for (i, path) in rs.into_iter().enumerate() {
             if i % 2 == 0 {
                 a.insert(path, i);
