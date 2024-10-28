@@ -279,21 +279,22 @@ impl ZipperTracker<TrackingWrite> {
 
 impl<M: TrackingMode> Drop for ZipperTracker<M> {
     fn drop(&mut self) {
-        self.all_paths.modify_at(&self.this_path, |write_zipper| {
-            let value = write_zipper.get_value_mut();
-            match value {
-                Some(IsTracking::WriteZipper) => {
-                    write_zipper.remove_value();
-                }
-                Some(IsTracking::ReadZipper(cnt)) => {
-                    if *cnt == NonZero::<u32>::MIN {
-                        write_zipper.remove_value();
-                    } else {
-                        *cnt = unsafe { NonZero::new_unchecked(cnt.get() - 1) }
+        let removed =
+            self.all_paths.modify_at(&self.this_path, |write_zipper| {
+                match write_zipper.get_value_mut() {
+                    Some(IsTracking::WriteZipper) => write_zipper.remove_value(),
+                    Some(IsTracking::ReadZipper(cnt)) => {
+                        if *cnt == NonZero::<u32>::MIN {
+                            write_zipper.remove_value()
+                        } else {
+                            let result = Some(IsTracking::ReadZipper(cnt.clone()));
+                            *cnt = unsafe { NonZero::new_unchecked(cnt.get() - 1) };
+                            result
+                        }
                     }
+                    _ => None,
                 }
-                _ => unreachable!(),
-            };
-        });
+            });
+        removed.or_else(|| panic!("Lock is missing.\nContents {:#?}", self));
     }
 }
