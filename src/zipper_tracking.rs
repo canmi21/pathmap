@@ -138,22 +138,24 @@ impl SharedTrackerPaths {
     fn try_add_writer(&self, path: &[u8]) -> Result<(), Conflict> {
         let try_add_writer_internal = |write_zipper: &mut WriteZipperUntracked<IsTracking>| {
             if write_zipper.path_exists() {
+                Conflict::check_for_write_conflict_at(write_zipper)?;
                 // check for dangling paths
                 Conflict::check_subtree_for_conflict(
                     write_zipper,
                     |_| true, /* any lock causes conflict */
-                )
-            } else {
-                write_zipper.ascend_until();
+                )?
+            }
+            let ascended = write_zipper.ascend_until_value();
 
-                Conflict::check_for_write_conflict_at(write_zipper)?;
+            Conflict::check_for_write_conflict_at(write_zipper)?;
 
+            if ascended {
                 let prefix_len = write_zipper.path().len();
                 let suffix = &path[prefix_len..];
                 write_zipper.descend_to(suffix);
-                write_zipper.set_value(IsTracking::WriteZipper);
-                Ok(())
             }
+            write_zipper.set_value(IsTracking::WriteZipper);
+            Ok(())
         };
 
         self.modify_at(path, try_add_writer_internal)
@@ -177,13 +179,15 @@ impl SharedTrackerPaths {
                         *lock == IsTracking::WriteZipper
                     })?;
                     // check above
-                    write_zipper.ascend_until();
+                    let ascended = write_zipper.ascend_until_value();
                     if let Some(IsTracking::WriteZipper) = write_zipper.get_value() {
                         Err(Conflict::write_conflict(write_zipper.path()))
                     } else {
-                        let prefix_len = write_zipper.path().len();
-                        let suffix = &path[prefix_len..];
-                        write_zipper.descend_to(suffix);
+                        if ascended {
+                            let prefix_len = write_zipper.path().len();
+                            let suffix = &path[prefix_len..];
+                            write_zipper.descend_to(suffix);
+                        }
                         write_zipper.set_value(IsTracking::ReadZipper(NonZero::<u32>::MIN));
                         Ok(())
                     }
