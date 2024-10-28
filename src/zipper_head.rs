@@ -149,7 +149,8 @@ impl<'a, V: Clone + Send + Sync> ZipperHead<'a, V> {
 
         #[cfg(debug_assertions)]
         {
-            let tracker = ZipperTracker::<TrackingWrite>::new(self.tracker_paths.clone(), path).unwrap();
+            let tracker =
+                ZipperTracker::<TrackingWrite>::new(self.tracker_paths.clone(), path).unwrap();
             WriteZipperUntracked::new_with_node_and_path_internal(
                 zipper_root_node,
                 &[],
@@ -166,9 +167,9 @@ impl<'a, V: Clone + Send + Sync> ZipperHead<'a, V> {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests::prefix_key;
     use crate::trie_map::BytesTrieMap;
     use crate::zipper::*;
+    use crate::tests::prefix_key;
     use std::{thread, thread::ScopedJoinHandle};
 
     #[test]
@@ -228,8 +229,8 @@ mod tests {
 
         //Make a ZipperHead for the whole map, and two child zippers
         let map_head = map.zipper_head();
-        let mut a_zipper = map_head.write_zipper_at_exclusive_path(b"a");
-        let mut b_zipper = map_head.write_zipper_at_exclusive_path(b"b");
+        let mut a_zipper = map_head.write_zipper_at_exclusive_path(b"a").unwrap();
+        let mut b_zipper = map_head.write_zipper_at_exclusive_path(b"b").unwrap();
 
         //Do some interleaved work with the two zippers
         a_zipper.descend_to(b"+value");
@@ -246,8 +247,8 @@ mod tests {
 
         //Make a ZipperHead on the WriteZipper, and make two more parallel zippers
         let b_head = b_zipper.zipper_head();
-        let mut b0_zipper = b_head.write_zipper_at_exclusive_path(b"0");
-        let mut b1_zipper = b_head.write_zipper_at_exclusive_path(b"1");
+        let mut b0_zipper = b_head.write_zipper_at_exclusive_path(b"0").unwrap();
+        let mut b1_zipper = b_head.write_zipper_at_exclusive_path(b"1").unwrap();
 
         //Do some interleaved work with them
         b0_zipper.descend_to(b"+value");
@@ -270,7 +271,7 @@ mod tests {
         b_zipper.reset();
         b_zipper.descend_to(b"-children-0+meta");
         let b_head = b_zipper.zipper_head();
-        let mut b0_zipper = b_head.write_zipper_at_exclusive_path([]);
+        let mut b0_zipper = b_head.write_zipper_at_exclusive_path([]).unwrap();
         b0_zipper.descend_to(b"bolic");
         b0_zipper.set_value(6);
         drop(b0_zipper);
@@ -279,7 +280,7 @@ mod tests {
         a_zipper.reset();
         a_zipper.descend_to(b"-children-");
         let a_head = a_zipper.zipper_head();
-        let mut a0_zipper = a_head.write_zipper_at_exclusive_path("0");
+        let mut a0_zipper = a_head.write_zipper_at_exclusive_path("0").unwrap();
         a0_zipper.descend_to(b"+value");
         a0_zipper.set_value(7);
         drop(a0_zipper);
@@ -307,18 +308,18 @@ mod tests {
 
         //Make a ZipperHead for the whole map, and two child zippers
         let map_head = map.zipper_head();
-        let mut a_zipper = map_head.write_zipper_at_exclusive_path(b"a");
-        let mut b_zipper = map_head.write_zipper_at_exclusive_path(b"b");
+        let mut a_zipper = map_head.write_zipper_at_exclusive_path(b"a").unwrap();
+        let mut b_zipper = map_head.write_zipper_at_exclusive_path(b"b").unwrap();
 
         //Make a separate ZipperHead on each WriteZipper
         let a_head = a_zipper.zipper_head();
         let b_head = b_zipper.zipper_head();
 
         //Make some WriteZippers on each head
-        let mut a0_zipper = a_head.write_zipper_at_exclusive_path(b"0");
-        let mut a1_zipper = a_head.write_zipper_at_exclusive_path(b"1");
-        let mut b0_zipper = b_head.write_zipper_at_exclusive_path(b"0");
-        let mut b1_zipper = b_head.write_zipper_at_exclusive_path(b"1");
+        let mut a0_zipper = a_head.write_zipper_at_exclusive_path(b"0").unwrap();
+        let mut a1_zipper = a_head.write_zipper_at_exclusive_path(b"1").unwrap();
+        let mut b0_zipper = b_head.write_zipper_at_exclusive_path(b"0").unwrap();
+        let mut b1_zipper = b_head.write_zipper_at_exclusive_path(b"1").unwrap();
 
         //Do some interleaved work with them
         a0_zipper.descend_to(b"+value");
@@ -347,18 +348,8 @@ mod tests {
         assert_eq!(map.get(b"b0+value").unwrap(), &2);
         assert_eq!(map.get(b"b1+value").unwrap(), &3);
     }
-
-    #[test]
-    fn goat() {
-        println!(
-            "GOAT {}",
-            core::mem::size_of::<crate::zipper_head::ZipperTracker>()
-        );
-    }
 }
 
-//GOAT, Safe zipper_head API should return Option instead of panicking
-//
 //GOAT, should think harder about a way to avoid carrying around the empty ZipperTracker.
 // Maybe try boxing it? A: Boxing doesn't help!!  I should verify that the runtime ZipperTracker is really the issue
 // Maybe it's as simple as having a Drop impl?????
