@@ -111,6 +111,28 @@ pub trait Zipper: zipper_priv::ZipperPriv {
     /// focus moved upwards, otherwise returns `false` if the zipper was already at the root
     fn ascend_until(&mut self) -> bool;
 
+    /// Ascends the zipper to the nearest upstream value.  Returns `true` if the zipper
+    /// focus moved upwards, otherwise returns `false` if the zipper was already at the root or at a value
+    fn ascend_until_value(&mut self) -> bool {
+        if self.is_value() {
+            return false;
+        }
+        let at_root = !self.ascend_until();
+        if at_root {
+            return false;
+        }
+        loop {
+            if self.is_value() {
+                break;
+            };
+            let done = !self.ascend_until();
+            if done {
+                break;
+            };
+        }
+        return true;
+    }
+
     //GOAT, this should be deprecated in favor of to_next_sibling_byte and to_prev_sibling_byte
     /// Moves the zipper's focus to a sibling at the same level.  Returns `true` if the focus was changed,
     /// otherwise returns `false`
@@ -1693,7 +1715,6 @@ impl<'a, V: Clone + Send + Sync> Iterator for ReadZipperIter<'a, '_, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trie_map::*;
     use crate::utils::IntoByteMaskIter;
 
     #[test]
