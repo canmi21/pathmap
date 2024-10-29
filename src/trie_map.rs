@@ -326,9 +326,7 @@ impl<V: Clone + Send + Sync + PartialDistributiveLattice> DistributiveLattice fo
     }
 }
 
-impl<V: Clone + Send + Sync + PartialDistributiveLattice> PartialDistributiveLattice
-    for BytesTrieMap<V>
-{
+impl<V: Clone + Send + Sync + PartialDistributiveLattice> PartialDistributiveLattice for BytesTrieMap<V> {
     fn psubtract(&self, other: &Self) -> Option<Self> {
         let s = self.root().subtract(other.root());
         if s.borrow().node_is_empty() { None }
@@ -415,17 +413,10 @@ mod tests {
         assert_eq!(map.get("bbbbbbbbbb012345678901234567891").unwrap(), &31);
 
         map.insert("cccccccccc012345678901234567890123456789", 40);
-        assert_eq!(
-            map.get("cccccccccc012345678901234567890123456789").unwrap(),
-            &40
-        );
+        assert_eq!(map.get("cccccccccc012345678901234567890123456789").unwrap(), &40);
 
         map.insert("dddddddddd01234567890123456789012345678901234", 45);
-        assert_eq!(
-            map.get("dddddddddd01234567890123456789012345678901234")
-                .unwrap(),
-            &45
-        );
+        assert_eq!(map.get("dddddddddd01234567890123456789012345678901234").unwrap(), &45);
 
         map.insert("eeeeeeeeee01234567890123456789012345678901234567890123456789012345678901234567890123456789", 90);
         assert_eq!(map.get("eeeeeeeeee01234567890123456789012345678901234567890123456789012345678901234567890123456789").unwrap(), &90);
@@ -434,23 +425,8 @@ mod tests {
     #[test]
     fn map_contains_path_test() {
         let mut btm = BytesTrieMap::new();
-        let rs = [
-            "arrow",
-            "bow",
-            "cannon",
-            "roman",
-            "romane",
-            "romanus",
-            "romulus",
-            "rubens",
-            "ruber",
-            "rubicon",
-            "rubicundus",
-            "rom'i",
-        ];
-        rs.iter().enumerate().for_each(|(i, r)| {
-            btm.insert(r.as_bytes(), i);
-        });
+        let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
+        rs.iter().enumerate().for_each(|(i, r)| { btm.insert(r.as_bytes(), i); });
 
         assert_eq!(btm.contains_path(b"can"), true);
         assert_eq!(btm.contains_path(b"cannon"), true);
@@ -494,25 +470,8 @@ mod tests {
 
     #[test]
     fn map_update_test() {
-        let rs = [
-            "arrow",
-            "bow",
-            "cannon",
-            "roman",
-            "romane",
-            "romanus",
-            "romulus",
-            "rubens",
-            "ruber",
-            "rubicon",
-            "rubicundus",
-            "rom'i",
-        ];
-        let mut btm: BytesTrieMap<u64> = rs
-            .into_iter()
-            .enumerate()
-            .map(|(i, k)| (k, i as u64))
-            .collect();
+        let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
+        let mut btm: BytesTrieMap<u64> = rs.into_iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
 
         let mut zipper = btm.write_zipper_at_path(b"cannon");
         assert_eq!(zipper.get_value_or_insert(42), &2);
@@ -526,17 +485,7 @@ mod tests {
     fn map_join_test() {
         let mut a = BytesTrieMap::<usize>::new();
         let mut b = BytesTrieMap::<usize>::new();
-        let rs = [
-            "Abbotsford",
-            "Abbottabad",
-            "Abcoude",
-            "Abdul Hakim",
-            "Abdulino",
-            "Abdullahnagar",
-            "Abdurahmoni Jomi",
-            "Abejorral",
-            "Abelardo Luz",
-        ];
+        let rs = ["Abbotsford", "Abbottabad", "Abcoude", "Abdul Hakim", "Abdulino", "Abdullahnagar", "Abdurahmoni Jomi", "Abejorral", "Abelardo Luz"];
         for (i, path) in rs.into_iter().enumerate() {
             if i % 2 == 0 {
                 a.insert(path, i);
