@@ -19,6 +19,9 @@ pub struct ZipperHead<'parent, 'trie, V> {
     tracker_paths: SharedTrackerPaths,
 }
 
+// `ZipperHead` can be `Send` but absolutely must not be `Sync`!
+unsafe impl<V: Send + Sync> Send for ZipperHead<'_, '_, V> {}
+
 impl<'parent, 'trie: 'parent, V: Clone + Send + Sync> ZipperHead<'parent, 'trie, V> {
 
     /// Internal method to create a new borrowed ZipperHead from a WriteZipper
