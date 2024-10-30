@@ -5,8 +5,7 @@ use std::collections::HashMap;
 
 use crate::trie_node::*;
 use crate::ring::*;
-use crate::line_list_node::LineListNode;
-use crate::dense_byte_node::DenseByteNode;
+use crate::dense_byte_node::CellByteNode;
 
 pub struct EmptyNode<V> {
     phantom: PhantomData<V>
@@ -45,9 +44,10 @@ impl<V: Clone + Send + Sync> TrieNode<V> for EmptyNode<V> {
     fn node_get_child(&self, _key: &[u8]) -> Option<(usize, &dyn TrieNode<V>)> {
         None
     }
-    fn node_get_child_and_val_mut(&mut self, _key: &[u8]) -> Option<(usize, Option<&mut V>, Option<&mut TrieNodeODRc<V>>)> {
-        None
-    }
+    //GOAT, Deprecated node_get_child_and_val_mut
+    // fn node_get_child_and_val_mut(&mut self, _key: &[u8]) -> Option<(usize, &mut TrieNodeODRc<V>, &mut Option<V>)> {
+    //     None
+    // }
     fn node_get_child_mut(&mut self, _key: &[u8]) -> Option<(usize, &mut TrieNodeODRc<V>)> {
         None
     }
@@ -67,7 +67,15 @@ impl<V: Clone + Send + Sync> TrieNode<V> for EmptyNode<V> {
         None
     }
     fn node_set_val(&mut self, key: &[u8], val: V) -> Result<(Option<V>, bool), TrieNodeODRc<V>> {
-        let mut replacement_node = LineListNode::new();
+        let mut replacement_node;
+        #[cfg(not(feature = "all_dense_nodes"))]
+        {
+            replacement_node = crate::line_list_node::LineListNode::new();
+        }
+        #[cfg(feature = "all_dense_nodes")]
+        {
+            replacement_node = crate::dense_byte_node::DenseByteNode::new();
+        }
         replacement_node.node_set_val(key, val).unwrap_or_else(|_| panic!());
         Err(TrieNodeODRc::new(replacement_node))
     }
@@ -78,7 +86,15 @@ impl<V: Clone + Send + Sync> TrieNode<V> for EmptyNode<V> {
     //     Err(TrieNodeODRc::new(replacement_node))
     // }
     fn node_set_branch(&mut self, key: &[u8], new_node: TrieNodeODRc<V>) -> Result<bool, TrieNodeODRc<V>> {
-        let mut replacement_node = LineListNode::new();
+        let mut replacement_node;
+        #[cfg(not(feature = "all_dense_nodes"))]
+        {
+            replacement_node = crate::line_list_node::LineListNode::new();
+        }
+        #[cfg(feature = "all_dense_nodes")]
+        {
+            replacement_node = crate::dense_byte_node::DenseByteNode::new();
+        }
         replacement_node.node_set_branch(key, new_node).unwrap_or_else(|_| panic!());
         Err(TrieNodeODRc::new(replacement_node))
     }
@@ -94,7 +110,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for EmptyNode<V> {
         (0, &[])
     }
     fn next_items(&self, _token: u128) -> (u128, &[u8], Option<&TrieNodeODRc<V>>, Option<&V>) {
-        (0, &[], None, None)
+        (NODE_ITER_FINISHED, &[], None, None)
     }
     fn node_val_count(&self, _cache: &mut HashMap<*const dyn TrieNode<V>, usize>) -> usize {
         0
@@ -156,23 +172,19 @@ impl<V: Clone + Send + Sync> TrieNode<V> for EmptyNode<V> {
     fn prestrict_dyn(&self, _other: &dyn TrieNode<V>) -> Option<TrieNodeODRc<V>> {
         None
     }
-
-    fn as_dense(&self) -> Option<&DenseByteNode<V>> {
-        None
-    }
-    fn as_dense_mut(&mut self) -> Option<&mut DenseByteNode<V>> {
-        None
-    }
-    fn as_list(&self) -> Option<&LineListNode<V>> {
-        None
-    }
-    fn as_list_mut(&mut self) -> Option<&mut LineListNode<V>> {
-        None
-    }
-    fn as_tagged(&self) -> TaggedNodeRef<V> {
-        panic!()
-    }
     fn clone_self(&self) -> TrieNodeODRc<V> {
         TrieNodeODRc::new(self.clone())
+    }
+}
+
+impl<V: Clone + Send + Sync> TrieNodeDowncast<V> for EmptyNode<V> {
+    fn as_tagged(&self) -> TaggedNodeRef<V> {
+        TaggedNodeRef::EmptyNode(self)
+    }
+    fn as_tagged_mut(&mut self) -> TaggedNodeRefMut<V> {
+        TaggedNodeRefMut::Unsupported
+    }
+    fn convert_to_cell_node(&mut self) -> TrieNodeODRc<V> {
+        TrieNodeODRc::new(CellByteNode::new())
     }
 }

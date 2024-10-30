@@ -1,5 +1,5 @@
 
-use std::{thread, thread::ScopedJoinHandle};
+use std::thread;
 use std::sync::mpsc;
 
 use divan::{Divan, Bencher};
@@ -74,7 +74,6 @@ fn parallel_read_zipper_get(bencher: Bencher, (elements, thread_cnt): (usize, &s
                             break;
                         }
                     }
-
                 }
             });
         }
@@ -111,45 +110,66 @@ fn parallel_read_zipper_get(bencher: Bencher, (elements, thread_cnt): (usize, &s
 #[divan::bench(sample_size = 1, args = TEST_ARGS)]
 fn parallel_insert(bencher: Bencher, (elements, thread_cnt): (usize, &str)) {
     let thread_cnt = usize::from_str_radix(thread_cnt, 10).unwrap();
+    let real_thread_cnt = thread_cnt.max(1);
+    let elements_per_thread = elements / real_thread_cnt;
 
     let mut map = BytesTrieMap::<usize>::new();
+    let zipper_head = map.zipper_head();
 
-    bencher.with_inputs(|| {}).bench_local_values(|()| {
-        thread::scope(|scope| {
+    thread::scope(|scope| {
+
+        let mut zipper_senders: Vec<mpsc::Sender<WriteZipperUntracked<'_, '_, usize>>> = Vec::with_capacity(thread_cnt);
+        let mut signal_receivers: Vec<mpsc::Receiver<bool>> = Vec::with_capacity(thread_cnt);
+
+        //Spawn all the threads
+        for n in 0..thread_cnt {
+            let (zipper_tx, zipper_rx) = mpsc::channel::<WriteZipperUntracked<'_, '_, usize>>();
+            zipper_senders.push(zipper_tx);
+            let (signal_tx, signal_rx) = mpsc::channel::<bool>();
+            signal_receivers.push(signal_rx);
+
+            scope.spawn(move || {
+                loop {
+                    //The thread will block here waiting for the zipper to be sent
+                    match zipper_rx.recv() {
+                        Ok(mut zipper) => {
+                            //We got the zipper, do the stuff
+                            for i in (n * elements_per_thread)..((n+1) * elements_per_thread) {
+                                zipper.descend_to(prefix_key(&(i as u64)));
+                                zipper.set_value(i);
+                                zipper.reset();
+                            }
+
+                            //Tell the main thread we're done
+                            signal_tx.send(true).unwrap();
+                        },
+                        Err(_) => {
+                            //The zipper_sender channel is closed, meaning it's time to shut down
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        bencher.with_inputs(|| {}).bench_local_values(|()| {
             if thread_cnt > 0 {
-                let elements_per_thread = elements / thread_cnt;
 
-                //Preallocate all zippers
-                let zipper_head = map.zipper_head();
-                let mut zippers = Vec::with_capacity(thread_cnt);
-                for n in (0..thread_cnt).into_iter().rev() {
-                    let path = &[n as u8];
+                //Dispatch a zipper to each thread
+                for n in 0..thread_cnt {
+                    let path = [n as u8];
                     let zipper = unsafe{ zipper_head.write_zipper_at_exclusive_path_unchecked(path) };
-                    zippers.push(zipper);
+                    zipper_senders[n].send(zipper).unwrap();
                 };
 
-                let mut threads: Vec<ScopedJoinHandle<()>> = Vec::with_capacity(thread_cnt);
-
-                //Spawn all the threads
+                //Wait for the threads to all be done
                 for n in 0..thread_cnt {
-                    let mut zipper = zippers.pop().unwrap();
-                    let thread = scope.spawn(move || {
-                        for i in (n * elements_per_thread)..((n+1) * elements_per_thread) {
-                            zipper.descend_to(prefix_key(&(i as u64)));
-                            zipper.set_value(i);
-                            zipper.reset();
-                        }
-                    });
-                    threads.push(thread);
-                }
+                    assert_eq!(signal_receivers[n].recv().unwrap(), true);
+                };
 
-                //Wait for the threads to finish
-                for thread in threads {
-                    thread.join().unwrap();
-                }
             } else {
-                //No-thread case, to measure overhead of sync and spawning vs. 1-thread case
-                let mut zipper = map.write_zipper_at_path(&[0]);
+                //No-thread case, to measure overhead of sync vs. 1-thread case
+                let mut zipper = unsafe{ zipper_head.write_zipper_at_exclusive_path_unchecked(&[0]) };
                 for i in 0..elements {
                     zipper.descend_to(prefix_key(&(i as u64)));
                     zipper.set_value(i);
@@ -165,13 +185,3 @@ fn prefix_key(k: &u64) -> &[u8] {
     let kp: *const u64 = k;
     unsafe { std::slice::from_raw_parts(kp as *const _, (bs as usize).max(1)) }
 }
-
-//GOAT, TODO:
-// Spin up the threads outside the benchmark, so spinup time doesn't pollute the data
-
-//GOAT TODO:
-// * Figure out if I can streamline the TrieNodeODRc::new() -> set -> make_mut.
-//  UPDATE: This actually doesn't appear to be the bottleneck I originally thought.  Still keep in mind
-// * See what happens to perf if I wrap every DenseNode CoFree in an UnsafeCell
-//  A: Not good.  Pretty substantial loss of perf across the board (~30%)
-//

@@ -6,10 +6,9 @@ use std::collections::HashMap;
 use crate::trie_node::*;
 use crate::ring::*;
 use crate::line_list_node::{LineListNode, ValOrChildUnion, validate_node};
-use crate::dense_byte_node::DenseByteNode;
 
 /// A borrowed reference to a payload with a key stored elsewhere, contained in 16 Bytes
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct TinyRefNode<'a, V> {
     /// bit 7 = used
     /// bit 6 = is_child
@@ -112,7 +111,6 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
         }
         None
     }
-    fn node_get_child_and_val_mut(&mut self, _key: &[u8]) -> Option<(usize, Option<&mut V>, Option<&mut TrieNodeODRc<V>>)> { unreachable!() }
     fn node_get_child_mut(&mut self, _key: &[u8]) -> Option<(usize, &mut TrieNodeODRc<V>)> { unreachable!() }
     fn node_replace_child(&mut self, _key: &[u8], _new_node: TrieNodeODRc<V>) -> &mut dyn TrieNode<V> { unreachable!() }
     fn node_contains_val(&self, key: &[u8]) -> bool {
@@ -234,23 +232,20 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
         //GOAT, is this worth bespoke code to save some cycles?
         self.into_full().unwrap().prestrict_dyn(other)
     }
-    fn as_dense(&self) -> Option<&DenseByteNode<V>> {
-        None
-    }
-    fn as_dense_mut(&mut self) -> Option<&mut DenseByteNode<V>> {
-        None
-    }
-    fn as_list(&self) -> Option<&LineListNode<V>> {
-        None
-    }
-    fn as_list_mut(&mut self) -> Option<&mut LineListNode<V>> {
-        None
-    }
-    fn as_tagged(&self) -> TaggedNodeRef<V> {
-        panic!();
-    }
     fn clone_self(&self) -> TrieNodeODRc<V> {
         TrieNodeODRc::new(self.clone())
+    }
+}
+
+impl<V> TrieNodeDowncast<V> for TinyRefNode<'_, V> {
+    fn as_tagged(&self) -> TaggedNodeRef<V> {
+        TaggedNodeRef::TinyRefNode(self)
+    }
+    fn as_tagged_mut(&mut self) -> TaggedNodeRefMut<V> {
+        panic!()
+    }
+    fn convert_to_cell_node(&mut self) -> TrieNodeODRc<V> {
+        panic!();
     }
 }
 

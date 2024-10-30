@@ -4,7 +4,7 @@
 
 use crate::trie_map::BytesTrieMap;
 use crate::trie_node::{TaggedNodeRef, NODE_ITER_FINISHED};
-use crate::dense_byte_node::{DenseByteNode, CoFree};
+use crate::dense_byte_node::{DenseByteNode, OrdinaryCoFree, CoFree};
 
 /// An iterator-like object that traverses key-value pairs in a [BytesTrieMap], however only one
 /// returned reference may exist at a given time
@@ -18,7 +18,7 @@ impl <'a, V : Clone + Send + Sync> AllDenseCursor<'a, V> {
     pub fn new(btm: &'a BytesTrieMap<V>) -> Self {
         Self {
             prefix: vec![],
-            btnis: vec![ByteTrieNodeIter::new(btm.root().borrow().as_dense().unwrap())],
+            btnis: vec![ByteTrieNodeIter::new(btm.root().borrow().as_tagged().as_dense().unwrap())],
             nopush: false
         }
     }
@@ -49,7 +49,7 @@ impl <'a, V : Clone + Send + Sync> AllDenseCursor<'a, V> {
                                 }
                                 Some(rec) => {
                                     self.nopush = false;
-                                    self.btnis.push(ByteTrieNodeIter::new(rec.borrow().as_dense().unwrap()));
+                                    self.btnis.push(ByteTrieNodeIter::new(rec.borrow().as_tagged().as_dense().unwrap()));
                                 }
                             }
 
@@ -84,9 +84,9 @@ impl <'a, V> ByteTrieNodeIter<'a, V> {
 }
 
 impl <'a, V : Clone + Send + Sync> Iterator for ByteTrieNodeIter<'a, V> {
-    type Item = (u8, &'a CoFree<V>);
+    type Item = (u8, &'a OrdinaryCoFree<V>);
 
-    fn next(&mut self) -> Option<(u8, &'a CoFree<V>)> {
+    fn next(&mut self) -> Option<(u8, &'a OrdinaryCoFree<V>)> {
         loop {
             if self.w != 0 {
                 let wi = self.w.trailing_zeros() as u8;
@@ -254,7 +254,7 @@ impl <'a, V : Clone + Send + Sync> PathMapCursor<'a, V> {
     pub fn new(btm: &'a BytesTrieMap<V>) -> Self {
         const EXPECTED_DEPTH: usize = 16;
         const EXPECTED_PATH_LEN: usize = 256;
-        let node = TaggedNodeRef::DenseByteNode(btm.root().borrow().as_dense().unwrap());
+        let node = btm.root().borrow().as_tagged();
         let token = node.new_iter_token();
         let mut btnis = Vec::with_capacity(EXPECTED_DEPTH);
         btnis.push((node, token, 0));

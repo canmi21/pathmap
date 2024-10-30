@@ -5,7 +5,7 @@ use local_or_heap::LocalOrHeap;
 
 use crate::trie_node::*;
 use crate::ring::*;
-use crate::dense_byte_node::DenseByteNode;
+use crate::dense_byte_node::{DenseByteNode, ByteNode, CoFree, OrdinaryCoFree, CellCoFree};
 use crate::tiny_node::TinyRefNode;
 
 
@@ -69,20 +69,72 @@ impl<V> ValOrChildUnion<V> {
 
 impl<V> Drop for LineListNode<V> {
     fn drop(&mut self) {
-        if self.is_used::<0>() {
+        //Discussion: The straightforward recursive implementation hits a stack overflow with, some very
+        // long path lengths.  However we don't want to burden the common case with extra work.  The
+        // pathological paths are almost entirely non-branching.  Therefore, we will invoke a recursive
+        // drop function if the node branches, and an iterative drop if it doesn't
+
+        let slot0_used = self.is_used::<0>();
+        let slot1_used = self.is_used::<1>();
+
+        if  slot0_used && !slot1_used {
             if self.is_child_ptr::<0>() {
-                unsafe{ ManuallyDrop::drop(&mut self.val_or_child0.child) }
+                list_node_iterative_drop(self);
             } else {
                 unsafe{ ManuallyDrop::drop(&mut self.val_or_child0.val) }
             }
-        }
-        if self.is_used::<1>() {
-            if self.is_child_ptr::<1>() {
-                unsafe{ ManuallyDrop::drop(&mut self.val_or_child1.child) }
-            } else {
-                unsafe{ ManuallyDrop::drop(&mut self.val_or_child1.val) }
+        } else {
+            if slot0_used {
+                if self.is_child_ptr::<0>() {
+                    unsafe{ ManuallyDrop::drop(&mut self.val_or_child0.child) }
+                } else {
+                    unsafe{ ManuallyDrop::drop(&mut self.val_or_child0.val) }
+                }
+            }
+            if slot1_used {
+                if self.is_child_ptr::<1>() {
+                    unsafe{ ManuallyDrop::drop(&mut self.val_or_child1.child) }
+                } else {
+                    unsafe{ ManuallyDrop::drop(&mut self.val_or_child1.val) }
+                }
             }
         }
+    }
+}
+
+#[inline]
+fn list_node_iterative_drop<V>(node: &mut LineListNode<V>) {
+    debug_assert!(node.is_used::<0>());
+    debug_assert!(!node.is_used::<1>());
+
+    let mut next_node = list_node_take_child_to_drop(node).unwrap();
+    loop {
+        if std::sync::Arc::strong_count(next_node.as_arc()) > 1 {
+            break;
+        }
+        match next_node.make_mut().as_tagged_mut().into_list() {
+            Some(list_node) => {
+                match list_node_take_child_to_drop(list_node) {
+                    Some(child_node) => {
+                        next_node = child_node;
+                    }
+                    None => break
+                }
+            },
+            None => break
+        }
+    }
+}
+
+#[inline]
+fn list_node_take_child_to_drop<V>(node: &mut LineListNode<V>) -> Option<TrieNodeODRc<V>> {
+    if node.is_used_child_0() && !node.is_used::<1>()
+    {
+        node.header = 0;
+        let next_node = unsafe{ ManuallyDrop::take(&mut node.val_or_child0.child) };
+        Some(next_node)
+    } else {
+        None //Since we don't clear the header, the recursive path will end up freeing the downward trie
     }
 }
 
@@ -262,7 +314,7 @@ impl<V> LineListNode<V> {
     //     KEY_BYTES_CNT - self.key_len_0()
     // }
     #[inline]
-    unsafe fn key_unchecked<const SLOT: usize>(&self) -> &[u8] {
+    pub(crate) unsafe fn key_unchecked<const SLOT: usize>(&self) -> &[u8] {
         match SLOT {
             0 => core::slice::from_raw_parts(self.key_bytes.as_ptr().cast(), self.key_len_0()),
             1 => {
@@ -522,10 +574,21 @@ impl<V: Send + Sync> LineListNode<V> {
             unsafe{ self.set_payload_0(key, is_child_ptr, payload); }
             false
         } else {
-            //We need to recursively create a new node to hold the remaining part of the key
+            //We need to create a number of intermediate nodes to hold the key
+            let node_cnt = (key.len()-1) / KEY_BYTES_CNT;
+            let child_node_key = &key[(node_cnt * KEY_BYTES_CNT)..];
+            debug_assert!(child_node_key.len() > 0);
+            debug_assert!(child_node_key.len() <= KEY_BYTES_CNT);
             let mut child_node = Self::new();
-            child_node.set_payload_0_no_overflow(&key[KEY_BYTES_CNT..], is_child_ptr, payload);
-            unsafe{ self.set_child_0(&key[..KEY_BYTES_CNT], TrieNodeODRc::new(child_node)); }
+            child_node.set_payload_0(child_node_key, is_child_ptr, payload);
+            let mut next_node = TrieNodeODRc::new(child_node);
+            for idx in (1..node_cnt).rev() {
+                let mut child_node = Self::new();
+                let child_node_key = &key[(idx*KEY_BYTES_CNT)..((idx+1)*KEY_BYTES_CNT)];
+                child_node.set_child_0(child_node_key, next_node);
+                next_node = TrieNodeODRc::new(child_node);
+            }
+            self.set_child_0(&key[..KEY_BYTES_CNT], next_node);
             true
         }
     }
@@ -667,7 +730,7 @@ impl<V: Send + Sync> LineListNode<V> {
         }
     }
     /// Returns the clone of the value or child in the slot
-    fn clone_payload<const SLOT: usize>(&self) -> Option<ValOrChild<V>> where V: Clone {
+    pub(crate) fn clone_payload<const SLOT: usize>(&self) -> Option<ValOrChild<V>> where V: Clone {
         if !self.is_used::<SLOT>() {
             return None;
         }
@@ -780,8 +843,8 @@ impl<V: Send + Sync> LineListNode<V> {
 
         //We couldn't store the value in either of the slots, so upgrade the node
         //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-        let mut replacement_node = self.convert_to_dense(3);
-        let dense_node = replacement_node.make_mut().as_dense_mut().unwrap();
+        let mut replacement_node = self.convert_to_dense::<OrdinaryCoFree<V>>(3);
+        let dense_node = replacement_node.make_mut().as_tagged_mut().into_dense().unwrap();
 
         //Add the new key-value pair to the new DenseByteNode
         if key.len() > 1 {
@@ -822,9 +885,13 @@ impl<V: Send + Sync> LineListNode<V> {
         }
     }
 
-    /// Converts the node to a DenseByteNode, transplanting the contents and leaving `self` empty
-    pub(crate) fn convert_to_dense(&mut self, capacity: usize) -> TrieNodeODRc<V> where V: Clone {
-        let mut replacement_node = DenseByteNode::<V>::with_capacity(capacity);
+    /// Converts the node to a ByteNode, transplanting the contents and leaving `self` empty
+    //GOAT, I might want to make a more abstracted ByteNode trait that supersedes the CoFree trait,
+    // since CoFree is very limiting in the structure it allows within the node
+    pub(crate) fn convert_to_dense<Cf: CoFree<V=V>>(&mut self, capacity: usize) -> TrieNodeODRc<V>
+        where V: Clone, ByteNode<Cf>: TrieNodeDowncast<V>
+    {
+        let mut replacement_node = ByteNode::<Cf>::with_capacity(capacity);
 
         //1. Transplant the key / value from slot_1 to the new node
         if self.is_used::<0>() {
@@ -928,7 +995,7 @@ impl<V: Send + Sync> LineListNode<V> {
                         None => return (true, None) //We can keep the child that is already here
                     }
                 };
-                debug_assert!(difference.1.as_ref().map(|node| node.borrow().as_list().map(|node| validate_node(node)).unwrap_or(true)).unwrap_or(true));
+                debug_assert!(difference.1.as_ref().map(|node| node.borrow().as_tagged().as_list().map(|node| validate_node(node)).unwrap_or(true)).unwrap_or(true));
                 (difference.0, difference.1.map(|node| ValOrChildUnion::from(node)))
             } else {
                 debug_assert!(onward_key.len() > 0);
@@ -1120,35 +1187,6 @@ fn merge_guts<'a, V: Clone + Lattice + Send + Sync, const ASLOT: usize, const BS
     }
 }
 
-/// Merges the entries in the ListNode into the DenseByteNode
-pub fn merge_into_dense_node<V: Send + Sync>(dense_node: &mut DenseByteNode<V>, list_node: &LineListNode<V>) where V: Clone + Lattice {
-    dense_node.reserve_capacity(2);
-
-    if list_node.is_used::<0>() {
-        let key = unsafe{ list_node.key_unchecked::<0>() };
-        let payload = list_node.clone_payload::<0>().unwrap();
-        if key.len() > 1 {
-            let mut child_node = LineListNode::<V>::new();
-            unsafe{ child_node.set_payload_owned::<0>(&key[1..], payload); }
-            dense_node.join_child_into(key[0], TrieNodeODRc::new(child_node));
-        } else {
-            dense_node.join_payload_into(key[0], payload);
-        }
-    }
-
-    if list_node.is_used::<1>() {
-        let key = unsafe{ list_node.key_unchecked::<1>() };
-        let payload = list_node.clone_payload::<1>().unwrap();
-        if key.len() > 1 {
-            let mut child_node = LineListNode::<V>::new();
-            unsafe{ child_node.set_payload_owned::<0>(&key[1..], payload); }
-            dense_node.join_child_into(key[0], TrieNodeODRc::new(child_node));
-        } else {
-            dense_node.join_payload_into(key[0], payload);
-        }
-    }
-}
-
 fn follow_path<'a, 'k, V>(mut node: &'a dyn TrieNode<V>, mut key: &'k[u8]) -> Option<(&'k[u8], &'a dyn TrieNode<V>)> {
     while let Some((consumed_byte_cnt, next_node)) = node.node_get_child(key) {
         if consumed_byte_cnt < key.len() {
@@ -1218,28 +1256,34 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
         }
         None
     }
-    fn node_get_child_and_val_mut(&mut self, key: &[u8]) -> Option<(usize, Option<&mut V>, Option<&mut TrieNodeODRc<V>>)> {
-        let self_ptr: *mut Self = self;
-        if let Some((consumed_bytes, child)) = self.get_child_mut(key) {
-            // SAFETY: We know the value and the child will be in different non-overlapping parts of the node,
-            // so it will be safe to mutably borrow them both at the same time.
-            let self_clone = unsafe{ &mut *self_ptr };
-            if let Some(val) = self_clone.get_val_mut(&key[..consumed_bytes]) {
-                Some((consumed_bytes, Some(val), Some(child)))
-            } else {
-                Some((consumed_bytes, None, Some(child)))
-            }
-        } else {
-            // SAFETY: In addition to the point above about the value not overlapping the child ptr, we also
-            // drop the previous borrow so this unsafe would be unnecessary under Polonius
-            let self_clone = unsafe{ &mut *self_ptr };
-            if let Some(val) = self_clone.get_val_mut(key) {
-                Some((key.len(), Some(val), None))
-            } else {
-                None
-            }
-        }
-    }
+    //GOAT, Deprecated node_get_child_and_val_mut
+    // fn node_get_child_and_val_mut(&mut self, key: &[u8]) -> Option<(usize, &mut TrieNodeODRc<V>, &mut Option<V>)> {
+    //     unimplemented!()
+    //     //GOAT, this code is unsound because we alias the self mutable ref.  To fix it, we need to unpack
+    //     // the implementations of get_child_mut and get_val_mut.
+    //     //  But we may not actually need this method to work.
+    //     //
+    //     // let self_ptr: *mut Self = self;
+    //     // if let Some((consumed_bytes, child)) = self.get_child_mut(key) {
+    //     //     // SAFETY: We know the value and the child will be in different non-overlapping parts of the node,
+    //     //     // so it will be safe to mutably borrow them both at the same time.
+    //     //     let self_ref = unsafe{ &mut *self_ptr };
+    //     //     if let Some(val) = self_ref.get_val_mut(&key[..consumed_bytes]) {
+    //     //         Some((consumed_bytes, child, Some(val)))
+    //     //     } else {
+    //     //         Some((consumed_bytes, None, Some(child)))
+    //     //     }
+    //     // } else {
+    //     //     // SAFETY: In addition to the point above about the value not overlapping the child ptr, we also
+    //     //     // drop the previous borrow so this unsafe would be unnecessary under Polonius
+    //     //     let self_clone = unsafe{ &mut *self_ptr };
+    //     //     if let Some(val) = self_clone.get_val_mut(key) {
+    //     //         Some((key.len(), Some(val), None))
+    //     //     } else {
+    //     //         None
+    //     //     }
+    //     // }
+    // }
     fn node_get_child_mut(&mut self, key: &[u8]) -> Option<(usize, &mut TrieNodeODRc<V>)> {
         self.get_child_mut(key)
     }
@@ -1662,7 +1706,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
                     if key1_last_byte != key.last().unwrap() {
                         let sib_node = if key1.len() == key.len() && self.is_child_ptr::<1>() {
                             let sib_node = unsafe{ self.child_in_slot::<1>().borrow() };
-                            debug_assert!({ sib_node.as_list().map(|sib_node| validate_node(sib_node)); true});
+                            debug_assert!({ sib_node.as_tagged().as_list().map(|sib_node| validate_node(sib_node)); true});
                             Some(sib_node)
                         } else {
                             None
@@ -1684,7 +1728,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
                     if key0_last_byte != key.last().unwrap() {
                         let sib_node = if key0.len() == key.len() && self.is_child_ptr::<0>() {
                             let sib_node = unsafe{ self.child_in_slot::<0>().borrow() };
-                            debug_assert!({ sib_node.as_list().map(|sib_node| validate_node(sib_node)); true});
+                            debug_assert!({ sib_node.as_tagged().as_list().map(|sib_node| validate_node(sib_node)); true});
                             Some(sib_node)
                         } else {
                             None
@@ -1783,151 +1827,163 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
 
     fn join_dyn(&self, other: &dyn TrieNode<V>) -> TrieNodeODRc<V> where V: Lattice {
         debug_assert!(validate_node(self));
-        if let Some(other_list_node) = other.as_list() {
-            debug_assert!(validate_node(other_list_node));
+        match other.as_tagged() {
+            TaggedNodeRef::LineListNode(other_list_node) => {
+                debug_assert!(validate_node(other_list_node));
 
-            let (self_key0, self_key1) = self.get_both_keys();
-            let (other_key0, other_key1) = other_list_node.get_both_keys();
-            let mut entries: [MaybeUninit<(&[u8], ValOrChild<V>)>; 4] = [MaybeUninit::uninit(), MaybeUninit::uninit(), MaybeUninit::uninit(), MaybeUninit::uninit()];
-            let mut entry_cnt = 0;
-            let mut used: [bool; 4] = [false; 4]; //[self_0, self_1, other_0, other_1]
+                let (self_key0, self_key1) = self.get_both_keys();
+                let (other_key0, other_key1) = other_list_node.get_both_keys();
+                let mut entries: [MaybeUninit<(&[u8], ValOrChild<V>)>; 4] = [MaybeUninit::uninit(), MaybeUninit::uninit(), MaybeUninit::uninit(), MaybeUninit::uninit()];
+                let mut entry_cnt = 0;
+                let mut used: [bool; 4] = [false; 4]; //[self_0, self_1, other_0, other_1]
 
-            // Try each pairing in self and other, to see if there is a key-join that can happen
-            // We can assume two keys in the same node can't merge, because they would have already been merged,
-            // and therefore we can also assume that if a key can be merged with one key of a node it can't be
-            // merged with the other
-            match try_merge::<V, 0, 0>(self_key0, self, other_key0, other_list_node) {
-                Some(joined) => {
-                    entries[entry_cnt] = MaybeUninit::new(joined);
-                    entry_cnt += 1;
-                    used[0] = true;
-                    used[2] = true;
-                },
-                None => {}
-            }
-            match try_merge::<V, 0, 1>(self_key0, self, other_key1, other_list_node) {
-                Some(joined) => {
-                    entries[entry_cnt] = MaybeUninit::new(joined);
-                    entry_cnt += 1;
-                    debug_assert!(used[0] == false); //If we create multiple joined entries from the same source, it's a bug somewhere
-                    used[0] = true;
-                    used[3] = true;
-                },
-                None => {}
-            }
-            match try_merge::<V, 1, 0>(self_key1, self, other_key0, other_list_node) {
-                Some(joined) => {
-                    entries[entry_cnt] = MaybeUninit::new(joined);
-                    entry_cnt += 1;
-                    debug_assert!(used[2] == false); //See above
-                    used[1] = true;
-                    used[2] = true;
-                },
-                None => {}
-            }
-            match try_merge::<V, 1, 1>(self_key1, self, other_key1, other_list_node) {
-                Some(joined) => {
-                    entries[entry_cnt] = MaybeUninit::new(joined);
-                    entry_cnt += 1;
-                    debug_assert!(used[1] == false); //See above
-                    debug_assert!(used[3] == false); //See above
-                    used[1] = true;
-                    used[3] = true;
-                },
-                None => {}
-            }
-
-            //Add the single entries that didn't merge
-            if !used[0] {
-                match self.clone_payload::<0>() {
-                    Some(payload) => {
-                        entries[entry_cnt] = MaybeUninit::new((self_key0, payload));
+                // Try each pairing in self and other, to see if there is a key-join that can happen
+                // We can assume two keys in the same node can't merge, because they would have already been merged,
+                // and therefore we can also assume that if a key can be merged with one key of a node it can't be
+                // merged with the other
+                match try_merge::<V, 0, 0>(self_key0, self, other_key0, other_list_node) {
+                    Some(joined) => {
+                        entries[entry_cnt] = MaybeUninit::new(joined);
                         entry_cnt += 1;
+                        used[0] = true;
+                        used[2] = true;
                     },
                     None => {}
                 }
-            }
-            if !used[1] {
-                match self.clone_payload::<1>() {
-                    Some(payload) => {
-                        entries[entry_cnt] = MaybeUninit::new((self_key1, payload));
+                match try_merge::<V, 0, 1>(self_key0, self, other_key1, other_list_node) {
+                    Some(joined) => {
+                        entries[entry_cnt] = MaybeUninit::new(joined);
                         entry_cnt += 1;
+                        debug_assert!(used[0] == false); //If we create multiple joined entries from the same source, it's a bug somewhere
+                        used[0] = true;
+                        used[3] = true;
                     },
                     None => {}
                 }
-            }
-            if !used[2] {
-                match other_list_node.clone_payload::<0>() {
-                    Some(payload) => {
-                        entries[entry_cnt] = MaybeUninit::new((other_key0, payload));
+                match try_merge::<V, 1, 0>(self_key1, self, other_key0, other_list_node) {
+                    Some(joined) => {
+                        entries[entry_cnt] = MaybeUninit::new(joined);
                         entry_cnt += 1;
+                        debug_assert!(used[2] == false); //See above
+                        used[1] = true;
+                        used[2] = true;
                     },
                     None => {}
                 }
-            }
-            if !used[3] {
-                match other_list_node.clone_payload::<1>() {
-                    Some(payload) => {
-                        entries[entry_cnt] = MaybeUninit::new((other_key1, payload));
+                match try_merge::<V, 1, 1>(self_key1, self, other_key1, other_list_node) {
+                    Some(joined) => {
+                        entries[entry_cnt] = MaybeUninit::new(joined);
                         entry_cnt += 1;
+                        debug_assert!(used[1] == false); //See above
+                        debug_assert!(used[3] == false); //See above
+                        used[1] = true;
+                        used[3] = true;
                     },
                     None => {}
                 }
-            }
 
-            //Do we have two or fewer paths, that can fit into a new ListNode? 
-            if entry_cnt <= 2 {
-                let mut joined_node = Self::new();
-                let mut pair0: MaybeUninit<(&[u8], ValOrChild<V>)> = MaybeUninit::uninit();
-                core::mem::swap(&mut pair0, &mut entries[0]);
-                let (key0, payload0) = unsafe{ pair0.assume_init() };
+                //Add the single entries that didn't merge
+                if !used[0] {
+                    match self.clone_payload::<0>() {
+                        Some(payload) => {
+                            entries[entry_cnt] = MaybeUninit::new((self_key0, payload));
+                            entry_cnt += 1;
+                        },
+                        None => {}
+                    }
+                }
+                if !used[1] {
+                    match self.clone_payload::<1>() {
+                        Some(payload) => {
+                            entries[entry_cnt] = MaybeUninit::new((self_key1, payload));
+                            entry_cnt += 1;
+                        },
+                        None => {}
+                    }
+                }
+                if !used[2] {
+                    match other_list_node.clone_payload::<0>() {
+                        Some(payload) => {
+                            entries[entry_cnt] = MaybeUninit::new((other_key0, payload));
+                            entry_cnt += 1;
+                        },
+                        None => {}
+                    }
+                }
+                if !used[3] {
+                    match other_list_node.clone_payload::<1>() {
+                        Some(payload) => {
+                            entries[entry_cnt] = MaybeUninit::new((other_key1, payload));
+                            entry_cnt += 1;
+                        },
+                        None => {}
+                    }
+                }
 
-                match entry_cnt {
-                    1 => {
-                        unsafe{ joined_node.set_payload_owned::<0>(key0, payload0); }
-                    },
-                    2 => {
-                        let mut pair1: MaybeUninit<(&[u8], ValOrChild<V>)> = MaybeUninit::uninit();
-                        core::mem::swap(&mut pair1, &mut entries[1]);
-                        let (key1, payload1) = unsafe{ pair1.assume_init() };
-                        if should_swap_keys(key0, key1) {
-                            unsafe{ joined_node.set_payload_owned::<0>(key1, payload1); }
-                            unsafe{ joined_node.set_payload_owned::<1>(key0, payload0); }
-                        } else {
+                //Do we have two or fewer paths, that can fit into a new ListNode? 
+                if entry_cnt <= 2 {
+                    let mut joined_node = Self::new();
+                    let mut pair0: MaybeUninit<(&[u8], ValOrChild<V>)> = MaybeUninit::uninit();
+                    core::mem::swap(&mut pair0, &mut entries[0]);
+                    let (key0, payload0) = unsafe{ pair0.assume_init() };
+
+                    match entry_cnt {
+                        1 => {
                             unsafe{ joined_node.set_payload_owned::<0>(key0, payload0); }
-                            unsafe{ joined_node.set_payload_owned::<1>(key1, payload1); }
-                        }
-                    },
-                    _ => unreachable!()
+                        },
+                        2 => {
+                            let mut pair1: MaybeUninit<(&[u8], ValOrChild<V>)> = MaybeUninit::uninit();
+                            core::mem::swap(&mut pair1, &mut entries[1]);
+                            let (key1, payload1) = unsafe{ pair1.assume_init() };
+                            if should_swap_keys(key0, key1) {
+                                unsafe{ joined_node.set_payload_owned::<0>(key1, payload1); }
+                                unsafe{ joined_node.set_payload_owned::<1>(key0, payload0); }
+                            } else {
+                                unsafe{ joined_node.set_payload_owned::<0>(key0, payload0); }
+                                unsafe{ joined_node.set_payload_owned::<1>(key1, payload1); }
+                            }
+                        },
+                        _ => unreachable!()
+                    }
+                    debug_assert!(validate_node(&joined_node));
+                    return TrieNodeODRc::new(joined_node)
                 }
-                debug_assert!(validate_node(&joined_node));
-                return TrieNodeODRc::new(joined_node)
-            }
 
-            //Otherwise, create a DenseByteNode
-            let mut joined_node = DenseByteNode::<V>::with_capacity(entry_cnt);
-            for i in 0..entry_cnt {
-                let mut pair: MaybeUninit<(&[u8], ValOrChild<V>)> = MaybeUninit::uninit();
-                core::mem::swap(&mut pair, &mut entries[i]);
-                let (key, payload) = unsafe{ pair.assume_init() };
-                debug_assert!(key.len() > 0);
-                if key.len() > 1 {
-                    let mut child_node = Self::new();
-                    unsafe{ child_node.set_payload_owned::<0>(&key[1..], payload); }
-                    debug_assert!(validate_node(&child_node));
-                    joined_node.join_child_into(key[0], TrieNodeODRc::new(child_node));
-                } else {
-                    joined_node.set_payload_owned(key[0], payload);
+                //Otherwise, create a DenseByteNode
+                let mut joined_node = DenseByteNode::<V>::with_capacity(entry_cnt);
+                for i in 0..entry_cnt {
+                    let mut pair: MaybeUninit<(&[u8], ValOrChild<V>)> = MaybeUninit::uninit();
+                    core::mem::swap(&mut pair, &mut entries[i]);
+                    let (key, payload) = unsafe{ pair.assume_init() };
+                    debug_assert!(key.len() > 0);
+                    if key.len() > 1 {
+                        let mut child_node = Self::new();
+                        unsafe{ child_node.set_payload_owned::<0>(&key[1..], payload); }
+                        debug_assert!(validate_node(&child_node));
+                        joined_node.join_child_into(key[0], TrieNodeODRc::new(child_node));
+                    } else {
+                        joined_node.set_payload_owned(key[0], payload);
+                    }
                 }
-            }
-            TrieNodeODRc::new(joined_node)
-        } else {
-            if let Some(other_dense_node) = other.as_dense() {
+                TrieNodeODRc::new(joined_node)
+            },
+            TaggedNodeRef::DenseByteNode(other_dense_node) => {
                 let mut new_node = other_dense_node.clone();
-                merge_into_dense_node(&mut new_node, self);
+                new_node.merge_from_list_node(self);
                 TrieNodeODRc::new(new_node)
-            } else {
-                unreachable!();
+            },
+            TaggedNodeRef::TinyRefNode(tiny_node) => {
+                tiny_node.join_dyn(self)
+            },
+            TaggedNodeRef::CellByteNode(other_dense_node) => {
+                let mut new_node = other_dense_node.clone();
+                new_node.merge_from_list_node(self);
+                TrieNodeODRc::new(new_node)
+            },
+            TaggedNodeRef::EmptyNode(_) => {
+                //GOAT, optimization opportunity.  Could communicate here that the resultant node is a clone
+                // so we could just bump the refcount rather than make a new TrieNodeODRc pointer
+                TrieNodeODRc::new(self.clone())
             }
         }
     }
@@ -2103,24 +2159,72 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
         let new_node = self.clone_with_updated_payloads(slot0_payload, slot1_payload);
         new_node.map(|node| TrieNodeODRc::new(node))
     }
+    fn clone_self(&self) -> TrieNodeODRc<V> {
+        TrieNodeODRc::new(self.clone())
+    }
+}
 
-    fn as_dense(&self) -> Option<&DenseByteNode<V>> {
-        None
-    }
-    fn as_dense_mut(&mut self) -> Option<&mut DenseByteNode<V>> {
-        None
-    }
-    fn as_list(&self) -> Option<&Self> {
-        Some(self)
-    }
-    fn as_list_mut(&mut self) -> Option<&mut LineListNode<V>> {
-        Some(self)
-    }
+impl<V: Clone + Send + Sync> TrieNodeDowncast<V> for LineListNode<V> {
+    #[inline(always)]
     fn as_tagged(&self) -> TaggedNodeRef<V> {
         TaggedNodeRef::LineListNode(self)
     }
-    fn clone_self(&self) -> TrieNodeODRc<V> {
-        TrieNodeODRc::new(self.clone())
+    #[inline(always)]
+    fn as_tagged_mut(&mut self) -> TaggedNodeRefMut<V> {
+        TaggedNodeRefMut::LineListNode(self)
+    }
+    fn convert_to_cell_node(&mut self) -> TrieNodeODRc<V> {
+        self.convert_to_dense::<CellCoFree<V>>(3)
+
+        //GOAT trash
+        // let mut replacement_node = CellByteNode::<V>::with_capacity(3);
+
+        // //1. Transplant the key / value from slot_1 to the new node
+        // if self.is_used::<0>() {
+        //     let mut slot_0_payload = ValOrChildUnion{ _unused: () };
+        //     core::mem::swap(&mut slot_0_payload, &mut self.val_or_child0);
+        //     let key_0 = unsafe{ self.key_unchecked::<0>() };
+        //     //DenseByteNodes hold one byte keys, so if the key is more than 1 byte we need to
+        //     // make an intermediate node to hold the rest of the key
+        //     if key_0.len() > 1 {
+        //         let mut child_node = Self::new();
+        //         unsafe{ child_node.set_payload_0(&key_0[1..], self.is_child_ptr::<0>(), slot_0_payload); }
+        //         replacement_node.set_child(key_0[0], TrieNodeODRc::new(child_node));
+        //     } else {
+        //         if self.is_child_ptr::<0>() {
+        //             let child_node = unsafe{ ManuallyDrop::into_inner(slot_0_payload.child) };
+        //             replacement_node.set_child(key_0[0], child_node);
+        //         } else {
+        //             let val_0 = unsafe{ ManuallyDrop::into_inner(slot_0_payload.val) };
+        //             replacement_node.set_val(key_0[0], LocalOrHeap::into_inner(val_0));
+        //         }
+        //     }
+        // }
+
+        // //2. Transplant the key / value from slot_1 to the new node
+        // if self.is_used::<1>() {
+        //     let mut slot_1_payload = ValOrChildUnion{ _unused: () };
+        //     core::mem::swap(&mut slot_1_payload, &mut self.val_or_child1);
+        //     let key_1 = unsafe{ self.key_unchecked::<1>() };
+        //     if key_1.len() > 1 {
+        //         let mut child_node = Self::new();
+        //         unsafe{ child_node.set_payload_0(&key_1[1..], self.is_child_ptr::<1>(), slot_1_payload); }
+        //         replacement_node.set_child(key_1[0], TrieNodeODRc::new(child_node));
+        //     } else {
+        //         if self.is_child_ptr::<1>() {
+        //             let child_node = unsafe{ ManuallyDrop::into_inner(slot_1_payload.child) };
+        //             replacement_node.set_child(key_1[0], child_node);
+        //         } else {
+        //             let val_1 = unsafe{ ManuallyDrop::into_inner(slot_1_payload.val) };
+        //             replacement_node.set_val(key_1[0], LocalOrHeap::into_inner(val_1));
+        //         }
+        //     }
+        // }
+
+        // //4. Clear self.header, so we don't double-free anything when this old node gets dropped
+        // self.header = 0;
+
+        // TrieNodeODRc::new(replacement_node)
     }
 }
 
@@ -2315,7 +2419,7 @@ mod tests {
         assert_eq!(new_node.node_set_val("apple".as_bytes(), 1).map_err(|_| 0), Ok((None, false)));
         assert_eq!(new_node.node_set_val("banana".as_bytes(), 2).map_err(|_| 0), Ok((None, false)));
         let replacement_node = new_node.node_set_val("carrot".as_bytes(), 3).unwrap_err();
-        assert!(replacement_node.borrow().as_dense().is_some());
+        if let TaggedNodeRef::DenseByteNode(_) = replacement_node.borrow().as_tagged() { } else { panic!("expected node would be a byte node"); }
         let (bytes_used, child_node) = replacement_node.borrow().node_get_child("apple".as_bytes()).unwrap();
         assert_eq!(bytes_used, 1);
         assert_eq!(child_node.node_get_val("pple".as_bytes()), Some(&1));
@@ -2335,7 +2439,7 @@ mod tests {
         b.node_set_val("banana".as_bytes(), 1).unwrap_or_else(|_| panic!());
 
         let joined = a.join_dyn(&b);
-        debug_assert!(validate_node(joined.borrow().as_list().unwrap()));
+        debug_assert!(validate_node(joined.borrow().as_tagged().as_list().unwrap()));
         assert_eq!(joined.borrow().node_get_val("apple".as_bytes()), Some(&0));
         assert_eq!(joined.borrow().node_get_val("banana".as_bytes()), Some(&1));
 
@@ -2353,7 +2457,7 @@ mod tests {
 
         //u64's default impl of Lattice::join just takes the value from self
         let joined = a.join_dyn(&b);
-        debug_assert!(validate_node(joined.borrow().as_list().unwrap()));
+        debug_assert!(validate_node(joined.borrow().as_tagged().as_list().unwrap()));
         assert_eq!(joined.borrow().node_get_val("apple".as_bytes()), Some(&42));
 
         //re-run join, just to make sure the source maps didn't get modified 
@@ -2368,7 +2472,7 @@ mod tests {
         let mut b = LineListNode::<u64>::new();
         b.node_set_val("apricot".as_bytes(), 24).unwrap_or_else(|_| panic!());
         let joined = a.join_dyn(&b);
-        debug_assert!(validate_node(joined.borrow().as_list().unwrap()));
+        debug_assert!(validate_node(joined.borrow().as_tagged().as_list().unwrap()));
 
         let (remaining_key, child_node, _) = get_recursive("apple".as_bytes(), joined.borrow());
         assert_eq!(child_node.node_get_val(remaining_key), Some(&42));
@@ -2391,7 +2495,7 @@ mod tests {
         b.node_set_val("0".as_bytes(), 0).unwrap_or_else(|_| panic!());
 
         let joined = a.join_dyn(&b);
-        debug_assert!(validate_node(joined.borrow().as_list().unwrap()));
+        debug_assert!(validate_node(joined.borrow().as_tagged().as_list().unwrap()));
         assert_eq!(joined.borrow().node_get_val("0".as_bytes()), Some(&0));
         assert_eq!(joined.borrow().node_get_val("1".as_bytes()), Some(&1));
 
@@ -2412,7 +2516,7 @@ mod tests {
         debug_assert!(validate_node(&b));
 
         let joined = a.join_dyn(&b);
-        debug_assert!(validate_node(joined.borrow().as_list().unwrap()));
+        debug_assert!(validate_node(joined.borrow().as_tagged().as_list().unwrap()));
         assert_eq!(joined.borrow().node_get_val("0".as_bytes()), Some(&0));
         assert_eq!(joined.borrow().node_get_val("1".as_bytes()), Some(&1));
 
@@ -2661,8 +2765,26 @@ mod tests {
 //
 //GOAT, Fix remaining tests
 //
+//GOAT, document how path existence can't be used to confirm the existence of a value, only the non-existence
+//  and document the meaning of path existence more generally.
+//GOAT, consider exposing an explicit prune method.  Possibly also consider exposing a "create_path" method.
+//  SEE "PATH EXISTS DISCUSSION" below
+//
+//GOAT, consider adding a "prune" flag to methods that might remove values
+//
 //GOAT, Write ReadMe
 //  intro - as a key-value store, the power of prefixes, structural sharing
 //  algebraic ops
 //  Zippers as a concept
 //  Multiple zippers in the same map
+
+
+// PATH EXISTS DISCUSSION
+// Ok... Fork 1 is about paths, and specifically what information about values you can get from whether or not a path exists.  In the current code, the *nonexistence* of a path guarantees no value is below that point (how could there be one?) but the *existence* of a path does **not** guarantee a value is.
+// Earlier drafts of PathMap (about 3 months ago) we were upholding that property that all paths led to values.  But I realized this property is impossible to uphold with the a multi write-zipper implementation.
+// Bottom line, with the current set of guarantees, you can't use `path_exists` to conclude that there are zippers above you.  You will have to call `to_next_value` to search downwards.
+// Looking forwards, I think I may add explicit methods like `ascend_prune` that ascends the zipper upwards from an empty leaf, pruning as it goes, and `descend_create` to do the opposite.  (although I'm a little on the fence about how descend_create would actually be useful.)  Maybe it might make sense to implement versions of these methods that don't move the zipper focus.
+// But if we tweak the zipper contract so that paths are explicitly managed, just like values, and document the behavior of every operation with respect to paths, then the existence of a path might become a reliable signal.
+// However, that brings up another question: Do you *want* to be pruning the path each time?  Consider a loop where a zipper is acquired, dropped, acquired, dropped, etc.  If each acquisition means creating the path, and each drop means pruning it, that is a lot of wasted work.  On the other hand, just setting and clearing a value is a lot cheaper.
+// Anyway, let me know your thoughts.
+

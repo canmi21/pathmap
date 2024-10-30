@@ -15,6 +15,30 @@ pub trait Lattice {
     }
 }
 
+/// A mirror of the [Lattice] trait, where the `self` and `other` types don't need to be exactly the
+/// same type
+///
+/// GOAT: It is possible that HeteroLattice is just a better (more flexible) version of Lattice, and Lattice
+/// should be deprecated in favor of HeteroLattice becoming the new Lattice
+///
+/// There is one annoyance - see comment below on the `join_all` method
+pub trait HeteroLattice<OtherT> {
+    fn join(&self, other: &OtherT) -> Self;
+    fn join_into(&mut self, other: OtherT) where Self: Sized {
+        *self = self.join(&other);
+    }
+    fn meet(&self, other: &OtherT) -> Self;
+    fn bottom() -> Self;
+    // GOAT: Ugh!!!  Rust doesn't allow for type equality in bounds yet (it's been in nightly for like
+    // 5 years!) and it also doesn't allow the bounds on a trait method to be different from its default
+    // implementation,  Which is annoying because, when OtherT == Self, we really want the default impl
+    // to be available.
+    fn join_all(xs: &[&Self]) -> Self where Self: Sized;
+    // {
+    //     xs.iter().rfold(Self::bottom(), |x, y| x.join(y))
+    // }
+}
+
 /// Implements algebraic behavior on a reference to a [Lattice] type, such as a smart pointer that can't
 /// hold ownership
 pub trait LatticeRef {
@@ -23,7 +47,7 @@ pub trait LatticeRef {
     fn meet(&self, other: &Self) -> Self::T;
 }
 
-pub trait DistributiveLattice: Lattice {
+pub trait DistributiveLattice {
     fn subtract(&self, other: &Self) -> Self;
 }
 
@@ -37,16 +61,29 @@ pub(crate) trait PartialQuantale {
 }
 
 /// Implements subtract behavior for a type
-pub trait PartialDistributiveLattice: Lattice {
+pub trait PartialDistributiveLattice {
     /// GOAT, gotta document this.  `None` means complete subtraction, leaving an empty result
     //GOAT, we are also going to want a way to communicate "perfect copy of self"
     fn psubtract(&self, other: &Self) -> Option<Self> where Self: Sized;
+}
+
+/// A mirror of the [PartialDistributiveLattice] trait, where the `self` and `other` types don't need to
+/// be exactly the same type
+///
+/// GOAT: See discussion on [HeteroLattice].  Should this trait replace [PartialDistributiveLattice]??
+pub trait HeteroPartialDistributiveLattice<OtherT> {
+    fn psubtract(&self, other: &OtherT) -> Option<Self> where Self: Sized;
 }
 
 /// Implements subtract behavior on a reference to a [PartialDistributiveLattice] type
 pub trait PartialDistributiveLatticeRef {
     type T;
     fn psubtract(&self, other: &Self) -> Option<Self::T>;
+}
+
+/// GOAT: See discussion on [HeteroLattice].  Should this trait replace [PartialQuantale]??
+pub(crate) trait HeteroPartialQuantale<OtherT> {
+    fn prestrict(&self, other: &OtherT) -> Option<Self> where Self: Sized;
 }
 
 impl<V: Lattice + Clone> Lattice for Option<V> {

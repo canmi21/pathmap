@@ -177,7 +177,9 @@ pub trait ReadOnlyZipper<'a, V>: Zipper {
 /// every value, or iterating all paths descending from a common root at a certain depth
 pub trait ZipperIteration<'a, V>: Zipper {
     /// Systematically advances to the next value accessible from the zipper, traversing in a depth-first
-    /// order.  Returns a reference to the value
+    /// order
+    ///
+    /// Returns a reference to the value or `None` if the zipper has encountered the root.
     fn to_next_val(&mut self) -> Option<&'a V>;
 
     /// Advances the zipper to visit every existing path within the trie in a depth-first order
@@ -227,6 +229,7 @@ pub(crate) mod zipper_priv {
         type V;
 
         fn get_focus(&self) -> AbstractNodeRef<Self::V>;
+        fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>>;
     }
 }
 use zipper_priv::*;
@@ -285,6 +288,7 @@ impl<V: Clone + Send + Sync> zipper_priv::ZipperPriv for ReadZipperTracked<'_, '
     type V = V;
 
     fn get_focus(&self) -> AbstractNodeRef<Self::V> { self.z.get_focus() }
+    fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>> { self.z.try_borrow_focus() }
 }
 
 impl<'a, V: Clone + Send + Sync> ZipperIteration<'a, V> for ReadZipperTracked<'a, '_, V> {
@@ -400,6 +404,7 @@ impl<V: Clone + Send + Sync> zipper_priv::ZipperPriv for ReadZipperUntracked<'_,
     type V = V;
 
     fn get_focus(&self) -> AbstractNodeRef<Self::V> { self.z.get_focus() }
+    fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>> { self.z.try_borrow_focus() }
 }
 
 impl<'a, V: Clone + Send + Sync> ZipperIteration<'a, V> for ReadZipperUntracked<'a, '_, V> {
@@ -512,7 +517,7 @@ pub(crate) const EXPECTED_PATH_LEN: usize = 64;
 
 /// A [Zipper] that is unable to modify the trie
 pub(crate) struct ReadZipperCore<'a, 'path, V> {
-    /// A reference to the entire origin path, of which `root_key` is the final subset, or None for a relative zipper
+    /// A reference to the entire origin path, of which `root_key` is the final subset
     origin_path: SliceOrLen<'path>,
     /// The byte offset in `origin_path` from the root node to the zipper's root.
     /// `root_key = origin_path[root_key_offset..]`
@@ -534,7 +539,7 @@ pub(crate) struct ReadZipperCore<'a, 'path, V> {
 /// The origin path, if it's outside the Zipper, or the length of the origin path if the origin has already
 /// been copied into the `prefix_buf`
 #[derive(Clone, Copy)]
-enum SliceOrLen<'a> {
+pub(crate) enum SliceOrLen<'a> {
     Slice(&'a [u8]),
     Len(usize),
 }
@@ -545,19 +550,60 @@ impl<'a> From<&'a [u8]> for SliceOrLen<'a> {
     }
 }
 
-impl SliceOrLen<'_> {
+impl<'a> SliceOrLen<'a> {
     #[inline]
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match self {
             Self::Slice(slice) => slice.len(),
             Self::Len(len) => *len,
         }
     }
+    pub fn make_len(&mut self) {
+        match self {
+            Self::Slice(slice) => {*self = Self::Len(slice.len())},
+            Self::Len(_) => {},
+        }
+    }
     #[inline]
-    unsafe fn as_slice_unchecked(&self) -> &[u8] {
+    pub fn is_slice(&self) -> bool {
+        match self {
+            Self::Slice(_) => true,
+            Self::Len(_) => false,
+        }
+    }
+    #[inline]
+    pub fn as_slice(&self) -> &'a[u8] {
+        match self {
+            Self::Slice(slice) => slice,
+            Self::Len(_) => unreachable!()
+        }
+    }
+    #[inline]
+    pub fn try_as_slice(&self) -> Option<&'a[u8]> {
+        match self {
+            Self::Slice(slice) => Some(slice),
+            Self::Len(_) => None
+        }
+    }
+    #[inline]
+    pub unsafe fn as_slice_unchecked(&self) -> &'a[u8] {
         match self {
             Self::Slice(slice) => slice,
             Self::Len(_) => core::hint::unreachable_unchecked()
+        }
+    }
+    #[inline]
+    pub fn set_slice(&mut self, slice: &'a[u8]) {
+        match self {
+            Self::Slice(slice_ref) => { *slice_ref = slice; },
+            Self::Len(_) => unreachable!(),
+        }
+    }
+    #[inline]
+    pub fn set_len(&mut self, len: usize) {
+        match self {
+            Self::Slice(_) => unreachable!(),
+            Self::Len(len_ref) => { *len_ref = len; },
         }
     }
 }
@@ -919,6 +965,20 @@ impl<V: Clone + Send + Sync> zipper_priv::ZipperPriv for ReadZipperCore<'_, '_, 
 
     fn get_focus(&self) -> AbstractNodeRef<Self::V> {
         self.focus_node.get_node_at_key(self.node_key())
+    }
+    fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>> {
+        let node_key = self.node_key();
+        if node_key.len() == 0 {
+            Some(self.focus_node.borrow())
+        } else {
+            match self.focus_node.node_get_child(node_key) {
+                Some((consumed_bytes, child_node)) => {
+                    debug_assert_eq!(consumed_bytes, node_key.len());
+                    Some(child_node)
+                },
+                None => None
+            }
+        }
     }
 }
 
@@ -1693,7 +1753,7 @@ mod tests {
     }
 
     #[test]
-    fn zipper_iter() {
+    fn zipper_iter_test1() {
         let mut btm = BytesTrieMap::new();
         let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
         rs.iter().enumerate().for_each(|(i, r)| { btm.insert(r.as_bytes(), i); });
@@ -1723,6 +1783,27 @@ mod tests {
             // println!("{val}  {} = {}", std::str::from_utf8(&path).unwrap(), std::str::from_utf8(rs[val].as_bytes()).unwrap());
             assert_eq!(rs[val].as_bytes(), path);
         }
+    }
+
+    #[test]
+    fn zipper_iter_test2() {
+        //This tests iteration over an empty map, with no activity at all
+        let mut map = BytesTrieMap::<u64>::new();
+
+        let mut zipper = map.read_zipper();
+        assert_eq!(zipper.to_next_val(), None);
+        assert_eq!(zipper.to_next_val(), None);
+        drop(zipper);
+
+        //Now test some operations that create nodes, but not values
+        let map_head = map.zipper_head();
+        let _wz = map_head.write_zipper_at_exclusive_path(b"0");
+        drop(_wz);
+        drop(map_head);
+
+        let mut zipper = map.read_zipper();
+        assert_eq!(zipper.to_next_val(), None);
+        assert_eq!(zipper.to_next_val(), None);
     }
 
     #[test]
