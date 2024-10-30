@@ -965,8 +965,8 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> TrieNode<V> for ByteNode<Cf>
     fn item_count(&self) -> usize {
         let mut cnt = 0;
         for cf in self.values.iter() {
-            cnt += cf.rec.is_some() as usize;
-            cnt += cf.value.is_some() as usize;
+            cnt += cf.has_rec() as usize;
+            cnt += cf.has_val() as usize;
         }
         cnt
     }

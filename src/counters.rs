@@ -1,6 +1,6 @@
 
 use crate::trie_map::BytesTrieMap;
-use crate::zipper::{Zipper, ReadZipper, zipper_priv::ZipperPriv};
+use crate::zipper::{*, zipper_priv::ZipperPriv};
 use crate::trie_node::TrieNode;
 
 /// Example usage of counters
@@ -96,7 +96,7 @@ impl Counters {
             );
         }
     }
-    pub fn count_ocupancy<V: Clone>(map: &BytesTrieMap<V>) -> Self {
+    pub fn count_ocupancy<V: Clone + Send + Sync>(map: &BytesTrieMap<V>) -> Self {
         let mut counters = Counters::new();
 
         counters.count_node(map.root().borrow(), 0);
@@ -168,15 +168,15 @@ impl Counters {
         // }
         counters
     }
-    fn count_node<V: Clone>(&mut self, node: &dyn TrieNode<V>, depth: usize) {
-        if let Some(node) = node.as_dense() {
+    fn count_node<V: Clone + Send + Sync>(&mut self, node: &dyn TrieNode<V>, depth: usize) {
+        if let Some(node) = node.as_tagged().as_dense() {
             if node.item_count() != 1 {
                 self.end_run(depth);
             }
             self.increment_common_counters(node, depth);
             self.total_dense_byte_nodes_by_depth[depth] += 1;
         }
-        if let Some(node) = node.as_list() {
+        if let Some(node) = node.as_tagged().as_list() {
             if node.item_count() != 1 {
                 self.end_run(depth);
             }
@@ -239,7 +239,7 @@ impl Counters {
     }
 }
 
-pub fn print_traversal<V: Clone>(zipper: &ReadZipper<V>) {
+pub fn print_traversal<'a, V: 'a + Clone, Z: ZipperIteration<'a, V> + Clone>(zipper: &Z) {
     let mut zipper = zipper.clone();
 
     println!("{:?}", zipper.path());
