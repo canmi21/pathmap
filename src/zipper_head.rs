@@ -45,24 +45,24 @@ impl<'parent, 'trie: 'parent, V: Clone + Send + Sync> ZipperHead<'parent, 'trie,
     ) -> Result<ReadZipperTracked<'_, 'path, V>, Conflict> {
         let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths.clone(), path)?;
         let z = self.borrow_z();
-        let root = z.splitting_borrow_focus();
-        Ok(ReadZipperTracked::new_with_node_and_path(root, path.as_ref(), Some(path.len()), zipper_tracker))
+        let (root_node, root_val) = z.splitting_borrow_focus();
+        Ok(ReadZipperTracked::new_with_node_and_path(root_node, path.as_ref(), Some(path.len()), root_val, zipper_tracker))
     }
 
     /// A more efficient version of [read_zipper_at_path_unchecked](Self::read_zipper_at_path_unchecked),
     /// where the returned zipper is constrained by the `'path` lifetime
     pub unsafe fn read_zipper_at_borrowed_path_unchecked<'path>(&self, path: &'path[u8]) -> ReadZipperUntracked<'_, 'path, V> {
         let z = self.borrow_z();
-        let root = z.splitting_borrow_focus();
+        let (root_node, root_val) = z.splitting_borrow_focus();
         #[cfg(debug_assertions)]
         {
             let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths.clone(), path)
                 .unwrap_or_else(|conflict| panic!("Fatal error. ReadZipper at {path:?} {conflict}"));
-            ReadZipperUntracked::new_with_node_and_path(root, path.as_ref(), Some(path.len()), Some(zipper_tracker))
+            ReadZipperUntracked::new_with_node_and_path(root_node, path.as_ref(), Some(path.len()), root_val, Some(zipper_tracker))
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_path(root, path.as_ref(), Some(path.len()))
+            ReadZipperUntracked::new_with_node_and_path(root_node, path.as_ref(), Some(path.len()), root_val)
         }
     }
 
@@ -73,24 +73,25 @@ impl<'parent, 'trie: 'parent, V: Clone + Send + Sync> ZipperHead<'parent, 'trie,
     ) -> Result<ReadZipperTracked<'_, 'static, V>, Conflict> {
         let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths.clone(), path)?;
         let z = self.borrow_z();
-        let root = z.splitting_borrow_focus();
-        Ok(ReadZipperTracked::new_with_node_and_cloned_path(root, path.as_ref(), Some(path.len()), zipper_tracker))
+        let (root_node, root_val) = z.splitting_borrow_focus();
+        Ok(ReadZipperTracked::new_with_node_and_cloned_path(root_node, path.as_ref(), Some(path.len()), root_val, zipper_tracker))
     }
 
     /// Creates a new [ReadZipper] with the specified path from the `ZipperHead`, where the caller
     /// guarantees that there will be no conflicts with any WriteZippers at any time in the future
-    pub unsafe fn read_zipper_at_path_unchecked(&self, path: &[u8]) -> ReadZipperUntracked<'_, 'static, V> {
+    pub unsafe fn read_zipper_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> ReadZipperUntracked<'_, 'static, V> {
+        let path = path.as_ref();
         let z = self.borrow_z();
-        let root = z.splitting_borrow_focus();
+        let (root_node, root_val) = z.splitting_borrow_focus();
         #[cfg(debug_assertions)]
         {
             let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths.clone(), path)
                 .unwrap_or_else(|conflict| panic!("Fatal error. ReadZipper at {path:?} {conflict}"));
-            ReadZipperUntracked::new_with_node_and_cloned_path(root, path.as_ref(), Some(path.len()), Some(zipper_tracker))
+            ReadZipperUntracked::new_with_node_and_cloned_path(root_node, path.as_ref(), Some(path.len()), root_val, Some(zipper_tracker))
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_cloned_path(root, path.as_ref(), Some(path.len()))
+            ReadZipperUntracked::new_with_node_and_cloned_path(root_node, path.as_ref(), Some(path.len()), root_val)
         }
     }
 

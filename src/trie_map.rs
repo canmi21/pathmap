@@ -105,38 +105,48 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
 
     /// Creates a new [ReadZipper] starting at the root of a BytesTrieMap
     pub fn read_zipper(&self) -> ReadZipperUntracked<V> {
+        let root_val = unsafe{ &*self.root_val.get() }.as_ref();
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_path_internal(self.root().borrow().as_tagged(), &[], Some(0), None, None)
+            ReadZipperUntracked::new_with_node_and_path_internal(self.root().borrow().as_tagged(), &[], Some(0), root_val, None)
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_path_internal(self.root().borrow().as_tagged(), &[], Some(0), None)
+            ReadZipperUntracked::new_with_node_and_path_internal(self.root().borrow().as_tagged(), &[], Some(0), root_val)
         }
     }
 
     /// Creates a new [ReadZipper] with the specified path from the root of the map; This method is much more
     /// efficient than read_zipper_at_path, but means the resulting zipper is bound by the `'path` lifetime
-    pub fn read_zipper_at_borrowed_path<'a, 'path>(&'a self, path: &'path[u8]) -> ReadZipperUntracked<'a, 'path, V> {
+    pub fn read_zipper_at_borrowed_path<'path>(&self, path: &'path[u8]) -> ReadZipperUntracked<'_, 'path, V> {
+        let root_val = match path.len() == 0 {
+            true => unsafe{ &*self.root_val.get() }.as_ref(),
+            false => None
+        };
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_path(self.root().borrow(), path.as_ref(), Some(path.len()), None)
+            ReadZipperUntracked::new_with_node_and_path(self.root().borrow(), path.as_ref(), Some(path.len()), root_val, None)
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_path(self.root().borrow(), path.as_ref(), Some(path.len()))
+            ReadZipperUntracked::new_with_node_and_path(self.root().borrow(), path.as_ref(), Some(path.len()), root_val)
         }
     }
 
     /// Creates a new [ReadZipper] with the specified path from the root of the map
-    pub fn read_zipper_at_path<'a>(&'a self, path: &[u8]) -> ReadZipperUntracked<'a, 'static, V> {
+    pub fn read_zipper_at_path<K: AsRef<[u8]>>(&self, path: K) -> ReadZipperUntracked<'_, 'static, V> {
+        let path = path.as_ref();
+        let root_val = match path.len() == 0 {
+            true => unsafe{ &*self.root_val.get() }.as_ref(),
+            false => None
+        };
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_cloned_path(self.root().borrow(), path.as_ref(), Some(path.len()), None)
+            ReadZipperUntracked::new_with_node_and_cloned_path(self.root().borrow(), path, Some(path.len()), root_val, None)
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_cloned_path(self.root().borrow(), path.as_ref(), Some(path.len()))
+            ReadZipperUntracked::new_with_node_and_cloned_path(self.root().borrow(), path, Some(path.len()), root_val)
         }
     }
 
@@ -156,13 +166,18 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
 
     /// Creates a new [WriteZipper] with the specified path from the root of the map
     pub fn write_zipper_at_path<'a, 'path>(&'a mut self, path: &'path[u8]) -> WriteZipperUntracked<'a, 'path, V> {
+        let root_node = self.root.get_mut();
+        let root_val = match path.len() == 0 {
+            true => Some(self.root_val.get_mut()),
+            false => None
+        };
         #[cfg(debug_assertions)]
         {
-            WriteZipperUntracked::new_with_node_and_path(self.root_mut(), path, None)
+            WriteZipperUntracked::new_with_node_and_path(root_node, root_val, path, None)
         }
         #[cfg(not(debug_assertions))]
         {
-            WriteZipperUntracked::new_with_node_and_path(self.root_mut(), path)
+            WriteZipperUntracked::new_with_node_and_path(root_node, root_val, path)
         }
     }
 
@@ -520,24 +535,61 @@ mod tests {
             assert_eq!(k, table[*v].as_bytes());
         }
     }
-}
 
-//GOAT, decide what to do with root values on a zipper...  Options are:
-//  1. document that root value access on a threaded WriteZipper will panic, and insert debug_asserts
-//  2. make a special case to handle it.  This will require making an UnsafeCell around the value storage
-//    location in the upstream node.  Since we don't want to pay for the UnsafeCell in every node, the
-//    it's going to introduce a lot of complexity.  There are 2 sub-options to special-case it.
-//   2a. Make a special type of parent with an UnsafeCell around its values, and ensure we always upgrade
-//     the parent to that node type when creating the zipper
-//   2b. Hold a shadow of the value within the WriteZipper, and re-integrate that value when the
-//     WriteZipper is dropped.  Obviously I don't love the complexity of this approach either
-//
-// For code cleanliness reasons, I am strongly leaning towards 1.  Keep it illegal.
-//
-//UPDATE: I tried an UnsafeCells in every node.  The perf costs make this a non-starter.  (~30% penalty
-// for almost every benchmark)  If we do need to handle this case, I think I have a preference for a special
-// type of parent node that has an UnsafeCell around each child ptr and each value.
-//
+    #[test]
+    fn map_root_value_test() {
+        let mut map = BytesTrieMap::<usize>::new();
+
+        //Direct-map operations on root value
+        assert_eq!(map.get([]), None);
+        assert_eq!(map.insert([], 1), None);
+        assert_eq!(map.get([]), Some(&1));
+        assert_eq!(map.remove([]), Some(1));
+        assert_eq!(map.get([]), None);
+
+        //Through a WriteZipper, created at the root
+        let mut z = map.write_zipper();
+        assert_eq!(z.get_value(), None);
+        assert_eq!(z.set_value(1), None);
+        assert_eq!(z.get_value(), Some(&1));
+        *z.get_value_mut().unwrap() = 2;
+        assert_eq!(z.remove_value(), Some(2));
+        assert_eq!(z.get_value(), None);
+        drop(z);
+
+        //Through a WriteZipper, created at a zero-length path
+        let mut z = map.write_zipper_at_path(&[]);
+        assert_eq!(z.get_value(), None);
+        assert_eq!(z.set_value(1), None);
+        assert_eq!(z.get_value(), Some(&1));
+        *z.get_value_mut().unwrap() = 2;
+        assert_eq!(z.remove_value(), Some(2));
+        assert_eq!(z.get_value(), None);
+        drop(z);
+
+        //Through read zippers
+        assert_eq!(map.read_zipper().get_value(), None);
+        assert_eq!(map.insert([], 1), None);
+        assert_eq!(map.read_zipper().get_value(), Some(&1));
+        assert_eq!(map.read_zipper_at_borrowed_path(&[]).get_value(), Some(&1));
+        assert_eq!(map.read_zipper_at_path([]).get_value(), Some(&1));
+        assert_eq!(map.remove([]), Some(1));
+        assert_eq!(map.read_zipper_at_borrowed_path(&[]).get_value(), None);
+        assert_eq!(map.read_zipper_at_path([]).get_value(), None);
+
+        //Through ZipperHeads
+        let map_head = map.zipper_head();
+        let mut z = map_head.write_zipper_at_exclusive_path([]).unwrap();
+        assert_eq!(z.get_value(), None);
+        assert_eq!(z.set_value(1), None);
+        assert_eq!(z.get_value(), Some(&1));
+        *z.get_value_mut().unwrap() = 2;
+        drop(z);
+        drop(map_head);
+        assert_eq!(map.get([]), Some(&2));
+    }
+
+}
 
 //GOAT, Consider refactor of zipper traits.  `WriteZipper` -> `PathWriter`.  Zipper is split into the zipper
 // movement traits and a `PathReader` trait.  Then `PathWriter` and `PathReader` can both be implemented on
