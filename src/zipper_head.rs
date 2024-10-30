@@ -56,7 +56,8 @@ impl<'parent, 'trie: 'parent, V: Clone + Send + Sync> ZipperHead<'parent, 'trie,
         let root = z.splitting_borrow_focus();
         #[cfg(debug_assertions)]
         {
-            let zipper_tracker = ZipperTracker::<TrackingRead>::new_no_check(self.tracker_paths.clone(), path);
+            let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths.clone(), path)
+                .unwrap_or_else(|conflict| panic!("Fatal error. ReadZipper at {path:?} {conflict}"));
             ReadZipperUntracked::new_with_node_and_path(root, path.as_ref(), Some(path.len()), Some(zipper_tracker))
         }
         #[cfg(not(debug_assertions))]
@@ -83,7 +84,8 @@ impl<'parent, 'trie: 'parent, V: Clone + Send + Sync> ZipperHead<'parent, 'trie,
         let root = z.splitting_borrow_focus();
         #[cfg(debug_assertions)]
         {
-            let zipper_tracker = ZipperTracker::<TrackingRead>::new_no_check(self.tracker_paths.clone(), path);
+            let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths.clone(), path)
+                .unwrap_or_else(|conflict| panic!("Fatal error. ReadZipper at {path:?} {conflict}"));
             ReadZipperUntracked::new_with_node_and_cloned_path(root, path.as_ref(), Some(path.len()), Some(zipper_tracker))
         }
         #[cfg(not(debug_assertions))]
@@ -113,7 +115,8 @@ impl<'parent, 'trie: 'parent, V: Clone + Send + Sync> ZipperHead<'parent, 'trie,
 
         #[cfg(debug_assertions)]
         {
-            let tracker = ZipperTracker::<TrackingWrite>::new(self.tracker_paths.clone(), path).unwrap();
+            let tracker = ZipperTracker::<TrackingWrite>::new(self.tracker_paths.clone(), path)
+                .unwrap_or_else(|conflict| panic!("Fatal error. WriteZipper at {path:?} {conflict}"));
             WriteZipperUntracked::new_with_node_and_path_internal(zipper_root_node, Some(zipper_root_val), &[], Some(tracker))
         }
         #[cfg(not(debug_assertions))]
