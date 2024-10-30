@@ -52,7 +52,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for EmptyNode<V> {
         None
     }
     fn node_replace_child(&mut self, _key: &[u8], _new_node: TrieNodeODRc<V>) -> &mut dyn TrieNode<V> {
-        panic!();
+        unreachable!() //Should not be called unless it's known that the node being replaced exists
     }
     fn node_contains_val(&self, _key: &[u8]) -> bool {
         false
@@ -99,7 +99,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for EmptyNode<V> {
         Err(TrieNodeODRc::new(replacement_node))
     }
     fn node_remove_all_branches(&mut self, _key: &[u8]) -> bool {
-        unreachable!()
+        false
     }
     fn node_remove_unmasked_branches(&mut self, _key: &[u8], _mask: [u64; 4]) {}
     fn node_is_empty(&self) -> bool { true }
@@ -152,6 +152,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for EmptyNode<V> {
         None
     }
     fn join_dyn(&self, _other: &dyn TrieNode<V>) -> TrieNodeODRc<V> where V: Lattice {
+        //GOAT, The ideal implementation would be to clone the other node's ODRc, rather than making a new node
         panic!()
     }
 
