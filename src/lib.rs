@@ -1,4 +1,11 @@
 
+#[cfg(feature = "jemalloc")]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(feature = "jemalloc")]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 /// Traits to implement [ring](https://en.wikipedia.org/wiki/Ring_(mathematics)) and other algebraic
 /// operations on tries, such as union, intersection, and subtraction
 pub mod ring;

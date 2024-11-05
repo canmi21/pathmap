@@ -13,9 +13,11 @@ local-or-heap = "0.1.0"
 smallvec = {version = "1.13.0", optional = true}
 mutcursor = {version = "0.2.2"}
 num-traits = "0.2"
+tikv-jemallocator = {version = "0.6.0", optional = true}
 
 [features]
 default = []
+jemalloc = ["dep:tikv-jemallocator"]
 racy_refcount = [] # Uses ordinary memory access instead of atomics for refcounts.  This is for establishing perf bounds; but may result in data corruption
 all_dense_nodes = [] # Exclusively use the DenseNode type, which generally performs worse but is useful for compatibility and perf comparisons
 counters = [] # Enable features to inspect performance properties of trees
