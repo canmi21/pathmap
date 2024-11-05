@@ -189,6 +189,20 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
         z.into_zipper_head()
     }
 
+    // /// Transforms the map into a [ZipperHead] that owns the map's contents.  This is handy when the
+    // /// ZipperHead needs to be part of another structure
+    // //GOAT: This would be a really handy API, but it looks obnoxious to implement.  The "right" implementation
+    // // is to make a variant of WriteZipperCore that holds an `TrieNodeODRc<V>` and an `Option<V>`, rather
+    // // than `&mut` references to them.  The "wrong" implementation is to make a self-referential struct.
+    // // I think it would be possible to genericize WriteZipperCore, but I got part-way down this path and
+    // // decided there are more urgent things I need to work on.
+    // pub fn into_zipper_head(mut self) -> ZipperHead<'static, 'static, V> {
+    //     let root_node = self.root.into_inner();
+    //     let root_val = self.root_val.into_inner();
+    //     let z = WriteZipperCore::new_with_node_and_path_internal(root_node, Some(root_val), &[]);
+    //     z.into_zipper_head()
+    // }
+
     /// Returns an iterator over all key-value pairs within the map
     ///
     /// NOTE: This is much less efficient than using the [read_zipper](Self::read_zipper) method

@@ -1,5 +1,4 @@
 
-use std::sync::Arc;
 use std::collections::HashMap;
 use dyn_clone::*;
 
@@ -677,8 +676,8 @@ pub(crate) fn val_count_below_root<V>(node: &dyn TrieNode<V>) -> usize {
 }
 
 pub(crate) fn val_count_below_node<V>(node: &TrieNodeODRc<V>, cache: &mut HashMap<*const dyn TrieNode<V>, usize>) -> usize {
-    if Arc::strong_count(node.as_arc()) > 1 {
-        let ptr = Arc::as_ptr(node.as_arc());
+    if node.refcount() > 1 {
+        let ptr = node.as_ptr();
         match cache.get(&ptr) {
             Some(cached) => *cached,
             None => {
@@ -743,7 +742,9 @@ pub(crate) fn make_cell_node<V: Clone + Send + Sync>(node: &mut TrieNodeODRc<V>)
 //GOAT: the `pub(crate)` visibility inside the `opaque_dyn_rc_trie_node` module come from the visibility of
 // the trait it is derived on.  In this case, `TrieNode`
 pub(crate) use opaque_dyn_rc_trie_node::TrieNodeODRc;
+#[cfg(not(feature = "racy_refcount"))]
 mod opaque_dyn_rc_trie_node {
+    use std::sync::Arc;
     use super::TrieNode;
 
     //TODO_FUTURE: make a type alias within the trait to refer to this type, as soon as
@@ -752,6 +753,92 @@ mod opaque_dyn_rc_trie_node {
     #[derive(Clone)]
     #[repr(transparent)]
     pub struct TrieNodeODRc<V>(std::sync::Arc<dyn TrieNode<V> + 'static>);
+
+    impl<V> TrieNodeODRc<V> {
+        #[inline]
+        pub(crate) fn new<'odb, T>(obj: T) -> Self
+            where T: 'odb + TrieNode<V>,
+            V: 'odb
+        {
+            let inner: Arc<dyn TrieNode<V>> = Arc::new(obj);
+            //SAFETY NOTE: The key to making this abstraction safe is the bound on this method,
+            // such that it's impossible to create this wrapper around a concrete type unless the
+            // same lifetime can bound both the trait's type parameter and the type itself
+            unsafe { Self(core::mem::transmute(inner)) }
+        }
+        #[inline]
+        pub(crate) fn new_from_arc<'odb>(arc: Arc<dyn TrieNode<V> + 'odb>) -> Self
+            where V: 'odb
+        {
+            let inner = arc as Arc<dyn TrieNode<V>>;
+            //SAFETY NOTE: The key to making this abstraction safe is the bound on this method,
+            // such that it's impossible to create this wrapper around a concrete type unless the
+            // same lifetime can bound both the trait's type parameter and the type itself
+            unsafe { Self(core::mem::transmute(inner)) }
+        }
+        #[inline]
+        pub(crate) fn refcount(&self) -> usize {
+            Arc::strong_count(&self.0)
+        }
+        #[inline]
+        pub(crate) fn as_arc(&self) -> &std::sync::Arc<dyn TrieNode<V>> {
+            &self.0
+        }
+        #[inline]
+        pub(crate) fn borrow(&self) -> &dyn TrieNode<V> {
+            &*self.0
+        }
+        #[inline]
+        pub(crate) fn as_ptr(&self) -> *const dyn TrieNode<V> {
+            Arc::as_ptr(&self.0)
+        }
+        /// Returns `true` if both internal Rc ptrs point to the same object
+        #[inline]
+        pub fn ptr_eq(&self, other: &Self) -> bool {
+            std::sync::Arc::ptr_eq(self.as_arc(), other.as_arc())
+        }
+        //GOAT, make this contingent on a dyn_clone compile-time feature
+        #[inline]
+        pub(crate) fn make_mut(&mut self) -> &mut (dyn TrieNode<V> + 'static) {
+            dyn_clone::arc_make_mut(&mut self.0) as &mut dyn TrieNode<V>
+        }
+    }
+
+    impl<V> core::fmt::Debug for TrieNodeODRc<V>
+        where for<'a> &'a dyn TrieNode<V>: core::fmt::Debug
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            core::fmt::Debug::fmt(&self.0, f)
+        }
+    }
+
+    //GOAT, make this impl contingent on a "DefaultT" argument to the macro
+    type DefaultT<V> = super::EmptyNode<V>;
+    impl<V> Default for TrieNodeODRc<V> where DefaultT<V>: Default + TrieNode<V> {
+        fn default() -> Self {
+            Self::new(DefaultT::<V>::default())
+        }
+    }
+
+    impl<'odb, V> From<Arc<dyn TrieNode<V> + 'odb>> for TrieNodeODRc<V>
+        where V: 'odb
+    {
+        fn from(arc: Arc<dyn TrieNode<V> + 'odb>) -> Self {
+            Self::new_from_arc(arc)
+        }
+    }
+}
+
+#[cfg(feature = "racy_refcount")]
+mod opaque_dyn_rc_trie_node {
+    use super::TrieNode;
+
+    #[derive(Clone)]
+    #[repr(transparent)]
+    pub struct TrieNodeODRc<V>(std::rc::Rc<dyn TrieNode<V> + 'static>);
+
+    unsafe impl<V: Clone + Send + Sync> Send for TrieNodeODRc<V> {}
+    unsafe impl<V: Clone + Send + Sync> Sync for TrieNodeODRc<V> {}
 
     impl<V> TrieNodeODRc<V> {
         #[inline]
@@ -776,22 +863,30 @@ mod opaque_dyn_rc_trie_node {
             unsafe { Self(core::mem::transmute(inner)) }
         }
         #[inline]
-        pub(crate) fn as_arc(&self) -> &std::sync::Arc<dyn TrieNode<V>> {
+        pub(crate) fn refcount(&self) -> usize {
+            std::rc::Rc::strong_count(&self.0)
+        }
+        #[inline]
+        pub(crate) fn as_rc(&self) -> &std::rc::Rc<dyn TrieNode<V>> {
             &self.0
         }
         #[inline]
         pub(crate) fn borrow(&self) -> &dyn TrieNode<V> {
             &*self.0
         }
+        #[inline]
+        pub(crate) fn as_ptr(&self) -> *const dyn TrieNode<V> {
+            std::rc::Rc::as_ptr(&self.0)
+        }
         /// Returns `true` if both internal Rc ptrs point to the same object
         #[inline]
         pub fn ptr_eq(&self, other: &Self) -> bool {
-            std::sync::Arc::ptr_eq(self.as_arc(), other.as_arc())
+            std::rc::Rc::ptr_eq(self.as_rc(), other.as_rc())
         }
         //GOAT, make this contingent on a dyn_clone compile-time feature
         #[inline]
         pub(crate) fn make_mut(&mut self) -> &mut (dyn TrieNode<V> + 'static) {
-            dyn_clone::arc_make_mut(&mut self.0) as &mut dyn TrieNode<V>
+            dyn_clone::rc_make_mut(&mut self.0) as &mut dyn TrieNode<V>
         }
     }
 

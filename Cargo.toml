@@ -15,6 +15,8 @@ mutcursor = {version = "0.2.2"}
 num-traits = "0.2"
 
 [features]
+default = []
+racy_refcount = [] # Uses ordinary memory access instead of atomics for refcounts.  This is for establishing perf bounds; but may result in data corruption
 all_dense_nodes = [] # Exclusively use the DenseNode type, which generally performs worse but is useful for compatibility and perf comparisons
 counters = [] # Enable features to inspect performance properties of trees
 smallvec = ["dep:smallvec"] # Use SmallVec inside the DenseByteNode. Seems to help on very large trees and hurt on small ones

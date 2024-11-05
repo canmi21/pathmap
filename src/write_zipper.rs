@@ -155,12 +155,12 @@ pub trait WriteZipper<V>: Zipper {
     /// "populate", etc.  I avoided "bloom" and "expand" because those both have other connotations.
     fn restricting<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool;
 
-    /// Removes the branch below the zipper's focus.  Does not affect the value if there is one.  Returns `true`
+    /// Removes all branches below the zipper's focus.  Does not affect the value if there is one.  Returns `true`
     /// if a branch was removed, otherwise returns `false`
     ///
     /// WARNING: This method may cause the trie to be pruned above the zipper's focus, and may result in
     /// [Self::path_exists] returning `false`, where it previously returned `true`
-    fn remove_branch(&mut self) -> bool;
+    fn remove_branches(&mut self) -> bool;
 
     /// Creates a new [BytesTrieMap] from the zipper's focus, removing all downstream branches from the zipper
     fn take_map(&mut self) -> Option<BytesTrieMap<V>>;
@@ -265,7 +265,7 @@ impl<'a, V: Clone + Send + Sync> WriteZipper<V> for WriteZipperTracked<'a, '_, V
     fn subtract<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: PartialDistributiveLattice { self.z.subtract(read_zipper) }
     fn restrict<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool { self.z.restrict(read_zipper) }
     fn restricting<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool { self.z.restricting(read_zipper) }
-    fn remove_branch(&mut self) -> bool { self.z.remove_branch() }
+    fn remove_branches(&mut self) -> bool { self.z.remove_branches() }
     fn take_map(&mut self) -> Option<BytesTrieMap<V>> { self.z.take_map() }
     fn remove_unmasked_branches(&mut self, mask: [u64; 4]) { self.z.remove_unmasked_branches(mask) }
 }
@@ -372,7 +372,7 @@ impl<'a, V: Clone + Send + Sync> WriteZipper<V> for WriteZipperUntracked<'a, '_,
     fn subtract<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: PartialDistributiveLattice { self.z.subtract(read_zipper) }
     fn restrict<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool { self.z.restrict(read_zipper) }
     fn restricting<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool { self.z.restricting(read_zipper) }
-    fn remove_branch(&mut self) -> bool { self.z.remove_branch() }
+    fn remove_branches(&mut self) -> bool { self.z.remove_branches() }
     fn take_map(&mut self) -> Option<BytesTrieMap<V>> { self.z.take_map() }
     fn remove_unmasked_branches(&mut self, mask: [u64; 4]) { self.z.remove_unmasked_branches(mask) }
 }
@@ -983,16 +983,30 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
             None => false
         }
     }
-    /// See [WriteZipper::remove_branch]
-    pub fn remove_branch(&mut self) -> bool {
-        let focus_node = self.focus_stack.top_mut().unwrap();
-        if focus_node.node_remove_all_branches(self.key.node_key()) {
-            if focus_node.node_is_empty() {
-                self.prune_path();
+    /// See [WriteZipper::remove_branches]
+    pub fn remove_branches(&mut self) -> bool {
+        let node_key = self.key.node_key();
+        if node_key.len() > 0 {
+            let focus_node = self.focus_stack.top_mut().unwrap();
+            if focus_node.node_remove_all_branches(node_key) {
+                if focus_node.node_is_empty() {
+                    self.prune_path();
+                }
+                true
+            } else {
+                false
             }
-            true
         } else {
-            false
+            debug_assert_eq!(self.focus_stack.depth(), 1);
+            if self.focus_stack.top().unwrap().node_is_empty() {
+                return false
+            } else {
+                self.focus_stack.to_root();
+                let stack_root = self.focus_stack.root_mut().unwrap();
+                **stack_root = TrieNodeODRc::new(EmptyNode::new());
+                self.focus_stack.advance_from_root(|root| Some(root.make_mut()));
+                true
+            }
         }
     }
     /// See [WriteZipper::take_map]
@@ -1085,7 +1099,7 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
                     self.focus_stack.advance_from_root(|root| Some(root.make_mut()));
                 }
             },
-            None => { self.remove_branch(); }
+            None => { self.remove_branches(); }
         }
     }
 
@@ -1127,7 +1141,7 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
 
         let onward_path = &old_path[self.key.prefix_buf.len()..];
         self.descend_to(&onward_path[0..1]);
-        self.remove_branch();
+        self.remove_branches();
 
         //Move back to the original location, although it will now be non-existent
         self.key.prefix_buf = old_path;
@@ -1144,10 +1158,10 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
                 self.key.root_key.set_slice(key);
                 node
             } else {
-                debug_assert_eq!(self.key.prefix_buf.len(), self.key.root_key.len());
-                let (key, node) = node_along_path_mut(root_ref, &self.key.prefix_buf[..], true);
+                let root_slice = &self.key.prefix_buf[..self.key.root_key.len()];
+                let (key, node) = node_along_path_mut(root_ref, root_slice, true);
                 let new_len = key.len();
-                let bytes_to_remove = self.key.prefix_buf.len() - new_len;
+                let bytes_to_remove = root_slice.len() - new_len;
                 //TODO.  I can speed this up with unsafe.  This should be in stdlib!!
                 for _ in 0..bytes_to_remove {
                     self.key.prefix_buf.remove(0);
@@ -1346,6 +1360,31 @@ mod tests {
     use crate::zipper::*;
 
     #[test]
+    fn write_zipper_set_value_test() {
+        let mut map = BytesTrieMap::<usize>::new();
+        let mut zipper = map.write_zipper_at_path(b"in");
+        for i in 0usize..32 {
+            zipper.descend_to_byte(0);
+            zipper.descend_to(i.to_be_bytes());
+            zipper.set_value(i);
+            zipper.reset();
+        }
+        drop(zipper);
+
+        // for (k, v) in map.iter() {
+        //     println!("{:?} {v}", k);
+        // }
+
+        let mut zipper = map.read_zipper_at_path(b"in\0");
+        for i in 0usize..32 {
+            zipper.descend_to(i.to_be_bytes());
+            assert_eq!(*zipper.get_value().unwrap(), i);
+            zipper.reset();
+        }
+        drop(zipper);
+    }
+
+    #[test]
     fn write_zipper_get_or_insert_value_test() {
         let mut map = BytesTrieMap::<u64>::new();
         map.write_zipper_at_path(b"Drenths").get_value_or_insert(42);
@@ -1357,6 +1396,47 @@ mod tests {
         let mut zipper = map.write_zipper_at_path(b"Drenths");
         *zipper.get_value_or_insert(42) = 0;
         assert_eq!(zipper.get_value(), Some(&0))
+    }
+
+    #[test]
+    fn write_zipper_iter_copy_test() {
+        const N: usize = 32;
+
+        let mut map = BytesTrieMap::<usize>::new();
+        let mut zipper = map.write_zipper_at_path(b"in\0");
+        for i in 0..N {
+            zipper.descend_to(i.to_be_bytes());
+            zipper.set_value(i);
+            zipper.reset();
+        }
+        drop(zipper);
+
+        let zipper_head = map.zipper_head();
+        {
+            let mut sanity_counter = 0;
+            let mut writer_z = unsafe{ zipper_head.write_zipper_at_exclusive_path_unchecked(b"out\0") };
+            let mut reader_z = unsafe{ zipper_head.read_zipper_at_path_unchecked(b"in\0") };
+            while let Some(val) = reader_z.to_next_val() {
+                writer_z.descend_to(reader_z.path());
+                writer_z.set_value(*val * 65536);
+                writer_z.reset();
+                sanity_counter += 1;
+            }
+            assert_eq!(sanity_counter, N);
+        }
+        drop(zipper_head);
+
+        assert_eq!(map.val_count(), N*2);
+        let mut in_path = b"in\0".to_vec();
+        let mut out_path = b"out\0".to_vec();
+        for i in 0..N {
+            in_path.truncate(3);
+            in_path.extend(i.to_be_bytes());
+            assert_eq!(map.get(&in_path), Some(&i));
+            out_path.truncate(4);
+            out_path.extend(i.to_be_bytes());
+            assert_eq!(map.get(&out_path), Some(&(i * 65536)));
+        }
     }
 
     #[test]
@@ -1502,13 +1582,13 @@ mod tests {
     }
 
     #[test]
-    fn write_zipper_remove_branch_test() {
+    fn write_zipper_remove_branches_test() {
         let keys = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i",
             "abcdefghijklmnopqrstuvwxyz"];
         let mut map: BytesTrieMap<i32> = keys.iter().enumerate().map(|(i, k)| (k, i as i32)).collect();
 
         let mut wz = map.write_zipper_at_path(b"roman");
-        wz.remove_branch();
+        wz.remove_branches();
         drop(wz);
 
         //Test that the original keys were left alone, above the graft point
@@ -1527,7 +1607,7 @@ mod tests {
         let mut wz = map.write_zipper();
         wz.descend_to(b"ro");
         assert!(wz.path_exists());
-        wz.remove_branch();
+        wz.remove_branches();
         assert!(!wz.path_exists());
         drop(wz);
 
@@ -1535,7 +1615,7 @@ mod tests {
         wz.descend_to(b"abcdefghijklmnopq");
         assert!(wz.path_exists());
         assert_eq!(wz.path(), b"abcdefghijklmnopq");
-        wz.remove_branch();
+        wz.remove_branches();
         assert!(!wz.path_exists());
         assert_eq!(wz.path(), b"abcdefghijklmnopq");
         drop(wz);

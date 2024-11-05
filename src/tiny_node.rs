@@ -152,8 +152,9 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
     fn new_iter_token(&self) -> u128 { unreachable!() }
     fn iter_token_for_path(&self, _key: &[u8]) -> (u128, &[u8]) { unreachable!() }
     fn next_items(&self, _token: u128) -> (u128, &'a[u8], Option<&TrieNodeODRc<V>>, Option<&V>) { unreachable!() }
-    fn node_val_count(&self, _cache: &mut HashMap<*const dyn TrieNode<V>, usize>) -> usize {
-        panic!();
+    fn node_val_count(&self, cache: &mut HashMap<*const dyn TrieNode<V>, usize>) -> usize {
+        let temp_node = self.into_full().unwrap();
+        temp_node.node_val_count(cache)
     }
     #[cfg(feature = "counters")]
     fn item_count(&self) -> usize {

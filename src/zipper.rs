@@ -965,6 +965,11 @@ impl<'a, V: Clone + Send + Sync> ReadOnlyZipper<'a, V> for ReadZipperCore<'a, '_
     }
 }
 
+//GOAT.  Need to add `to_first_val` method that moves the zipper to the root, and if the root contains a
+// value, returns it, and otherwise calls to_next_val().
+//
+//Then I need to port all the iter() conveniences over to use that new method
+
 impl<'a, V: Clone + Send + Sync> ZipperIteration<'a, V> for ReadZipperCore<'a, '_, V> {
     fn to_next_val(&mut self) -> Option<&'a V> {
         self.prepare_buffers();
@@ -984,6 +989,20 @@ impl<'a, V: Clone + Send + Sync> ZipperIteration<'a, V> for ReadZipperCore<'a, '
                 self.focus_iter_token = new_tok;
 
                 let key_start = self.node_key_start();
+
+                //Make sure we don't move to a branch that forks above our zipper root
+                let origin_path_len = self.origin_path.len();
+                if key_start < origin_path_len {
+                    debug_assert_eq!(self.ancestors.len(), 0);
+
+                    let unmodifiable_len = origin_path_len - key_start;
+                    let unmodifiable_subkey = &self.prefix_buf[key_start..origin_path_len];
+                    if unmodifiable_len > key_bytes.len() || &key_bytes[..unmodifiable_len] != unmodifiable_subkey {
+                        self.prefix_buf.truncate(origin_path_len);
+                        return None
+                    }
+                }
+
                 self.prefix_buf.truncate(key_start);
                 self.prefix_buf.extend(key_bytes);
 
@@ -1248,8 +1267,8 @@ impl<'a, 'path, V: Clone + Send + Sync> ReadZipperCore<'a, 'path, V> {
                 //Check to see if the iteration has modified more characters than allowed by `k`
                 let key_start = self.node_key_start();
                 if key_start < base_idx {
-                    let fixed_len = self.prefix_buf.len() - base_idx;
-                    if fixed_len > key_bytes.len() || &key_bytes[..fixed_len] != &self.prefix_buf[key_start..] {
+                    let base_key_len = base_idx - key_start; //The number of bytes we should not modify
+                    if base_key_len > key_bytes.len() || &key_bytes[..base_key_len] != &self.prefix_buf[key_start..base_idx] {
                         self.prefix_buf.truncate(base_idx);
                         return false;
                     }
@@ -1776,6 +1795,32 @@ mod tests {
         let mut zipper = map.read_zipper();
         assert_eq!(zipper.to_next_val(), None);
         assert_eq!(zipper.to_next_val(), None);
+    }
+
+    #[test]
+    fn zipper_iter_test3() {
+        const N: usize = 32;
+
+        let mut map = BytesTrieMap::<usize>::new();
+        let mut zipper = map.write_zipper_at_path(b"in");
+        for i in 0usize..N {
+            zipper.descend_to(i.to_be_bytes());
+            zipper.set_value(i);
+            zipper.reset();
+        }
+        drop(zipper);
+
+        //Test iterating using a ReadZipper that has a root that is not the map root
+        let mut reader_z = map.read_zipper_at_path(b"in");
+        assert_eq!(reader_z.val_count(), N);
+        let mut count = 0;
+        while let Some(val) = reader_z.to_next_val() {
+            assert_eq!(reader_z.get_value(), Some(val));
+            assert_eq!(reader_z.get_value(), Some(&count));
+            assert_eq!(reader_z.path(), count.to_be_bytes());
+            count += 1;
+        }
+        assert_eq!(count, N);
     }
 
     #[test]
