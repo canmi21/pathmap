@@ -74,7 +74,7 @@ pub struct ByteTrieNodeIter<'a, V> {
 }
 
 impl <'a, V> ByteTrieNodeIter<'a, V> {
-    fn new(btn: &'a DenseByteNode<V>) -> Self {
+    pub (crate) fn new(btn: &'a DenseByteNode<V>) -> Self {
         Self {
             i: 0,
             w: btn.mask[0],

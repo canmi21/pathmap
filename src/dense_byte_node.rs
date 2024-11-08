@@ -2,6 +2,8 @@
 use core::fmt::{Debug, Formatter};
 use core::ptr;
 use std::collections::HashMap;
+use std::alloc::{alloc, dealloc, Layout};
+use std::mem;
 
 //OPTIMIZATION QUESTION 2, a note on Rc vs. rclite: Rc's payload bloat is 16 bytes, while rclite's is much smaller <8 Bytes.
 // That's a big deal on a DenseByteNode because it pushes it from a single cache line onto two.
@@ -39,6 +41,8 @@ use smallvec::SmallVec;
 use crate::ring::*;
 use crate::trie_node::*;
 use crate::line_list_node::{LineListNode, merge_into_dense_node};
+use crate::old_cursor::{AllDenseCursor, ByteTrieNodeIter};
+use crate::trie_map::BytesTrieMap;
 
 //NOTE: This: `core::array::from_fn(|i| i as u8);` ought to work, but https://github.com/rust-lang/rust/issues/109341
 const ALL_BYTES: [u8; 256] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255];
@@ -525,26 +529,44 @@ impl<V> DenseByteNode<V> {
     }
 }
 
-/*
 const BASE: i32 = 256;
 
-fn pattern(n: i32) -> Vec<i32> {
-    (0..BASE * n).step_by(n as usize).map(|k| k % BASE).collect()
+trait UsefulNumber<const N : usize> : num_traits::PrimInt + std::ops::Mul + std::ops::Add + std::ops::AddAssign + num_traits::FromPrimitive + num_traits::ToBytes + num_traits::FromBytes<Bytes=[u8; N]> {}
+impl UsefulNumber<1> for u8 {}
+impl UsefulNumber<2> for u16 {}
+impl UsefulNumber<4> for u32 {}
+impl UsefulNumber<8> for u64 {}
+impl UsefulNumber<16> for u128 {}
+
+fn pattern<const N : usize, R : UsefulNumber<N>>(step: R, offset: R) -> Vec<u8> {
+    assert!(offset >= R::zero());
+    assert!(offset < step);
+    let mut v = vec![];
+    let mut i = offset;
+    while i < R::from(BASE).unwrap()*step {
+        v.push(i.to_be_bytes().as_ref()[0]);
+        i += step;
+    }
+    v
 }
 
-fn repetition(n: i32) -> Vec<i32> {
+fn repetition<const N : usize, R : UsefulNumber<N>>(step: R, offset: R) -> Vec<usize> {
+    assert!(offset >= R::zero());
+    assert!(offset < step);
     let mut result = Vec::new();
-    let mut last = 0;
-    let mut count = 1;
+    let mut last = R::zero();
+    let mut count = 1usize;
 
-    for x in (n..(BASE * n)).step_by(n as usize) {
-        let xb = x/BASE;
+    let mut i = offset;
+    while i < R::from(BASE).unwrap()*step {
+        let xb = i/R::from(BASE).unwrap();
         if xb == last { count += 1; }
         else {
             last = xb;
             result.push(count);
             count = 1;
         }
+        i += step;
     }
     result.push(count);
     result
@@ -568,7 +590,7 @@ fn nth<I>(mut it: I, n: usize) -> I::Item
     it.next().unwrap()
 }
 
-fn one_up(pat: &[i32], n: i32) -> Vec<i32> {
+fn one_up(pat: &[usize], n: usize) -> Vec<usize> {
     let mut seq = Vec::new();
     let mut c = 0;
     let mut it = pat.iter().scan(0, |state, &x| {
@@ -585,75 +607,227 @@ fn one_up(pat: &[i32], n: i32) -> Vec<i32> {
     seq
 }
 
-pub(crate) fn _so_range(step: u8, order: u8) -> TrieNodeODRc<()> {
-    assert!(order == 4);
+fn number_bytes<const N : usize, R : UsefulNumber<N>>(i: R) -> Vec<u8> {
+    Vec::from(i.to_be_bytes().as_ref())
+}
+
+fn bytes_number<const N : usize, R : UsefulNumber<N>>(bytes: &[u8]) -> R {
+    R::from_be_bytes(bytes.try_into().unwrap())
+}
+
+fn start_generator<V : Clone, const N : usize, R : UsefulNumber<N>>(start_list: &[u8], pointer: usize, node: &DenseByteNode<V>, divider: R) -> Option<DenseByteNode<V>> {
+    let next_numbers = &start_list[pointer..];
+    // let start = bytes_number(start_list);
+
+    if next_numbers.len() == 1 {
+        let mut new_node = DenseByteNode::new();
+        let mut it = ByteTrieNodeIter::new(node);
+        while let Some((k, cf)) = it.next() {
+            if k > next_numbers[0] {
+                new_node.set_val(k, cf.value.as_ref().unwrap().clone());
+            }
+        }
+        if new_node.is_empty() { None }
+        else { Some(new_node) }
+    } else if next_numbers.len() > 1 {
+        let mut new_node = DenseByteNode::new();
+        let mut it = ByteTrieNodeIter::new(node);
+        while let Some((k, cf)) = it.next() {
+            if k > next_numbers[0] {
+                new_node.set_child(k, cf.rec.as_ref().unwrap().clone());
+            } else if k == next_numbers[0] {
+                if let Some(child) = start_generator(start_list, pointer+1, cf.rec.as_ref().unwrap().borrow().as_dense().unwrap(), divider) {
+                    new_node.set_child(k, TrieNodeODRc::new(child));
+                }
+            }
+        }
+        if new_node.is_empty() { None }
+        else { Some(new_node) }
+    } else {
+        None
+    }
+}
+
+fn stop_generator<V : Clone, const N : usize, R : UsefulNumber<N>>(stop_list: &[u8], pointer: usize, node: &DenseByteNode<V>, divider: R, offset: R) -> Option<DenseByteNode<V>> {
+    let next_numbers = &stop_list[pointer..];
+    let stop: R = bytes_number(stop_list);
+
+    if next_numbers.len() == 1 {
+        let mut new_node = DenseByteNode::new();
+        let mut it = ByteTrieNodeIter::new(node);
+        while let Some((k, cf)) = it.next() {
+            if k < next_numbers[0] {
+                new_node.set_child(k, cf.rec.as_ref().unwrap().clone());
+            }
+        }
+        if new_node.is_empty() { None }
+        else { Some(new_node) }
+    } else if next_numbers.len() > 1 {
+        let mut r_buf = Vec::from(&stop_list[..(pointer + 1)]);
+        for _ in 0..(next_numbers.len() - 1) { r_buf.push(0) }
+        let r: R = bytes_number(&r_buf[..]);
+        let remainder = r % divider;
+        let next_step = r + offset - remainder + (if offset < remainder { divider } else { R::zero() });
+        let mut new_node = DenseByteNode::new();
+        let mut it = ByteTrieNodeIter::new(node);
+        while let Some((k, cf)) = it.next() {
+            if k < next_numbers[0] {
+                new_node.set_child(k, cf.rec.as_ref().unwrap().clone());
+            } else if k == next_numbers[0] && next_step < stop {
+                if let Some(child) = stop_generator(stop_list, pointer+1, cf.rec.as_ref().unwrap().borrow().as_dense().unwrap(), divider, offset) {
+                    new_node.set_child(k, TrieNodeODRc::new(child));
+                }
+            }
+        }
+        if new_node.is_empty() { None }
+        else { Some(new_node) }
+    } else {
+        None
+    }
+}
+
+fn double_sided_generator<V : Clone, const N : usize, R : UsefulNumber<N>>(pointer: usize, split_start: &[u8], split_stop: &[u8], help_node: &DenseByteNode<V>, step: R, offset: R) -> DenseByteNode<V> {
+    let mut new_node = DenseByteNode::new();
+    if split_start[pointer] == split_stop[pointer] {
+        let n = help_node.get(split_start[pointer]).unwrap().rec.as_ref().unwrap().borrow().as_dense().unwrap();
+        new_node.set_child(split_start[pointer], TrieNodeODRc::new(double_sided_generator(pointer + 1, split_start, split_stop, n, step, offset)));
+    } else {
+        if pointer == split_start.len() - 1 {
+            let mut it = ByteTrieNodeIter::new(help_node);
+            while let Some((k, cf)) = it.next() {
+                if split_start[pointer] <= k && k < split_stop[pointer] {
+                    new_node.set_child(k, cf.rec.as_ref().unwrap().clone());
+                }
+            }
+        } else {
+            if let Some(start_dict) = help_node.get(split_start[pointer])
+                .and_then(|n_start| start_generator(split_start, pointer + 1, n_start.rec.as_ref().unwrap().borrow().as_dense().unwrap(), step)) {
+                new_node.set_child(split_start[pointer], TrieNodeODRc::new(start_dict));
+            }
+
+            if let Some(stop_dict) = help_node.get(split_stop[pointer])
+                .and_then(|n_stop| stop_generator(split_stop, pointer + 1, n_stop.rec.as_ref().unwrap().borrow().as_dense().unwrap(), step, offset)) {
+                new_node.set_child(split_stop[pointer], TrieNodeODRc::new(stop_dict));
+            }
+
+            let mut it = ByteTrieNodeIter::new(help_node);
+            while let Some((k, cf)) = it.next() {
+                if split_start[pointer] < k && k < split_stop[pointer] {
+                    new_node.set_child( k, cf.rec.as_ref().unwrap().clone());
+                }
+            }
+        }
+    }
+    new_node
+}
+
+pub(crate) fn compressed_range<V : Clone, const N : usize, R : UsefulNumber<N>>(
+    start: R, stop: R, step: R, value: V) -> Option<TrieNodeODRc<V>> {
+    assert!(start < stop);
+    assert!(step <= R::from(256).unwrap());
+
+    let split_start_ = number_bytes(start);
+    let split_stop = number_bytes(stop);
+
+    let mut split_start = vec![0; (split_stop.len() - split_start_.len())];
+    split_start.extend(split_start_);
+    println!("split start {:?}", split_start);
+    assert!(split_stop.len() == split_start.len());
+
+    let offset = start % step;
+
+    // let first_divisible = start - offset + (if offset != 0 { step } else { 0 });
+    // if first_divisible >= stop { return None }
+
+    let stop_order = split_stop.len() - 1;
+    println!("Stop order {:?}", stop_order);
+
     let mut lv1 = Vec::new();
-    let mut pat = pattern(step as i32);
-    // println!("pat {}", pat.len());
+    let mut pat = pattern(step, offset);
+    println!("pat {:?}", pat);
     let mut pat_it = pat.into_iter().cycle();
-    let r1 = repetition(step as i32);
-    // println!("rep({}) {:?}", step as i32, r1);
+    let r1 = repetition(step, offset);
+    println!("rep {:?}", r1);
+
+    if stop_order == 0 {
+        let mut node = DenseByteNode::new();
+        for _ in 0..r1[0] {
+            let n = pat_it.next().unwrap();
+            if start <= R::from(n).unwrap() && R::from(n).unwrap() < stop {
+                node.set_val(n, value.clone());
+            }
+        }
+        // lv1.push(node);
+        return Some(TrieNodeODRc::new(node))
+    }
 
     for &tk in &r1 {
         let mut n = DenseByteNode::new();
-        for k in pat_it.by_ref().take(tk as usize) {
-            n.set_val(k as u8, ());
+        for k in pat_it.by_ref().take(tk) {
+            n.set_val(k, value.clone());
         }
         lv1.push(n);
     }
-    // println!("fst level {}", lv1.len());
-    let mut lv2 = Vec::new();
-    let mut lv1_it = lv1.into_iter().cycle();
-    let r2 = one_up(&r1, step as i32);
-    // println!("one_up({:?})", r2);
-    for &tk in &r2 {
-        let mut n = DenseByteNode::new();
-        for (k, c) in lv1_it.by_ref().take(tk as usize).enumerate() {
-            n.set_child(k as u8, TrieNodeODRc::new(c));
+
+    let mut lvs = vec![lv1];
+    let mut rs = vec![r1];
+
+    for _ in 1..stop_order {
+        let mut lv_prev_it = lvs[lvs.len()-1].iter().cycle();
+        let mut lv_current = vec![];
+        let r = one_up(&rs[rs.len()-1][..], step.to_usize().unwrap());
+
+        for &tk in &r {
+            let mut n = DenseByteNode::new();
+            for (k, c) in lv_prev_it.by_ref().take(tk).enumerate() {
+                unsafe {
+                    let rc = std::rc::Rc::from_raw(c);
+                    std::rc::Rc::increment_strong_count(c);
+                    n.set_child(k as u8, TrieNodeODRc::new_from_rc(rc));
+                }
+            }
+            lv_current.push(n);
         }
-        lv2.push(n);
-    }
-    // println!("snd level {}", lv2.len());
-    // Third Level
-    let mut lv3 = Vec::new();
-    let mut lv2_it = lv2.into_iter().cycle();
-    let r3 = one_up(&r2, step as i32);
-    // println!("two_up({:?})", r3);
-    for &tk in &r3 {
-        let mut n = DenseByteNode::new();
-        for (k, c) in lv2_it.by_ref().take(tk as usize).enumerate() {
-            n.set_child(k as u8, TrieNodeODRc::new(c));
-        }
-        lv3.push(n);
-        break
+
+        rs.push(r);
+        lvs.push(lv_current);
     }
 
-    let mut n = DenseByteNode::new();
-    n.set_child(0, TrieNodeODRc::new(std::mem::take(&mut lv3[0])));
+    let mut prev_it = lvs.last().unwrap().iter().cycle();
+    for _ in 0..split_start[0] { prev_it.next().unwrap(); }
+    return if split_start[0] != split_stop[0] {
+        let prev_node = prev_it.next().unwrap();
+        // split_start[0] + 1 <= split_stop[0] always holds
+        let mut new_node = DenseByteNode::new();
+        for (k, c) in (split_start[0] + 1 .. split_stop[0]).zip(prev_it.by_ref().take(BASE as usize)) {
+            new_node.set_child(k, TrieNodeODRc::new_from_rc(unsafe { std::rc::Rc::from_raw(c) }));
+            unsafe {
+                let rc = std::rc::Rc::from_raw(c);
+                std::rc::Rc::increment_strong_count(c);
+                new_node.set_child(k, TrieNodeODRc::new_from_rc(rc));
+            }
+        }
+        let next_node = prev_it.next().unwrap();
 
-    return TrieNodeODRc::<()>::new(n);
+        // for the last numbers, iterate back from top to bottom
+        if let Some(d_start) = start_generator(&split_start[..], 1, prev_node, step) {
+            new_node.set_child(split_start[0], TrieNodeODRc::new(d_start));
+        }
+        if let Some(d_stop) = stop_generator(&split_stop[..], 1, next_node, step, offset) {
+            new_node.set_child(split_stop[0], TrieNodeODRc::new(d_stop));
+        }
 
+        Some(TrieNodeODRc::new(new_node))
+    } else {
+        let node = prev_it.next().unwrap();
+        let mut new_node = DenseByteNode::new();
+        let d_double = double_sided_generator(1, &split_start[..], &split_stop[..], node, step, offset);
+        new_node.set_child(split_start[0], TrieNodeODRc::new(d_double));
 
-
-    // println!("trd level {}", lv3.len());
-    // // Fourth Level (Stops after first iteration)
-    // let mut lv4 = Vec::new();
-    // let mut lv3_it = lv3.into_iter().cycle();
-    // let r4 = one_up(&r3, step as i32);
-    //
-    // for &tk in &r4 {
-    //     let mut n = DenseByteNode::new();
-    //     for (k, c) in lv3_it.by_ref().take(tk as usize).enumerate() {
-    //         n.set_child(k as u8, TrieNodeODRc::new(c));
-    //     }
-    //     lv4.push(n);
-    //
-    //     break;  // Stop after the first iteration
-    // }
-    //
-    // return TrieNodeODRc::<()>::new(std::mem::take(&mut lv4[0]));
+        Some(TrieNodeODRc::new(new_node))
+    }
 }
-*/
+
 
 impl <V: Clone> DenseByteNode<V> {
     /// Internal method to recursively create all parents to support a value or branch at a given path
@@ -1629,4 +1803,23 @@ fn bit_siblings() {
     assert_eq!(0, bit_sibling(0, 1, true));
     assert_eq!(63, bit_sibling(63, 1u64 << 63, false));
     assert_eq!(63, bit_sibling(63, 1u64 << 63, true));
+}
+
+#[test]
+fn compressed_range_equivalent() {
+    let params = vec![(0u32, 10000u32, 3u32)];
+
+    for &(start, stop, step) in params.iter() {
+        let mut i = start;
+        let cr = BytesTrieMap::new_with_root(compressed_range(start, stop, step, ()).unwrap());
+
+        let mut it = cr.cursor();
+        while let Some((path, _)) = it.next() {
+            let cn = u32::from_be_bytes(path.try_into().unwrap());
+            i += step;
+            assert_eq!(cn, i);
+        }
+        assert!(i < stop);
+        assert!((i + step) > stop);
+    }
 }
