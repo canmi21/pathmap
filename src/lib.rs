@@ -9,6 +9,9 @@ pub mod trie_map;
 /// Cursors that can move over a trie, to inspect and modify contained elements or entire branches
 pub mod zipper;
 
+/// Generates a [PathMap] containing a parameterized a range of numbers, represented with optimal sharing
+pub mod range_generator;
+
 /// Track outstanding zippers to be sure they don't conflict
 pub(crate) mod zipper_tracking;
 
