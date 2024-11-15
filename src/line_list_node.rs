@@ -1834,7 +1834,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
         }
         if key1.len() > key.len() && key1.starts_with(key) {
             let mut new_node = Self::new();
-            unsafe{ new_node.set_payload_0(&key0[key.len()..], self.is_child_ptr::<0>(), ValOrChildUnion{ _unused: () }) }
+            unsafe{ new_node.set_payload_0(&key1[key.len()..], self.is_child_ptr::<0>(), ValOrChildUnion{ _unused: () }) }
             new_node.val_or_child0 = self.take_payload::<1>().unwrap().into();
             debug_assert!(validate_node(&new_node));
             return Some(TrieNodeODRc::new(new_node));

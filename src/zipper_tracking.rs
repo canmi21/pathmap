@@ -263,6 +263,14 @@ impl ZipperTracker<TrackingRead> {
             _is_tracking: PhantomData,
         })
     }
+    fn with_owned_path(shared_paths: SharedTrackerPaths, path: Vec<u8>) -> Result<Self, Conflict> {
+        shared_paths.try_add_reader(&path)?;
+        Ok(Self {
+            all_paths: shared_paths,
+            this_path: path,
+            _is_tracking: PhantomData,
+        })
+    }
 }
 
 impl ZipperTracker<TrackingWrite> {
@@ -274,13 +282,22 @@ impl ZipperTracker<TrackingWrite> {
             _is_tracking: PhantomData,
         })
     }
+    /// Consumes the writer tracker, and returns a new reader tracker with the same path
+    pub fn into_reader(mut self) -> ZipperTracker<TrackingRead> {
+        let all_paths = self.all_paths.clone();
+        let this_path = core::mem::take(&mut self.this_path);
+        Self::remove_lock(&all_paths, &this_path);
+        core::mem::forget(self);
+        ZipperTracker::<TrackingRead>::with_owned_path(all_paths, this_path).unwrap()
+    }
 }
 
-impl<M: TrackingMode> Drop for ZipperTracker<M> {
-    fn drop(&mut self) {
-        let is_removed = self.all_paths.with_paths(|paths| {
+impl<M: TrackingMode> ZipperTracker<M> {
+    /// Internal method to remove a lock, called after it has been confirmed to be the correct thing to do
+    fn remove_lock(all_paths: &SharedTrackerPaths, this_path: &[u8]) {
+        let is_removed = all_paths.with_paths(|paths| {
             if M::tracks_reads() {
-                let mut write_zipper = paths.read_paths.write_zipper_at_path(&self.this_path);
+                let mut write_zipper = paths.read_paths.write_zipper_at_path(this_path);
                 match write_zipper.get_value_mut() {
                     Some(cnt) => {
                         if *cnt == NonZero::<u32>::MIN {
@@ -295,13 +312,19 @@ impl<M: TrackingMode> Drop for ZipperTracker<M> {
             } else {
                 let removed = paths
                     .written_paths
-                    .write_zipper_at_path(&self.this_path)
+                    .write_zipper_at_path(this_path)
                     .remove_value();
                 removed.is_some()
             }
         });
         if !is_removed {
-            panic!("Lock is missing.\nContents {:#?}", self);
+            panic!("Lock is missing.\nContents {this_path:#?}");
         }
+    }
+}
+
+impl<M: TrackingMode> Drop for ZipperTracker<M> {
+    fn drop(&mut self) {
+        Self::remove_lock(&self.all_paths, &self.this_path);
     }
 }
