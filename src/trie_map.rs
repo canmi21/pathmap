@@ -1,6 +1,7 @@
 use core::cell::UnsafeCell;
 
 use num_traits::{PrimInt, zero};
+use crate::range_generator::UsefulNumber;
 use crate::trie_node::*;
 use crate::zipper::*;
 use crate::ring::{Lattice, DistributiveLattice, PartialDistributiveLattice, PartialQuantale};
@@ -60,16 +61,17 @@ impl<V: Clone> BytesTrieMap<V> {
         }
     }
 
-    pub fn range<const BE : bool, R : PrimInt + std::ops::AddAssign + num_traits::ToBytes + std::fmt::Display>(start: R, stop: R, step: R, value: V) -> BytesTrieMap<V> {
-        // #[cfg(feature = "all_dense_nodes")]
-        // we can extremely efficiently generate ranges, but currently we're limited to range(0, BASE**j, k < BASE)
-        // let root = crate::dense_byte_node::_so_range(step as u8, 4);
-        // BytesTrieMap::<()>::new_with_root(root)
-        //fallback
+    pub fn range<const BE : bool, const N : usize, R : UsefulNumber<N>>(start: R, stop: R, step: R, value: V) -> BytesTrieMap<V> {
+        // we can extremely efficiently generate ranges, but currently we're limited to range(start, stop, step < BASE)
+        if BE && (N == 1 || step < R::from_i16(256).unwrap()) {
+            return match crate::range_generator::compressed_range(start, stop, step, value) {
+                None => { BytesTrieMap::new() }
+                Some(root) => { BytesTrieMap::new_with_root(root) }
+            }
+        }
 
-        //GOAT, this method is highly sub-optimal.  It should be possible to populate a range in log n time,
-        // rather than linear time.  Adam has already written code for this, but it's specific to the DenseByteNode
-        // and is commented out in that file
+        // GOAT, this is slow backup logic for step sizes larger than base, ping Adam to resolve
+        // also called when numbers are not encoded as BE, compression is *really* bad for LE
         let mut new_map = Self::new();
         let mut zipper = new_map.write_zipper();
 
