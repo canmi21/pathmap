@@ -41,6 +41,7 @@ mod tiny_node;
 mod bridge_node;
 
 mod old_cursor;
+mod wasm_trie_set;
 
 #[cfg(test)]
 mod tests {

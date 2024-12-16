@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8" />
+    <title>hello-wasm example</title>
+</head>
+<body>
+<script type="module">
+    import init, { range_be_u32, contains } from "./pkg/pathmap.js";
+    init().then(() => {
+        let r1 = range_be_u32(0, 10, 2);
+        let r2 = range_be_u32(5, 15, 2);
+        console.log(contains(r1, Uint8Array.of(0, 0, 0, 0)));
+        console.log(contains(r2, Uint8Array.of(0, 0, 0, 0)));
+    });
+</script>
+</body>
+</html>

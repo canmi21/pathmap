@@ -4,12 +4,16 @@ version = "0.1.0"
 edition = "2021"
 description = "A key-value store with prefix compression, structural sharing, and powerful algebraic operations"
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 dyn-clone = "1.0.17"
 local-or-heap = "0.1.0"
 mutcursor = {version = "0.2.2"}
 num-traits = "0.2"
 tikv-jemallocator = {version = "0.6.0", optional = true}
+wasm-bindgen = "0.2.99"
 
 [features]
 default = []
