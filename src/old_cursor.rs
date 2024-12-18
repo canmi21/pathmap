@@ -16,9 +16,10 @@ pub struct AllDenseCursor<'a, V> where V : Clone {
 
 impl <'a, V : Clone + Send + Sync> AllDenseCursor<'a, V> {
     pub fn new(btm: &'a BytesTrieMap<V>) -> Self {
+        btm.ensure_root();
         Self {
             prefix: vec![],
-            btnis: vec![ByteTrieNodeIter::new(btm.root().borrow().as_tagged().as_dense().unwrap())],
+            btnis: vec![ByteTrieNodeIter::new(btm.root().unwrap().borrow().as_tagged().as_dense().unwrap())],
             nopush: false
         }
     }
@@ -254,7 +255,8 @@ impl <'a, V : Clone + Send + Sync> PathMapCursor<'a, V> {
     pub fn new(btm: &'a BytesTrieMap<V>) -> Self {
         const EXPECTED_DEPTH: usize = 16;
         const EXPECTED_PATH_LEN: usize = 256;
-        let node = btm.root().borrow().as_tagged();
+        btm.ensure_root();
+        let node = btm.root().unwrap().borrow().as_tagged();
         let token = node.new_iter_token();
         let mut btnis = Vec::with_capacity(EXPECTED_DEPTH);
         btnis.push((node, token, 0));

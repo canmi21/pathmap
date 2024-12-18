@@ -654,7 +654,7 @@ impl<V: Clone + Send + Sync> Zipper for WriteZipperCore<'_, '_, V> {
     }
 
     fn make_map(&self) -> Option<BytesTrieMap<Self::V>> {
-        self.get_focus().into_option().map(|node| BytesTrieMap::new_with_root(node))
+        self.get_focus().into_option().map(|node| BytesTrieMap::new_with_root(Some(node)))
     }
 }
 
@@ -1109,7 +1109,7 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
     }
     /// See [WriteZipper::take_map]
     pub fn take_map(&mut self) -> Option<BytesTrieMap<V>> {
-        self.take_focus().map(|node| BytesTrieMap::new_with_root(node))
+        self.take_focus().map(|node| BytesTrieMap::new_with_root(Some(node)))
     }
     /// See [WriteZipper::remove_unmasked_branches]
     pub fn remove_unmasked_branches(&mut self, mask: [u64; 4]) {

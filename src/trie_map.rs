@@ -3,7 +3,7 @@ use core::cell::UnsafeCell;
 use num_traits::{PrimInt, zero};
 use crate::trie_node::*;
 use crate::zipper::*;
-use crate::ring::{AlgebraicResult, COUNTER_IDENT, SELF_IDENT, Lattice, DistributiveLattice, Quantale};
+use crate::ring::{AlgebraicResult, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
 
 /// A map type that uses byte slices `&[u8]` as keys
 ///
@@ -21,7 +21,7 @@ use crate::ring::{AlgebraicResult, COUNTER_IDENT, SELF_IDENT, Lattice, Distribut
 /// assert!(!map.contains("three"));
 /// ```
 pub struct BytesTrieMap<V> {
-    root: UnsafeCell<TrieNodeODRc<V>>,
+    root: UnsafeCell<Option<TrieNodeODRc<V>>>,
     root_val: UnsafeCell<Option<V>>,
 }
 
@@ -30,34 +30,51 @@ unsafe impl<V: Send + Sync> Sync for BytesTrieMap<V> {}
 
 impl<V: Clone + Send + Sync> Clone for BytesTrieMap<V> {
     fn clone(&self) -> Self {
-        Self::new_with_root(self.root().clone())
+        let root_ref = unsafe{ &*self.root.get() };
+        Self::new_with_root(root_ref.clone())
     }
 }
 
 impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     #[inline]
-    pub(crate) fn root(&self) -> &TrieNodeODRc<V> {
-        unsafe{ &*self.root.get() }
+    pub(crate) fn root(&self) -> Option<&TrieNodeODRc<V>> {
+        unsafe{ &*self.root.get() }.as_ref()
     }
     #[inline]
-    pub(crate) fn root_mut(&mut self) -> &mut TrieNodeODRc<V> {
-        self.root.get_mut()
+    pub(crate) fn get_or_init_root_mut(&mut self) -> &mut TrieNodeODRc<V> {
+        self.ensure_root();
+        self.root.get_mut().as_mut().unwrap()
     }
-
-    /// Creates a new empty map
-    pub fn new() -> Self {
+    /// Internal method to ensure there is a valid node at the root of the map
+    #[inline]
+    pub(crate) fn ensure_root(&self) {
+        let root_ref = unsafe{ &mut *self.root.get() };
+        if root_ref.is_some() {
+            return
+        }
+        self.do_init_root();
+    }
+    #[cold]
+    fn do_init_root(&self) {
         #[cfg(feature = "all_dense_nodes")]
         let root = TrieNodeODRc::new(crate::dense_byte_node::DenseByteNode::<V>::new());
         #[cfg(feature = "bridge_nodes")]
         let root = TrieNodeODRc::new(crate::bridge_node::BridgeNode::new_empty());
         #[cfg(not(any(feature = "all_dense_nodes", feature = "bridge_nodes")))]
         let root = TrieNodeODRc::new(crate::line_list_node::LineListNode::new());
-        Self::new_with_root(root)
+
+        let root_ref = unsafe{ &mut *self.root.get() };
+        *root_ref = Some(root);
+    }
+
+    /// Creates a new empty map
+    pub const fn new() -> Self {
+        Self::new_with_root(None)
     }
 
     /// Internal Method.  Creates a new BytesTrieMap with the supplied root node
     #[inline]
-    pub(crate) fn new_with_root(root: TrieNodeODRc<V>) -> Self {
+    pub(crate) const fn new_with_root(root: Option<TrieNodeODRc<V>>) -> Self {
         Self {
             root: UnsafeCell::new(root),
             root_val: UnsafeCell::new(None),
@@ -98,23 +115,27 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     /// Internal Method.  Removes and returns the root from a BytesTrieMap
     #[inline]
     pub(crate) fn into_root(self) -> Option<TrieNodeODRc<V>> {
-        if !self.root().borrow().node_is_empty() {
-            Some(self.root.into_inner())
-        } else {
-            None
+        match self.root() {
+            Some(root) => if !root.borrow().node_is_empty() {
+                self.root.into_inner()
+            } else {
+                None
+            },
+            None => None
         }
     }
 
     /// Creates a new read-only [Zipper], starting at the root of a BytesTrieMap
     pub fn read_zipper(&self) -> ReadZipperUntracked<V> {
+        self.ensure_root();
         let root_val = unsafe{ &*self.root_val.get() }.as_ref();
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_path_internal(self.root().borrow().as_tagged(), &[], Some(0), root_val, None)
+            ReadZipperUntracked::new_with_node_and_path_internal(self.root().unwrap().borrow().as_tagged(), &[], Some(0), root_val, None)
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_path_internal(self.root().borrow().as_tagged(), &[], Some(0), root_val)
+            ReadZipperUntracked::new_with_node_and_path_internal(self.root().unwrap().borrow().as_tagged(), &[], Some(0), root_val)
         }
     }
 
@@ -122,22 +143,24 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     /// efficient than [read_zipper_at_path](Self::read_zipper_at_path), but means the resulting zipper is bound by
     /// the `'path` lifetime
     pub fn read_zipper_at_borrowed_path<'path>(&self, path: &'path[u8]) -> ReadZipperUntracked<'_, 'path, V> {
+        self.ensure_root();
         let root_val = match path.len() == 0 {
             true => unsafe{ &*self.root_val.get() }.as_ref(),
             false => None
         };
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_path(self.root().borrow(), path.as_ref(), Some(path.len()), root_val, None)
+            ReadZipperUntracked::new_with_node_and_path(self.root().unwrap().borrow(), path.as_ref(), Some(path.len()), root_val, None)
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_path(self.root().borrow(), path.as_ref(), Some(path.len()), root_val)
+            ReadZipperUntracked::new_with_node_and_path(self.root().unwrap().borrow(), path.as_ref(), Some(path.len()), root_val)
         }
     }
 
     /// Creates a new read-only [Zipper], with the `path` specified from the root of the map
     pub fn read_zipper_at_path<K: AsRef<[u8]>>(&self, path: K) -> ReadZipperUntracked<'_, 'static, V> {
+        self.ensure_root();
         let path = path.as_ref();
         let root_val = match path.len() == 0 {
             true => unsafe{ &*self.root_val.get() }.as_ref(),
@@ -145,17 +168,18 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
         };
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_cloned_path(self.root().borrow(), path, Some(path.len()), root_val, None)
+            ReadZipperUntracked::new_with_node_and_cloned_path(self.root().unwrap().borrow(), path, Some(path.len()), root_val, None)
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_cloned_path(self.root().borrow(), path, Some(path.len()), root_val)
+            ReadZipperUntracked::new_with_node_and_cloned_path(self.root().unwrap().borrow(), path, Some(path.len()), root_val)
         }
     }
 
     /// Creates a new [WriteZipper] starting at the root of a BytesTrieMap
     pub fn write_zipper(&mut self) -> WriteZipperUntracked<'_, 'static, V> {
-        let root_node = self.root.get_mut();
+        self.ensure_root();
+        let root_node = self.root.get_mut().as_mut().unwrap();
         let root_val = self.root_val.get_mut();
         #[cfg(debug_assertions)]
         {
@@ -169,7 +193,8 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
 
     /// Creates a new [WriteZipper] with the specified path from the root of the map
     pub fn write_zipper_at_path<'a, 'path>(&'a mut self, path: &'path[u8]) -> WriteZipperUntracked<'a, 'path, V> {
-        let root_node = self.root.get_mut();
+        self.ensure_root();
+        let root_node = self.root.get_mut().as_mut().unwrap();
         let root_val = match path.len() == 0 {
             true => Some(self.root_val.get_mut()),
             false => None
@@ -186,7 +211,8 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
 
     /// Creates a [ZipperHead] at the root of the map
     pub fn zipper_head(&mut self) -> ZipperHead<'_, '_, V> {
-        let root_node = self.root.get_mut();
+        self.ensure_root();
+        let root_node = self.root.get_mut().as_mut().unwrap();
         let root_val = self.root_val.get_mut();
         let z = WriteZipperCore::new_with_node_and_path_internal(root_node, Some(root_val), &[]);
         z.into_zipper_head()
@@ -293,7 +319,10 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
 
     /// Returns `true` if the map is empty, otherwise returns `false`
     pub fn is_empty(&self) -> bool {
-        self.root().borrow().node_is_empty()
+        match self.root() {
+            Some(root) => root.borrow().node_is_empty(),
+            None => true
+        }
     }
 
     /// Returns a reference to the value at the specified path
@@ -314,7 +343,10 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     ///
     /// WARNING: This is not a cheap method. It may have an order-N cost
     pub fn val_count(&self) -> usize {
-        return val_count_below_root(self.root().borrow())
+        match self.root() {
+            Some(root) => val_count_below_root(root.borrow()),
+            None => 0
+        }
     }
 
     /// Returns a new `BytesTrieMap` where the paths in `self` are restricted by the paths leading to 
@@ -337,13 +369,19 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     /// Returns a new `BytesTrieMap` where the paths in `self` are restricted by the paths leading to 
     /// values in `other`
     pub fn restrict(&self, other: &Self) -> Self {
-        match self.root().borrow().prestrict_dyn(other.root().borrow()) {
-            AlgebraicResult::Element(new_root) => Self::new_with_root(new_root),
-            AlgebraicResult::None => Self::new(),
-            AlgebraicResult::Identity(mask) => {
-                debug_assert_eq!(mask, SELF_IDENT);
-                self.clone()
-            },
+        let self_root = self.root();
+        let other_root = other.root();
+        if self_root.is_none() || other_root.is_none() {
+            Self::new()
+        } else {
+            match self_root.unwrap().borrow().prestrict_dyn(other_root.unwrap().borrow()) {
+                AlgebraicResult::Element(new_root) => Self::new_with_root(Some(new_root)),
+                AlgebraicResult::None => Self::new(),
+                AlgebraicResult::Identity(mask) => {
+                    debug_assert_eq!(mask, SELF_IDENT);
+                    self.clone()
+                }
+            }
         }
     }
 
@@ -351,13 +389,17 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     pub fn subtract(&self, other: &Self) -> Self
         where V: DistributiveLattice
     {
-        match self.root().psubtract(other.root()) {
-            AlgebraicResult::Element(subtracted) => Self::new_with_root(subtracted),
-            AlgebraicResult::None => Self::new(),
-            AlgebraicResult::Identity(mask) => {
-                debug_assert_eq!(mask, SELF_IDENT);
-                self.clone()
+        match (self.root(), other.root()) {
+            (Some(self_root), Some(other_root)) => match self_root.psubtract(other_root) {
+                AlgebraicResult::Element(subtracted) => Self::new_with_root(Some(subtracted)),
+                AlgebraicResult::None => Self::new(),
+                AlgebraicResult::Identity(mask) => {
+                    debug_assert_eq!(mask, SELF_IDENT);
+                    self.clone()
+                },
             },
+            (Some(_), None) => self.clone(),
+            (None, _) => Self::new(),
         }
     }
 }
@@ -374,20 +416,20 @@ impl<V: Clone + Send + Sync, K: AsRef<[u8]>> FromIterator<(K, V)> for BytesTrieM
 
 impl<V: Clone + Lattice + Send + Sync> Lattice for BytesTrieMap<V> {
     fn join(&self, other: &Self) -> Self {
-        Self::new_with_root(self.root().join(other.root()))
+        Self::new_with_root(self.root().join(&other.root()))
     }
 
     fn join_into(&mut self, other: Self) {
         if let Some(other_root) = other.into_root() {
-            match self.root_mut().make_mut().join_into_dyn(other_root) {
+            match self.get_or_init_root_mut().make_mut().join_into_dyn(other_root) {
                 Ok(()) => {},
-                Err(replacement) => { *self.root_mut() = replacement; }
+                Err(replacement) => { *self.get_or_init_root_mut() = replacement; }
             }
         }
     }
 
     fn pmeet(&self, other: &Self) -> AlgebraicResult<Self> {
-        self.root().pmeet(other.root()).map(|new_root| Self::new_with_root(new_root))
+        self.root().pmeet(&other.root()).map(|new_root| Self::new_with_root(new_root))
     }
 
     fn bottom() -> Self {
@@ -397,13 +439,16 @@ impl<V: Clone + Lattice + Send + Sync> Lattice for BytesTrieMap<V> {
 
 impl<V: Clone + Send + Sync + DistributiveLattice> DistributiveLattice for BytesTrieMap<V> {
     fn psubtract(&self, other: &Self) -> AlgebraicResult<Self> {
-        self.root().psubtract(other.root()).map(|root| Self::new_with_root(root))
+        self.root().psubtract(&other.root()).map(|root| Self::new_with_root(root))
     }
 }
 
 impl<V: Clone + Send + Sync> Quantale for BytesTrieMap<V> {
     fn prestrict(&self, other: &Self) -> AlgebraicResult<Self> {
-        self.root().prestrict(other.root()).map(|root| Self::new_with_root(root) )
+        match (self.root(), other.root()) {
+            (Some(self_root), Some(other_root)) => self_root.prestrict(other_root).map(|root| Self::new_with_root(Some(root)) ),
+            _ => AlgebraicResult::None,
+        }
     }
 }
 
