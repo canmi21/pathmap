@@ -100,7 +100,7 @@ fn nth<I>(mut it: I, n: usize) -> I::Item
 }
 
 fn one_up(pat: &[usize], n: usize) -> Vec<usize> {
-    let mut seq = Vec::new();
+    let mut seq = Vec::with_capacity(n);
     let mut c = 0;
     let mut it = pat.iter().cycle().scan(0, |state, &x| {
         *state += x;
@@ -297,7 +297,7 @@ pub(crate) fn compressed_range<V : Clone, const NUM_SIZE : usize, R : UsefulNumb
         if i == 0 {
             for &tk in section.iter() {
                 // println!("take {tk}");
-                let mut node = DenseByteNode::new();
+                let mut node = DenseByteNode::with_capacity(tk);
                 for _ in 0..tk {
                     let k = pat_it.next().unwrap();
                     // println!("set value {k}");
@@ -318,15 +318,16 @@ pub(crate) fn compressed_range<V : Clone, const NUM_SIZE : usize, R : UsefulNumb
     //Build the remaining levels
     let mut lvs = Vec::with_capacity(NUM_SIZE);
     lvs.push(lv1);
-    let mut rs = Vec::with_capacity(NUM_SIZE);
-    rs.push(r1);
+    // let mut rs = Vec::with_capacity(NUM_SIZE);
+    // rs.push(r1);
     for _ in 1..stop_order {
         let mut lv_prev_it = lvs[lvs.len()-1].iter().cycle();
         let mut lv_current = vec![];
-        let r = one_up(&rs[rs.len()-1][..], step.to_usize().unwrap());
+        // let r = one_up(&rs[rs.len()-1][..], step.to_usize().unwrap());
         // println!("repeat {r:?}");
-        for &tk in r.iter() {
-            let mut node = DenseByteNode::new();
+        // for &tk in r.iter() {
+        for _ in 0..step.to_u16().unwrap() {
+            let mut node = DenseByteNode::with_capacity(256);
             for k in 0..256 {
                 let c = lv_prev_it.next().unwrap();
                 node.set_child(k as u8, c.clone());
@@ -334,7 +335,7 @@ pub(crate) fn compressed_range<V : Clone, const NUM_SIZE : usize, R : UsefulNumb
             lv_current.push(TrieNodeODRc::new(node));
         }
 
-        rs.push(r);
+        // rs.push(r);
         lvs.push(lv_current);
     }
 
@@ -457,7 +458,7 @@ fn compressed_range_equivalent() {
 
         // let mut f = File::create("/home/adam/Projects/PathMap/M42.graphviz").unwrap();
         // graphviz(&cr, &mut f);
-
+        // std::hint::black_box(cr);
         let mut it = cr.read_zipper();
         while let Some(_) = it.to_next_val() {
             // println!("path {:?}", it.path());
