@@ -100,6 +100,16 @@ export function object(bts) {
 
 /**
  * @param {BytesTrieSet} bts
+ * @returns {object}
+ */
+export function d3_hierarchy(bts) {
+    _assertClass(bts, BytesTrieSet);
+    const ret = wasm.d3_hierarchy(bts.__wbg_ptr);
+    return ret;
+}
+
+/**
+ * @param {BytesTrieSet} bts
  * @returns {Reader}
  */
 export function reader(bts) {

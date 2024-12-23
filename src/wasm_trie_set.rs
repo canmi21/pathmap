@@ -82,6 +82,52 @@ pub fn object(bts: &BytesTrieSet) -> js_sys::Object {
   r.unwrap_or_else(|e| e).into()
 }
 
+fn d3_json_intern(node: &TrieNodeODRc<()>, s: &mut Vec<u8>) {
+  let bnode = node.borrow();
+  let cm = bnode.node_branches_mask(&[]);
+  s.push(b'[');
+  let mut n = 0;
+  for i in 0..4 {
+    let mut lm = cm[i];
+    while lm != 0 {
+      let index = lm.trailing_zeros();
+
+      let key_byte = 64*(i as u8) + (index as u8);
+      match bnode.get_node_at_key(&[key_byte]).into_option() {
+        None => {
+          if n != 0 { s.push(b',') }
+          s.extend(b"{\"name\":\"");
+          s.extend(key_byte.to_string().as_bytes());
+          s.extend(b"\"}");
+          n += 1;
+        }
+        Some(r) => {
+          if n != 0 { s.push(b',') }
+          s.extend(b"{\"name\":\"");
+          s.extend(key_byte.to_string().as_bytes());
+          s.extend(b"\",\"children\":");
+          d3_json_intern(&r, s);
+          s.push(b'}');
+          n += 1;
+        }
+      }
+
+      lm ^= 1u64 << index;
+    }
+  }
+  s.push(b']');
+}
+
+#[wasm_bindgen]
+pub fn d3_hierarchy(bts: &BytesTrieSet) -> js_sys::Object {
+  let mut s = vec![];
+  s.extend(b"{\"name\":\"root\",\"children\":");
+  d3_json_intern(bts.btm.root(), &mut s);
+  s.push(b'}');
+  let r = js_sys::JSON::parse(unsafe { std::str::from_utf8_unchecked(&s[..]) });
+  r.unwrap_or_else(|e| e).into()
+}
+
 #[wasm_bindgen]
 struct Reader {
   z: ReadZipperUntracked<'static, 'static, ()>
