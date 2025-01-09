@@ -56,6 +56,53 @@ function _assertClass(instance, klass) {
         throw new Error(`expected instance of ${klass.name}`);
     }
 }
+/**
+ * @param {BytesTrieSet} x
+ * @param {BytesTrieSet} y
+ * @returns {BytesTrieSet}
+ */
+export function union(x, y) {
+    _assertClass(x, BytesTrieSet);
+    _assertClass(y, BytesTrieSet);
+    const ret = wasm.union(x.__wbg_ptr, y.__wbg_ptr);
+    return BytesTrieSet.__wrap(ret);
+}
+
+/**
+ * @param {BytesTrieSet} x
+ * @param {BytesTrieSet} y
+ * @returns {BytesTrieSet}
+ */
+export function intersection(x, y) {
+    _assertClass(x, BytesTrieSet);
+    _assertClass(y, BytesTrieSet);
+    const ret = wasm.intersection(x.__wbg_ptr, y.__wbg_ptr);
+    return BytesTrieSet.__wrap(ret);
+}
+
+/**
+ * @param {BytesTrieSet} x
+ * @param {BytesTrieSet} y
+ * @returns {BytesTrieSet}
+ */
+export function restriction(x, y) {
+    _assertClass(x, BytesTrieSet);
+    _assertClass(y, BytesTrieSet);
+    const ret = wasm.restriction(x.__wbg_ptr, y.__wbg_ptr);
+    return BytesTrieSet.__wrap(ret);
+}
+
+/**
+ * @param {BytesTrieSet} x
+ * @param {BytesTrieSet} y
+ * @returns {BytesTrieSet}
+ */
+export function subtraction(x, y) {
+    _assertClass(x, BytesTrieSet);
+    _assertClass(y, BytesTrieSet);
+    const ret = wasm.subtraction(x.__wbg_ptr, y.__wbg_ptr);
+    return BytesTrieSet.__wrap(ret);
+}
 
 let WASM_VECTOR_LEN = 0;
 

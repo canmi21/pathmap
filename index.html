@@ -6,11 +6,11 @@
 </head>
 <body>
 <div>
-    <div id="active">active</div>
-    reader path and children; partial action
-    <div id="path">path</div>
-    <div id="children">children</div>
-    <div id="partial">partial</div>
+
+    active read zipper: <div id="active" style="display: inline">active</div><br>
+    read zipper location: <div id="path" style="display: inline">path</div><br>
+    direct children: <div id="children" style="display: inline">children</div><br>
+    compound action: <div id="partial" style="display: inline">partial</div><br>
 </div>
 <div id="board"></div>
 <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -438,7 +438,7 @@
         return svg.node();
     }
 
-    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader } from "./pkg/pathmap.js";
+    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction } from "./pkg/pathmap.js";
     init().then(() => {
         let readers = [];
         let active = 0;
@@ -453,9 +453,9 @@
         }
 
         window.addEventListener("keydown", e => {
-            draw()
+            window.requestAnimationFrame(draw);
             if (e.key === "Escape") { partial = null; return; }
-            if (partial != null) { if (!(partial.next(e))) { draw(); return; } }
+            if (partial != null) { if (!(partial.next(e))) { window.requestAnimationFrame(draw); return; } }
 
             let r = readers[active];
             switch (e.key) {
@@ -466,8 +466,30 @@
                     if (e.shiftKey) { active = Math.max(active - 1, 0) }
                     else { active = Math.min(active + 1, readers.length - 1) }
                     break;
+                case "Delete":
+                    readers.splice(active);
+                    if (readers.length === 0) readers.push(reader(window.m));
+                    break;
                 case "r":
                     readers.push(fork_reader(r));
+                    break;
+                case "|":
+                    readers.push(reader(union(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2]))));
+                    break;
+                case "&":
+                    readers.push(reader(intersection(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2]))));
+                    break;
+                case "\\":
+                    readers.push(reader(subtraction(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2]))));
+                    break;
+                case "/":
+                    readers.push(reader(subtraction(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 1]))));
+                    break;
+                case "<":
+                    readers.push(reader(restriction(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2]))));
+                    break;
+                case ">":
+                    readers.push(reader(restriction(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 1]))));
                     break;
                 case "w":
                     to_prev_sibling_byte(r);
@@ -550,7 +572,7 @@
                     return;
             }
 
-            draw();
+            window.requestAnimationFrame(draw);
 
             if (e.stopPropagation) {e.stopPropagation(); e.preventDefault()}
         });

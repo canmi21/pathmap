@@ -1,6 +1,7 @@
 use std::io::Write;
 use wasm_bindgen::prelude::*;
 use js_sys;
+use crate::ring::Lattice;
 use crate::trie_map::*;
 use crate::trie_node::TrieNodeODRc;
 use crate::zipper::*;
@@ -18,6 +19,26 @@ pub fn empty() -> BytesTrieSet {
 #[wasm_bindgen]
 pub fn range_be_u32(start: u32, stop: u32, step: u32) -> BytesTrieSet {
   BytesTrieSet { btm: BytesTrieMap::<()>::range::<true, u32>(start, stop, step, ()) }
+}
+
+#[wasm_bindgen]
+pub fn union(x: &BytesTrieSet, y: &BytesTrieSet) -> BytesTrieSet {
+  BytesTrieSet { btm: x.btm.join(&y.btm) }
+}
+
+#[wasm_bindgen]
+pub fn intersection(x: &BytesTrieSet, y: &BytesTrieSet) -> BytesTrieSet {
+  BytesTrieSet { btm: x.btm.meet(&y.btm) }
+}
+
+#[wasm_bindgen]
+pub fn restriction(x: &BytesTrieSet, y: &BytesTrieSet) -> BytesTrieSet {
+  BytesTrieSet { btm: x.btm.restrict(&y.btm) }
+}
+
+#[wasm_bindgen]
+pub fn subtraction(x: &BytesTrieSet, y: &BytesTrieSet) -> BytesTrieSet {
+  BytesTrieSet { btm: x.btm.subtract(&y.btm) }
 }
 
 #[wasm_bindgen]
