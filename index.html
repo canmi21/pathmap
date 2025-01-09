@@ -5,6 +5,13 @@
     <title>hello-wasm example</title>
 </head>
 <body>
+<div>
+    <div id="active">active</div>
+    reader path and children; partial action
+    <div id="path">path</div>
+    <div id="children">children</div>
+    <div id="partial">partial</div>
+</div>
 <div id="board"></div>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script type="module">
@@ -431,18 +438,130 @@
         return svg.node();
     }
 
-    import init, { range_be_u32, contains, reader, children, descend_to, ascend, path, exists, d3_hierarchy, make_map } from "./pkg/pathmap.js";
+    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader } from "./pkg/pathmap.js";
     init().then(() => {
-        let m1 = range_be_u32(50000, 100000, 74);
-        // let m1 = range_be_u32(0, 10, 3);
+        let readers = [];
+        let active = 0;
+        let partial = null;
 
-        let r = reader(m1)
-        descend_to(r, [0])
-        m1 = make_map(r)
+        let draw = () => {
+            let r = readers[active];
+            document.getElementById("active").innerText = active.toString() + "/" + readers.length;
+            document.getElementById("path").innerText = path(r).toString() + (exists(r) ? "" : " (outside)");
+            document.getElementById("children").innerText = children(r).toString();
+            document.getElementById("partial").innerText = partial != null ? partial.name + " " + partial.s : "none";
+        }
+
+        window.addEventListener("keydown", e => {
+            draw()
+            if (e.key === "Escape") { partial = null; return; }
+            if (partial != null) { if (!(partial.next(e))) { draw(); return; } }
+
+            let r = readers[active];
+            switch (e.key) {
+                case " ":
+                    readers.push(reader(window.m));
+                    break;
+                case "Tab":
+                    if (e.shiftKey) { active = Math.max(active - 1, 0) }
+                    else { active = Math.min(active + 1, readers.length - 1) }
+                    break;
+                case "r":
+                    readers.push(fork_reader(r));
+                    break;
+                case "w":
+                    to_prev_sibling_byte(r);
+                    break;
+                case "s":
+                    to_next_sibling_byte(r);
+                    break;
+                case "a":
+                    ascend(r, 1);
+                    break;
+                case "d":
+                    descend_indexed_byte(r, 0);
+                    break;
+                case "D":
+                    partial = {
+                        name: "descend to nth byte",
+                        s: "",
+                        next: (e_) => {
+                            switch (e_.key) {
+                                case "Enter":
+                                    if (partial.s === "") { descend_indexed_byte(r, 0); }
+                                    else { descend_indexed_byte(r, parseInt(partial.s, 10)); }
+                                    partial = null;
+                                    break;
+                                case "0": partial.s += "0"; break;
+                                case "1": partial.s += "1"; break;
+                                case "2": partial.s += "2"; break;
+                                case "3": partial.s += "3"; break;
+                                case "4": partial.s += "4"; break;
+                                case "5": partial.s += "5"; break;
+                                case "6": partial.s += "6"; break;
+                                case "7": partial.s += "7"; break;
+                                case "8": partial.s += "8"; break;
+                                case "9": partial.s += "9"; break;
+                            }
+                        }
+                    }
+                    break;
+                case "f":
+                    to_next_val(r);
+                    break;
+                case "F":
+                    partial = {
+                        name: "descend to specific byte",
+                        s: "",
+                        next: (e_) => {
+                            switch (e_.key) {
+                                case "Enter":
+                                    if (partial.s === "") { }
+                                    else { descend_to(r, new Uint8Array([parseInt(partial.s, 10)])); }
+                                    partial = null;
+                                    break;
+                                case "0": partial.s += "0"; break;
+                                case "1": partial.s += "1"; break;
+                                case "2": partial.s += "2"; break;
+                                case "3": partial.s += "3"; break;
+                                case "4": partial.s += "4"; break;
+                                case "5": partial.s += "5"; break;
+                                case "6": partial.s += "6"; break;
+                                case "7": partial.s += "7"; break;
+                                case "8": partial.s += "8"; break;
+                                case "9": partial.s += "9"; break;
+                            }
+                        }
+                    }
+                    break;
+                case "c":
+                    console.log("children:", children(r));
+                    return;
+                case "n":
+                    console.log("values under position:", val_count(r));
+                    return;
+                case "m":
+                    console.log("map under position:", object(make_map(r)));
+                    if (document.getElementById("board").children.length === 0) { document.getElementById("board").append(indented(d3_hierarchy(make_map(r)))); }
+                    else { document.getElementById("board").replaceChild(indented(d3_hierarchy(make_map(r))), document.getElementById("board").firstChild); }
+                    return;
+                case "p":
+                    console.log("reader located at:", path(r));
+                    return;
+            }
+
+            draw();
+
+            if (e.stopPropagation) {e.stopPropagation(); e.preventDefault()}
+        });
+
+        window.m = range_be_u32(50000, 100000, 74);
+        readers.push(reader(window.m));
+        draw();
 
         // document.getElementById("board").append(chart(d3_hierarchy(m1)))
         // document.getElementById("board").append(indented(d3_hierarchy(m1)))
-        document.getElementById("board").append(zoomable_pack(d3_hierarchy(m1)))
+        // document.getElementById("board").append(zoomable_pack(d3_hierarchy(m1)))
         // document.getElementById("board").append(pack(d3_hierarchy(m1), {sort: (a, b) => d3.descending(a.name, b.name), label: (d, n) => d.name, title: (d, n) => d.name}))
 
         // let m1 = range_be_u32(0, 10, 3);

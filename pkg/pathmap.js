@@ -133,6 +133,47 @@ export function descend_to(r, k) {
 
 /**
  * @param {Reader} r
+ * @returns {boolean}
+ */
+export function to_next_val(r) {
+    _assertClass(r, Reader);
+    const ret = wasm.to_next_val(r.__wbg_ptr);
+    return ret !== 0;
+}
+
+/**
+ * @param {Reader} r
+ * @param {number} i
+ * @returns {boolean}
+ */
+export function descend_indexed_byte(r, i) {
+    _assertClass(r, Reader);
+    const ret = wasm.descend_indexed_byte(r.__wbg_ptr, i);
+    return ret !== 0;
+}
+
+/**
+ * @param {Reader} r
+ * @returns {boolean}
+ */
+export function to_next_sibling_byte(r) {
+    _assertClass(r, Reader);
+    const ret = wasm.to_next_sibling_byte(r.__wbg_ptr);
+    return ret !== 0;
+}
+
+/**
+ * @param {Reader} r
+ * @returns {boolean}
+ */
+export function to_prev_sibling_byte(r) {
+    _assertClass(r, Reader);
+    const ret = wasm.to_prev_sibling_byte(r.__wbg_ptr);
+    return ret !== 0;
+}
+
+/**
+ * @param {Reader} r
  * @param {number} k
  * @returns {boolean}
  */
@@ -188,6 +229,26 @@ export function make_map(r) {
     _assertClass(r, Reader);
     const ret = wasm.make_map(r.__wbg_ptr);
     return BytesTrieSet.__wrap(ret);
+}
+
+/**
+ * @param {Reader} r
+ * @returns {number}
+ */
+export function val_count(r) {
+    _assertClass(r, Reader);
+    const ret = wasm.val_count(r.__wbg_ptr);
+    return ret >>> 0;
+}
+
+/**
+ * @param {Reader} r
+ * @returns {Reader}
+ */
+export function fork_reader(r) {
+    _assertClass(r, Reader);
+    const ret = wasm.fork_reader(r.__wbg_ptr);
+    return Reader.__wrap(ret);
 }
 
 const BytesTrieSetFinalization = (typeof FinalizationRegistry === 'undefined')

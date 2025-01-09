@@ -144,6 +144,26 @@ pub fn descend_to(r: &mut Reader, k: &[u8]) -> bool {
 }
 
 #[wasm_bindgen]
+pub fn to_next_val(r: &mut Reader) -> bool {
+  r.z.to_next_val().is_some()
+}
+
+#[wasm_bindgen]
+pub fn descend_indexed_byte(r: &mut Reader, i: usize) -> bool {
+  r.z.descend_indexed_branch(i)
+}
+
+#[wasm_bindgen]
+pub fn to_next_sibling_byte(r: &mut Reader) -> bool {
+  r.z.to_next_sibling_byte()
+}
+
+#[wasm_bindgen]
+pub fn to_prev_sibling_byte(r: &mut Reader) -> bool {
+  r.z.to_prev_sibling_byte()
+}
+
+#[wasm_bindgen]
 pub fn ascend(r: &mut Reader, k: usize) -> bool {
   r.z.ascend(k)
 }
@@ -181,4 +201,14 @@ pub fn path(r: &Reader) -> Box<[u8]> {
 #[wasm_bindgen]
 pub fn make_map(r: &Reader) -> BytesTrieSet {
   r.z.make_map().map(|m| BytesTrieSet{ btm: m }).unwrap_or(BytesTrieSet{ btm: BytesTrieMap::new() })
+}
+
+#[wasm_bindgen]
+pub fn val_count(r: &Reader) -> usize {
+  r.z.val_count()
+}
+
+#[wasm_bindgen]
+pub fn fork_reader(r: &Reader) -> Reader {
+  Reader { z: unsafe { std::mem::transmute(r.z.fork_read_zipper()) } }
 }
