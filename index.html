@@ -6,11 +6,37 @@
 </head>
 <body>
 <div>
-
     active read zipper: <div id="active" style="display: inline">active</div><br>
     read zipper location: <div id="path" style="display: inline">path</div><br>
     direct children: <div id="children" style="display: inline">children</div><br>
     compound action: <div id="partial" style="display: inline">partial</div><br>
+</div>
+<div id="help" style="display: block;">
+    <table>
+        <tr><td>Space</td><td>New reader at root</td></tr>
+        <tr><td>Tab</td><td>Focus next reader</td></tr>
+        <tr><td>Shift+Tab</td><td>Focus previous reader</td></tr>
+        <tr><td>Shift+R</td><td>Range of type u32 with start, stop, and step</td></tr>
+        <tr><td>Z</td><td>Fork reader</td></tr>
+        <tr><td>|</td><td>Union of the top two readers</td></tr>
+        <tr><td>&</td><td>Union of the top two readers</td></tr>
+        <tr><td>\</td><td>Subtract top reader from second reader</td></tr>
+        <tr><td>/</td><td>Subtract second reader from top reader</td></tr>
+        <tr><td><</td><td>Restrict top reader to second reader</td></tr>
+        <tr><td>></td><td>Restrict second reader to top reader</td></tr>
+        <tr><td>W</td><td>Move reader to lower sibling byte</td></tr>
+        <tr><td>S</td><td>Move reader to higher sibling byte</td></tr>
+        <tr><td>A</td><td>Ascend reader one byte</td></tr>
+        <tr><td>D</td><td>Descend reader to first child byte</td></tr>
+        <tr><td>Shift+D</td><td>Descend reader to nth child byte</td></tr>
+        <tr><td>F</td><td>Descend to first value</td></tr>
+        <tr><td>Shift+F</td><td>Descend reader to a specific byte</td></tr>
+        <tr><td>C</td><td>Put the direct reader position children to console</td></tr>
+        <tr><td>N</td><td>Put the number of values under the reader position to console</td></tr>
+        <tr><td>M</td><td>Put the submap under the reader position to console (and draw it)</td></tr>
+        <tr><td>P</td><td>Put the path of the reader position to console</td></tr>
+        <tr><td>H</td><td>Show/hide these instructions</td></tr>
+    </table>
 </div>
 <div id="board"></div>
 <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -446,7 +472,7 @@
 
         let draw = () => {
             let r = readers[active];
-            document.getElementById("active").innerText = active.toString() + "/" + readers.length;
+            document.getElementById("active").innerText = active.toString() + "/" + readers.length + " " + r.origin;
             document.getElementById("path").innerText = path(r).toString() + (exists(r) ? "" : " (outside)");
             document.getElementById("children").innerText = children(r).toString();
             document.getElementById("partial").innerText = partial != null ? partial.name + " " + partial.s : "none";
@@ -458,9 +484,12 @@
             if (partial != null) { if (!(partial.next(e))) { window.requestAnimationFrame(draw); return; } }
 
             let r = readers[active];
+            let nr = null;
             switch (e.key) {
                 case " ":
-                    readers.push(reader(window.m));
+                    nr = reader(window.m);
+                    nr.origin = "(root)";
+                    readers.push(nr);
                     break;
                 case "Tab":
                     if (e.shiftKey) { active = Math.max(active - 1, 0) }
@@ -468,28 +497,52 @@
                     break;
                 case "Delete":
                     readers.splice(active);
-                    if (readers.length === 0) readers.push(reader(window.m));
+                    if (readers.length === 0) {
+                        let nr = reader(window.m);
+                        nr.origin = "(default)"
+                        readers.push(nr);
+                    }
                     break;
-                case "r":
-                    readers.push(fork_reader(r));
+                case "R":
+                    let [start, stop, step] = prompt("range(start, stop, step)").split(",");
+                    nr = reader(range_be_u32(parseInt(start, 10), parseInt(stop, 10), parseInt(step, 10)));
+                    nr.origin = `range(${start},${stop},${step})`;
+                    readers.push(nr);
+                    break;
+                case "z":
+                    nr = fork_reader(r);
+                    nr.origin = `fork(${r.origin} @ ${path(r)})`;
+                    readers.push(nr);
                     break;
                 case "|":
-                    readers.push(reader(union(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2]))));
+                    nr = reader(union(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
+                    nr.origin = `union of (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])}) and (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])})`;
+                    readers.push(nr);
                     break;
                 case "&":
-                    readers.push(reader(intersection(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2]))));
+                    nr = reader(intersection(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
+                    nr.origin = `intersection of (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])}) and (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])})`;
+                    readers.push(nr);
                     break;
                 case "\\":
-                    readers.push(reader(subtraction(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2]))));
+                    nr = reader(subtraction(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
+                    nr.origin = `subtraction of (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])}) and (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])})`;
+                    readers.push(nr);
                     break;
                 case "/":
-                    readers.push(reader(subtraction(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 1]))));
+                    nr = reader(subtraction(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 2])));
+                    nr.origin = `subtraction of (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])}) and (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])})`;
+                    readers.push(nr);
                     break;
                 case "<":
-                    readers.push(reader(restriction(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2]))));
+                    nr = reader(restriction(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
+                    nr.origin = `restriction of (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])}) and (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])})`;
+                    readers.push(nr);
                     break;
                 case ">":
-                    readers.push(reader(restriction(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 1]))));
+                    nr = reader(restriction(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 2])));
+                    nr.origin = `restriction of (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])}) and (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])})`;
+                    readers.push(nr);
                     break;
                 case "w":
                     to_prev_sibling_byte(r);
@@ -524,6 +577,7 @@
                                 case "7": partial.s += "7"; break;
                                 case "8": partial.s += "8"; break;
                                 case "9": partial.s += "9"; break;
+                                default: partial = null;
                             }
                         }
                     }
@@ -552,6 +606,7 @@
                                 case "7": partial.s += "7"; break;
                                 case "8": partial.s += "8"; break;
                                 case "9": partial.s += "9"; break;
+                                default: partial = null;
                             }
                         }
                     }
@@ -570,6 +625,10 @@
                 case "p":
                     console.log("reader located at:", path(r));
                     return;
+                case "?":
+                    if (document.getElementById("help").style.display === "none") { document.getElementById("help").style.display = "block"; }
+                    else { document.getElementById("help").style.display = "none"; }
+                    return;
             }
 
             window.requestAnimationFrame(draw);
@@ -578,8 +637,7 @@
         });
 
         window.m = range_be_u32(50000, 100000, 74);
-        readers.push(reader(window.m));
-        draw();
+        window.dispatchEvent(new KeyboardEvent("keydown", {key: " "}));
 
         // document.getElementById("board").append(chart(d3_hierarchy(m1)))
         // document.getElementById("board").append(indented(d3_hierarchy(m1)))
