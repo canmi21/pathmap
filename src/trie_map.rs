@@ -1,9 +1,12 @@
 use core::cell::UnsafeCell;
-
+use std::collections::hash_map::Entry;
+use std::mem::MaybeUninit;
+use gxhash::HashMap;
 use num_traits::{PrimInt, zero};
 use crate::trie_node::*;
 use crate::zipper::*;
 use crate::ring::{AlgebraicResult, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
+use crate::zipper::zipper_priv::ZipperPriv;
 
 /// A map type that uses byte slices `&[u8]` as keys
 ///
@@ -402,6 +405,20 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
             (None, _) => Self::new(),
         }
     }
+
+    fn cata<W, AlgT : Alg<V, W>>(&self, t: &mut AlgT) -> W {
+        match self.root() {
+            None => { t.alg([0; 4], &[], &[]) }
+            Some(n) => {
+                // DFS of the trie "visit every logical position in a dependency respecting manner"
+                // apply mapper to all values
+                // summarize all nodes without further links to a value
+                // collapse values of children and non-leave values
+                let mut z = self.read_zipper();
+                z.cata(t)
+            }
+        }
+    }
 }
 
 impl<V: Clone + Send + Sync, K: AsRef<[u8]>> FromIterator<(K, V)> for BytesTrieMap<V> {
@@ -460,8 +477,12 @@ impl<V: Clone + Send + Sync> Default for BytesTrieMap<V> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::ptr::slice_from_raw_parts;
     use crate::trie_map::*;
     use crate::ring::Lattice;
+    use crate::utils::IntoByteMaskIter;
+    use crate::cata;
 
     #[test]
     fn map_test() {
@@ -583,6 +604,48 @@ mod tests {
         assert_eq!(btm.contains_path(b"cannon"), true);
         assert_eq!(btm.contains_path(b"cannonade"), false);
         assert_eq!(btm.contains_path(b""), true);
+    }
+
+    #[test]
+    fn map_cata_simple() {
+        // let serialized_bytes = btm.cata(
+        //     &|m, ws, p| { let cs = ws.sum(); ser.write(cs); ser.write(m); 8 + 32 + cs },
+        //     &|s, p| { ser.write(s) },
+        //     &|v, w, p| { let vs = ser.write(v); w + vs }
+        // );
+        // let hash = btm.cata(
+        //     &|m, ws, p| { (0u128, gxhash::gxhash128(unsafe { &*slice_from_raw_parts(ws.as_ptr().cast(), ws.len()*32) }, p.len() as i64)) },
+        //     &|s, p| { (*s as u128, 0) },
+        //     &|v, w, p| { (*v as u128, w.1) }
+        // );
+
+        let mut btm = BytesTrieMap::new();
+        let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
+        rs.iter().enumerate().for_each(|(i, r)| { btm.insert(r.as_bytes(), i); });
+
+        // let mut rz = btm.read_zipper();
+        // while let Some(v) = rz.to_next_val() {
+        //     println!("path {v} {}", std::str::from_utf8(rz.path()).unwrap())
+        // }
+
+        cata!(usize, (), btm, &|m, ws, p| { }, &|s, p| { println!("path {s} {}", std::str::from_utf8(p).unwrap()) }, &|v, w, p| { });
+
+        // like val count, but without counting internal values
+        // let cnt = cata!(usize, i64, btm, &|m, ws: &[i64], p| { ws.iter().sum() }, &|s, p| { 1 }, &|v, w: &i64, p| { *w });
+        // println!("cnt {}", cnt);
+
+        // the three highest branching (sub)paths
+        // use crate::limited_heap::LimitedHeap;
+        // let mut top = LimitedHeap::<usize, Vec<u8>, true>::new(3);
+        // cata!(usize, (), btm, &|m, ws, p| { top.insert_lazy(ws.len(), || p.to_vec()); }, &|s, p| { }, &|v, w, p| { });
+        // println!("top: {:?}, {:?}, {:?}", top.as_slice()[0].1, top.as_slice()[1].1, top.as_slice()[2].1);
+
+        // longest path
+        // let longest = cata!(usize, Vec<u8>, btm, &|m, ws: &[Vec<u8>], p| { ws.into_iter().max_by_key(|p: &&Vec<u8>| p.len()).unwrap_or(&vec![]).clone() }, &|s, p: &[u8]| { p.to_vec() }, &|v, w: &Vec<u8>, p| { w.clone() });
+        // println!("longest: {:?}", longest);
+
+        // values at truncated paths
+        // let truncated_vs = btm.cata(&|m, ws, p| { ws.fold(HashSet::new(), |u, w| { u.union(w) }) }, &|s, p| { HashSet::new() }, &|v, w, p| { let mut s = w.clone(); s.insert(v); s });
     }
 
     #[test]

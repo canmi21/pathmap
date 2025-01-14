@@ -214,6 +214,8 @@ pub trait ZipperIteration<'a, V>: Zipper {
     ///
     /// See: [descend_first_k_path](ZipperIteration::descend_first_k_path)
     fn to_next_k_path(&mut self, k: usize) -> bool;
+
+    fn cata<W, AlgT : Alg<V, W>>(&mut self, t: &mut AlgT) -> W;
 }
 
 /// An interface for a [Zipper] to support accessing the full path buffer used to create the zipper
@@ -298,6 +300,7 @@ impl<'a, V: Clone + Send + Sync> ZipperIteration<'a, V> for ReadZipperTracked<'a
     fn to_next_step(&mut self) -> bool { self.z.to_next_step() }
     fn descend_first_k_path(&mut self, k: usize) -> bool { self.z.descend_first_k_path(k) }
     fn to_next_k_path(&mut self, k: usize) -> bool { self.z.to_next_k_path(k) }
+    fn cata<W, AlgT : Alg<V, W>>(&mut self, t: &mut AlgT) -> W { self.z.cata(t) }
 }
 
 impl<V: Clone + Send + Sync> ZipperAbsolutePath for ReadZipperTracked<'_, '_, V> {
@@ -401,6 +404,7 @@ impl<'a, V: Clone + Send + Sync> ZipperIteration<'a, V> for ReadZipperUntracked<
     fn to_next_step(&mut self) -> bool { self.z.to_next_step() }
     fn descend_first_k_path(&mut self, k: usize) -> bool { self.z.descend_first_k_path(k) }
     fn to_next_k_path(&mut self, k: usize) -> bool { self.z.to_next_k_path(k) }
+    fn cata<W, AlgT : Alg<V, W>>(&mut self, t: &mut AlgT) -> W { self.z.cata(t) }
 }
 
 impl<V: Clone + Send + Sync> ZipperAbsolutePath for ReadZipperUntracked<'_, '_, V> {
@@ -1080,6 +1084,60 @@ impl<'a, V: Clone + Send + Sync> ZipperIteration<'a, V> for ReadZipperCore<'a, '
         self.deregularize();
         self.k_path_internal(k, base_idx)
     }
+
+    fn cata<W, AlgT : Alg<V, W>>(&mut self, t: &mut AlgT) -> W {
+        let cc = self.child_count();
+        let mut ws = Vec::with_capacity(cc);
+
+        if cc == 0 {
+            assert!(false);
+        }
+        self.descend_first_byte();
+        for c in 0..cc {
+            match self.get_focus() {
+                AbstractNodeRef::None => {
+                    if self.get_value().is_none() {
+                        println!("both none at {:?}", std::str::from_utf8(self.origin_path().unwrap()).unwrap());
+                    } else {
+                        ws.push(t.mapper(self.get_value().unwrap(), self.origin_path().unwrap()));
+                    }
+                }
+                _ => {
+                    let rec: W =  self.cata(t);
+                    match self.get_value() {
+                        None => { ws.push(rec) }
+                        Some(v) => { ws.push(t.collapse(v, &rec, self.origin_path().unwrap())) }
+                    }
+                }
+            }
+
+            if !self.to_next_sibling_byte() { assert!(c == cc - 1) }
+        }
+        assert!(self.ascend_byte());
+
+        let w = t.alg(self.child_mask(), &ws[..], self.origin_path().unwrap());
+        return w;
+    }
+}
+
+pub(crate) trait Alg<V, W> {
+    fn alg(&self, m: [u64; 4], cs: &[W], p: &[u8]) -> W;
+    fn mapper(&self, v: &V, p: &[u8]) -> W;
+    fn collapse(&self, v: &V, w: &W, p: &[u8]) -> W;
+}
+
+#[macro_export]
+macro_rules! cata {
+    ($t1:ty, $t2:ty, $x:expr, $alg:expr, $mapper:expr, $collapse:expr) => {{
+        struct AnonTraversal {}
+        impl Alg<$t1, $t2> for AnonTraversal {
+            #[inline(always)] fn alg(&self, m: [u64; 4], cs: &[$t2], p: &[u8]) -> $t2 { ($alg)(m, cs, p) }
+            #[inline(always)] fn mapper(&self, v: &$t1, p: &[u8]) -> $t2 { ($mapper)(v, p) }
+            #[inline(always)] fn collapse(&self, v: &$t1, w: &$t2, p: &[u8]) -> $t2 { ($collapse)(v, w, p) }
+        }
+
+        $x.read_zipper().cata(&mut AnonTraversal{})
+    }};
 }
 
 impl<V: Clone + Send + Sync> ZipperAbsolutePath for ReadZipperCore<'_, '_, V> {

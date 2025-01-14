@@ -41,6 +41,7 @@ mod tiny_node;
 mod bridge_node;
 
 mod old_cursor;
+mod limited_heap;
 
 #[cfg(test)]
 mod tests {
