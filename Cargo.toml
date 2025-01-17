@@ -15,6 +15,7 @@ num-traits = "0.2"
 tikv-jemallocator = {version = "0.6.0", optional = true}
 wasm-bindgen = "0.2.99"
 js-sys = "0.3.76"
+flate2 = "1.0.35"
 
 [features]
 default = []

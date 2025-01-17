@@ -1,5 +1,6 @@
-use std::io::Write;
+use std::io::{Read, Write};
 use std::ptr;
+use flate2::Compression;
 use wasm_bindgen::prelude::*;
 use js_sys;
 use crate::ring::Lattice;
@@ -162,13 +163,21 @@ pub fn object(bts: &BytesTrieSet) -> js_sys::Object {
 
 #[wasm_bindgen]
 pub fn serialize(bts: &BytesTrieSet) -> Box<[u8]> {
-  serialize_intern(bts).into_boxed_slice()
+  // writing chunk in-tandem with the encoder would be better (and totally doable)
+  let serialized = serialize_intern(bts);
+  let mut compressor = flate2::write::GzEncoder::new(Vec::new(), Compression::default());
+  compressor.write_all(&serialized[..]).unwrap();
+  compressor.finish().unwrap().into_boxed_slice()
 }
 
 #[wasm_bindgen]
 pub fn deserialize(jsbs: &js_sys::Uint8Array) -> BytesTrieSet {
+  // reading chunks in-tandem with the decoder would be better (and totally doable)
   let bs = jsbs.to_vec();
-  deserialize_intern(&bs[..])
+  let mut decompressor = flate2::read::GzDecoder::new(&bs[..]);
+  let mut buf = vec![];
+  decompressor.read_to_end(&mut buf).unwrap();
+  deserialize_intern(&buf[..])
 }
 
 fn d3_json_intern(node: &TrieNodeODRc<()>, s: &mut Vec<u8>) {
