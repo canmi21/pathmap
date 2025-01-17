@@ -24,6 +24,8 @@
         <tr><td>/</td><td>Subtract second reader from top reader</td></tr>
         <tr><td><</td><td>Restrict top reader to second reader</td></tr>
         <tr><td>></td><td>Restrict second reader to top reader</td></tr>
+        <tr><td>^</td><td>Decapitation of the top reader</td></tr>
+        <tr><td>v</td><td>Head of the top reader</td></tr>
         <tr><td>W</td><td>Move reader to lower sibling byte</td></tr>
         <tr><td>S</td><td>Move reader to higher sibling byte</td></tr>
         <tr><td>A</td><td>Ascend reader one byte</td></tr>
@@ -35,32 +37,69 @@
         <tr><td>N</td><td>Put the number of values under the reader position to console</td></tr>
         <tr><td>M</td><td>Put the submap under the reader position to console (and draw it)</td></tr>
         <tr><td>P</td><td>Put the path of the reader position to console</td></tr>
-        <tr><td>H</td><td>Show/hide these instructions</td></tr>
+        <tr><td>?</td><td>Show/hide these instructions</td></tr>
     </table>
 </div>
 <div id="board"></div>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script type="module">
+    function download_bin(filename, array) {
+        const blob = new Blob([array], { type: "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+        let element = document.createElement('a');
+        element.setAttribute('href', url);
+        element.setAttribute('download', filename);
+        element.style.display = 'none';
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+        URL.revokeObjectURL(url);
+    }
+
+    function upload_bin(func) {
+        let element = document.createElement('input');
+        element.setAttribute('type', 'file');
+        element.addEventListener('change', evt => {
+            let r = new FileReader();
+            r.onload = e => func({name: element.value.match(/([^\\]+$)/g)[0], content: e.target.result})
+            r.readAsArrayBuffer(evt.target.files[0]);
+        }, false);
+        element.style.display = 'none';
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+    }
+
     function indented(data) {
         const format = d3.format(",");
         const nodeSize = 17;
-        const root = d3.hierarchy(data).eachBefore((i => d => d.index = i++)(0));
+        const root = d3.hierarchy(data)
+            .eachBefore((i => d => { d.index = i++; d.p = d.p ? [d.data.name, ...d.p] : [];
+                                     if (d.children) d.children.forEach(c => c.p = d.p) })(0))
+            .eachAfter(d => { d.count = d.children ? d.children.reduceRight((x, y) => x + y.count, 0) : 1;
+                               });
         const nodes = root.descendants();
         const width = window.innerWidth;
         const height = (nodes.length + 1) * nodeSize;
 
         const columns = [
             {
-                label: "Size",
-                value: d => d.value,
-                format,
+                label: "Count",
+                value: d => d.count,
+                format: (value, d) => d.children ? format(value) : "-",
                 x: 280
             },
             {
-                label: "Count",
-                value: d => d.children ? 0 : 1,
-                format: (value, d) => d.children ? format(value) : "-",
+                label: "Depth",
+                value: d => d.depth,
+                format: value => value,
                 x: 340
+            },
+            {
+                label: "UInt",
+                value: d => d.p.length != 0 ? new DataView(new Uint8Array(d.p.concat(new Array(8 - d.p.length))).buffer).getBigUint64(0, true) : "",
+                format: value => value,
+                x: 400
             }
         ];
 
@@ -113,10 +152,9 @@
             node.append("text")
                 .attr("dy", "0.32em")
                 .attr("x", x)
-                .attr("text-anchor", "end")
+                .attr("text-anchor", "start")
                 .attr("fill", d => d.children ? null : "#555")
-                .data(root.copy().sum(value).descendants())
-                .text(d => format(d.value, d));
+                .text(d => format(value(d), d));
         }
 
         return svg.node();
@@ -464,21 +502,43 @@
         return svg.node();
     }
 
-    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction } from "./pkg/pathmap.js";
+    function parseByte(s) {
+        if (s.startsWith("0x")) { return parseInt(s.slice(2), 16) }
+        else if (s.startsWith("0b")) { return parseInt(s.slice(2), 2) }
+        else if (s.startsWith("'")) { return s.slice(1).charCodeAt(0) }
+        else { return parseInt(s, 10) }
+    }
+
+    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction, decapitation, head, serialize, deserialize } from "./pkg/pathmap.js";
     init().then(() => {
+        window.root_map = range_be_u32(50000, 100000, 74);
+        window.doing_partial = false;
+        window.draw_in_tab = false;
+        window.display_mode = "decimal";
+        window.path_seperator = " ";
         let readers = [];
         let active = 0;
         let partial = null;
 
+        let display_path = (p, sep = window.path_seperator) => {
+            switch (window.display_mode) {
+                case "hex": return p.map(x => x.toString(16)).join(sep);
+                case "binary": return p.map(x => x.toString(2)).join(sep);
+                case "decimal": return p.map(x => x.toString()).join(sep);
+                case "char": return p.map(x => String.fromCharCode(x)).join(sep);
+            }
+        }
+
         let draw = () => {
             let r = readers[active];
-            document.getElementById("active").innerText = active.toString() + "/" + readers.length + " " + r.origin;
-            document.getElementById("path").innerText = path(r).toString() + (exists(r) ? "" : " (outside)");
-            document.getElementById("children").innerText = children(r).toString();
+            document.getElementById("active").innerText = active.toString() + " (" + readers.length + " total) " + r.origin;
+            document.getElementById("path").innerText = display_path(path(r)) + (exists(r) ? "" : " (outside)");
+            document.getElementById("children").innerText = display_path(children(r), ",");
             document.getElementById("partial").innerText = partial != null ? partial.name + " " + partial.s : "none";
         }
 
         window.addEventListener("keydown", e => {
+            if (e.altKey || e.ctrlKey) { partial = null; return; }
             window.requestAnimationFrame(draw);
             if (e.key === "Escape") { partial = null; return; }
             if (partial != null) { if (!(partial.next(e))) { window.requestAnimationFrame(draw); return; } }
@@ -487,21 +547,26 @@
             let nr = null;
             switch (e.key) {
                 case " ":
-                    nr = reader(window.m);
+                    nr = reader(window.root_map);
                     nr.origin = "(root)";
                     readers.push(nr);
                     break;
                 case "Tab":
                     if (e.shiftKey) { active = Math.max(active - 1, 0) }
                     else { active = Math.min(active + 1, readers.length - 1) }
+                    // if (e.shiftKey) { active = (readers.length + (active - 1)) % readers.length }
+                    // else { active = (active + 1) % readers.length }
                     break;
                 case "Delete":
                     readers.splice(active);
                     if (readers.length === 0) {
-                        let nr = reader(window.m);
+                        let nr = reader(window.root_map);
                         nr.origin = "(default)"
                         readers.push(nr);
+                    } else {
+                        active -= 1;
                     }
+                    draw();
                     break;
                 case "R":
                     let [start, stop, step] = prompt("range(start, stop, step)").split(",");
@@ -511,37 +576,47 @@
                     break;
                 case "z":
                     nr = fork_reader(r);
-                    nr.origin = `fork(${r.origin} @ ${path(r)})`;
+                    nr.origin = `fork(${r.origin} @ ${display_path(path(r))})`;
                     readers.push(nr);
                     break;
                 case "|":
                     nr = reader(union(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
-                    nr.origin = `union of (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])}) and (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])})`;
+                    nr.origin = `union of (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))}) and (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))})`;
                     readers.push(nr);
                     break;
                 case "&":
                     nr = reader(intersection(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
-                    nr.origin = `intersection of (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])}) and (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])})`;
+                    nr.origin = `intersection of (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))}) and (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))})`;
                     readers.push(nr);
                     break;
                 case "\\":
                     nr = reader(subtraction(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
-                    nr.origin = `subtraction of (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])}) and (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])})`;
+                    nr.origin = `subtraction of (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))}) and (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))})`;
                     readers.push(nr);
                     break;
                 case "/":
                     nr = reader(subtraction(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 2])));
-                    nr.origin = `subtraction of (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])}) and (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])})`;
+                    nr.origin = `subtraction of (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))}) and (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))})`;
                     readers.push(nr);
                     break;
                 case "<":
                     nr = reader(restriction(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
-                    nr.origin = `restriction of (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])}) and (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])})`;
+                    nr.origin = `restriction of (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))}) and (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))})`;
                     readers.push(nr);
                     break;
                 case ">":
                     nr = reader(restriction(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 2])));
-                    nr.origin = `restriction of (${readers[readers.length - 2].origin} @ ${path(readers[readers.length - 2])}) and (${readers[readers.length - 1].origin} @ ${path(readers[readers.length - 1])})`;
+                    nr.origin = `restriction of (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))}) and (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))})`;
+                    readers.push(nr);
+                    break;
+                case "^":
+                    nr = reader(decapitation(make_map(readers[readers.length - 1]), 1));
+                    nr.origin = `decapitation of (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))})`
+                    readers.push(nr);
+                    break;
+                case "v":
+                    nr = reader(head(make_map(readers[readers.length - 1]), 1));
+                    nr.origin = `head of (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))})`
                     readers.push(nr);
                     break;
                 case "w":
@@ -557,77 +632,109 @@
                     descend_indexed_byte(r, 0);
                     break;
                 case "D":
-                    partial = {
-                        name: "descend to nth byte",
-                        s: "",
-                        next: (e_) => {
-                            switch (e_.key) {
-                                case "Enter":
-                                    if (partial.s === "") { descend_indexed_byte(r, 0); }
-                                    else { descend_indexed_byte(r, parseInt(partial.s, 10)); }
-                                    partial = null;
-                                    break;
-                                case "0": partial.s += "0"; break;
-                                case "1": partial.s += "1"; break;
-                                case "2": partial.s += "2"; break;
-                                case "3": partial.s += "3"; break;
-                                case "4": partial.s += "4"; break;
-                                case "5": partial.s += "5"; break;
-                                case "6": partial.s += "6"; break;
-                                case "7": partial.s += "7"; break;
-                                case "8": partial.s += "8"; break;
-                                case "9": partial.s += "9"; break;
-                                default: partial = null;
+                    if (window.doing_partial) {
+                        partial = {
+                            name: "descend to nth byte",
+                            s: "",
+                            next: (e_) => {
+                                switch (e_.key) {
+                                    case "Enter":
+                                        if (partial.s === "") { descend_indexed_byte(r, 0); }
+                                        else { descend_indexed_byte(r, parseByte(partial.s)); }
+                                        partial = null;
+                                        break;
+                                    case "0": partial.s += "0"; break;
+                                    case "1": partial.s += "1"; break;
+                                    case "2": partial.s += "2"; break;
+                                    case "3": partial.s += "3"; break;
+                                    case "4": partial.s += "4"; break;
+                                    case "5": partial.s += "5"; break;
+                                    case "6": partial.s += "6"; break;
+                                    case "7": partial.s += "7"; break;
+                                    case "8": partial.s += "8"; break;
+                                    case "9": partial.s += "9"; break;
+                                    default: partial = null;
+                                }
                             }
                         }
+                    } else {
+                        let s = prompt("n");
+                        if (s === "") { descend_indexed_byte(r, 0); }
+                        else { descend_indexed_byte(r, parseByte(s)); }
                     }
                     break;
                 case "f":
                     to_next_val(r);
                     break;
                 case "F":
-                    partial = {
-                        name: "descend to specific byte",
-                        s: "",
-                        next: (e_) => {
-                            switch (e_.key) {
-                                case "Enter":
-                                    if (partial.s === "") { }
-                                    else { descend_to(r, new Uint8Array([parseInt(partial.s, 10)])); }
-                                    partial = null;
-                                    break;
-                                case "0": partial.s += "0"; break;
-                                case "1": partial.s += "1"; break;
-                                case "2": partial.s += "2"; break;
-                                case "3": partial.s += "3"; break;
-                                case "4": partial.s += "4"; break;
-                                case "5": partial.s += "5"; break;
-                                case "6": partial.s += "6"; break;
-                                case "7": partial.s += "7"; break;
-                                case "8": partial.s += "8"; break;
-                                case "9": partial.s += "9"; break;
-                                default: partial = null;
+                    if (window.doing_partial) {
+                        partial = {
+                            name: "descend to specific byte",
+                            s: "",
+                            next: (e_) => {
+                                switch (e_.key) {
+                                    case "Enter":
+                                        if (partial.s === "") { }
+                                        else { descend_to(r, new Uint8Array([parseByte(partial.s)])); }
+                                        partial = null;
+                                        break;
+                                    case "0": partial.s += "0"; break;
+                                    case "1": partial.s += "1"; break;
+                                    case "2": partial.s += "2"; break;
+                                    case "3": partial.s += "3"; break;
+                                    case "4": partial.s += "4"; break;
+                                    case "5": partial.s += "5"; break;
+                                    case "6": partial.s += "6"; break;
+                                    case "7": partial.s += "7"; break;
+                                    case "8": partial.s += "8"; break;
+                                    case "9": partial.s += "9"; break;
+                                    default: partial = null;
+                                }
                             }
                         }
+                    } else {
+                        let s = prompt("b");
+                        if (s === "") { }
+                        else { descend_to(r, new Uint8Array([parseByte(s)])); }
                     }
                     break;
                 case "c":
                     console.log("children:", children(r));
-                    return;
+                    break;
                 case "n":
                     console.log("values under position:", val_count(r));
-                    return;
+                    break;
                 case "m":
+                    console.log("map?", r);
                     console.log("map under position:", object(make_map(r)));
-                    if (document.getElementById("board").children.length === 0) { document.getElementById("board").append(indented(d3_hierarchy(make_map(r)))); }
-                    else { document.getElementById("board").replaceChild(indented(d3_hierarchy(make_map(r))), document.getElementById("board").firstChild); }
-                    return;
+                    if (window.draw_in_tab) {
+                        let tab = window.open("about:blank");
+                        tab.onload = () => { tab.document.body.append(indented(d3_hierarchy(make_map(r)))) };
+                    } else {
+                        if (document.getElementById("board").children.length === 0) { document.getElementById("board").append(indented(d3_hierarchy(make_map(r)))); }
+                        else { document.getElementById("board").replaceChild(indented(d3_hierarchy(make_map(r))), document.getElementById("board").firstChild); }
+                    }
+                    break;
                 case "p":
                     console.log("reader located at:", path(r));
-                    return;
+                    break;
+                case "i":
+                    upload_bin(o => {
+                        console.log(new Uint8Array(o.content));
+                        nr = reader(deserialize(new Uint8Array(o.content)));
+                        nr.origin = `uploaded ${o.name}`;
+                        readers.push(nr);
+                        draw()
+                    })
+                    break;
+                case "o":
+                    download_bin("reader" + active + ".bin", serialize(make_map(r)));
+                    break
                 case "?":
                     if (document.getElementById("help").style.display === "none") { document.getElementById("help").style.display = "block"; }
                     else { document.getElementById("help").style.display = "none"; }
+                    break;
+                default:
                     return;
             }
 
@@ -636,24 +743,7 @@
             if (e.stopPropagation) {e.stopPropagation(); e.preventDefault()}
         });
 
-        window.m = range_be_u32(50000, 100000, 74);
         window.dispatchEvent(new KeyboardEvent("keydown", {key: " "}));
-
-        // document.getElementById("board").append(chart(d3_hierarchy(m1)))
-        // document.getElementById("board").append(indented(d3_hierarchy(m1)))
-        // document.getElementById("board").append(zoomable_pack(d3_hierarchy(m1)))
-        // document.getElementById("board").append(pack(d3_hierarchy(m1), {sort: (a, b) => d3.descending(a.name, b.name), label: (d, n) => d.name, title: (d, n) => d.name}))
-
-        // let m1 = range_be_u32(0, 10, 3);
-        // let m2 = range_be_u32(5, 15, 2);
-        // console.assert(contains(m1, Uint8Array.of(0, 0, 0, 0)));
-        // console.assert(!contains(m2, Uint8Array.of(0, 0, 0, 0)));
-        // let r1 = reader(m1);
-        // console.log(exists(r1), path(r1), children(r1));
-        // descend_to(r1, Uint8Array.of(0, 0, 0));
-        // console.log(exists(r1), path(r1), children(r1));
-        // ascend(r1, 1);
-        // console.log(exists(r1), path(r1), children(r1));
     });
 </script>
 </body>

@@ -104,6 +104,40 @@ export function subtraction(x, y) {
     return BytesTrieSet.__wrap(ret);
 }
 
+/**
+ * @param {BytesTrieSet} x
+ * @param {BytesTrieSet} y
+ * @returns {BytesTrieSet}
+ */
+export function raffination(x, y) {
+    _assertClass(x, BytesTrieSet);
+    _assertClass(y, BytesTrieSet);
+    const ret = wasm.raffination(x.__wbg_ptr, y.__wbg_ptr);
+    return BytesTrieSet.__wrap(ret);
+}
+
+/**
+ * @param {BytesTrieSet} x
+ * @param {number} k
+ * @returns {BytesTrieSet}
+ */
+export function decapitation(x, k) {
+    _assertClass(x, BytesTrieSet);
+    const ret = wasm.decapitation(x.__wbg_ptr, k);
+    return BytesTrieSet.__wrap(ret);
+}
+
+/**
+ * @param {BytesTrieSet} x
+ * @param {number} k
+ * @returns {BytesTrieSet}
+ */
+export function head(x, k) {
+    _assertClass(x, BytesTrieSet);
+    const ret = wasm.head(x.__wbg_ptr, k);
+    return BytesTrieSet.__wrap(ret);
+}
+
 let WASM_VECTOR_LEN = 0;
 
 function passArray8ToWasm0(arg, malloc) {
@@ -143,6 +177,31 @@ export function object(bts) {
     _assertClass(bts, BytesTrieSet);
     const ret = wasm.object(bts.__wbg_ptr);
     return ret;
+}
+
+function getArrayU8FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
+}
+/**
+ * @param {BytesTrieSet} bts
+ * @returns {Uint8Array}
+ */
+export function serialize(bts) {
+    _assertClass(bts, BytesTrieSet);
+    const ret = wasm.serialize(bts.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+}
+
+/**
+ * @param {Uint8Array} jsbs
+ * @returns {BytesTrieSet}
+ */
+export function deserialize(jsbs) {
+    const ret = wasm.deserialize(jsbs);
+    return BytesTrieSet.__wrap(ret);
 }
 
 /**
@@ -240,10 +299,6 @@ export function exists(r) {
     return ret !== 0;
 }
 
-function getArrayU8FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
-}
 /**
  * @param {Reader} r
  * @returns {Uint8Array}
@@ -390,6 +445,10 @@ function __wbg_get_imports() {
         const ret = arg0.buffer;
         return ret;
     };
+    imports.wbg.__wbg_length_65d1cd11729ced11 = function(arg0) {
+        const ret = arg0.length;
+        return ret;
+    };
     imports.wbg.__wbg_new_254fa9eac11932ae = function() {
         const ret = new Array();
         return ret;
@@ -409,6 +468,9 @@ function __wbg_get_imports() {
     imports.wbg.__wbg_push_6edad0df4b546b2c = function(arg0, arg1) {
         const ret = arg0.push(arg1);
         return ret;
+    };
+    imports.wbg.__wbg_set_23d69db4e5c66a6e = function(arg0, arg1, arg2) {
+        arg0.set(arg1, arg2 >>> 0);
     };
     imports.wbg.__wbindgen_init_externref_table = function() {
         const table = wasm.__wbindgen_export_2;

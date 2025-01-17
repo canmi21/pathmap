@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::ptr;
 use wasm_bindgen::prelude::*;
 use js_sys;
 use crate::ring::Lattice;
@@ -39,6 +40,36 @@ pub fn restriction(x: &BytesTrieSet, y: &BytesTrieSet) -> BytesTrieSet {
 #[wasm_bindgen]
 pub fn subtraction(x: &BytesTrieSet, y: &BytesTrieSet) -> BytesTrieSet {
   BytesTrieSet { btm: x.btm.subtract(&y.btm) }
+}
+
+#[wasm_bindgen]
+pub fn raffination(x: &BytesTrieSet, y: &BytesTrieSet) -> BytesTrieSet {
+  // not a performant implementation
+  BytesTrieSet { btm: x.btm.subtract(&x.btm.restrict(&y.btm)) }
+}
+
+#[wasm_bindgen]
+pub fn decapitation(x: &BytesTrieSet, k: usize) -> BytesTrieSet {
+  let mut c = x.btm.clone();
+  let mut wz = c.write_zipper();
+  wz.drop_head(k);
+  BytesTrieSet { btm: c }
+}
+
+#[wasm_bindgen]
+pub fn head(x: &BytesTrieSet, k: usize) -> BytesTrieSet {
+  // not a performant implementation
+  let mut c = BytesTrieMap::new();
+  let mut rz = x.btm.read_zipper();
+  for i in 1..k+1 {
+    if rz.descend_first_k_path(i) {
+      loop {
+        c.insert(rz.path(), ());
+        if !rz.to_next_k_path(i) { break }
+      }
+    }
+  }
+  BytesTrieSet { btm: c }
 }
 
 #[wasm_bindgen]
@@ -95,12 +126,49 @@ fn json_intern(node: &TrieNodeODRc<()>, s: &mut Vec<u8>) {
   s.push(b'}');
 }
 
+fn serialize_intern(bts: &BytesTrieSet) -> Vec<u8> {
+  // serializing a trie as an array of paths is criminal
+  let mut buf = vec![];
+  let mut rz = bts.btm.read_zipper();
+  while let Some(_) = rz.to_next_val() {
+    let p = rz.path();
+    let l = p.len();
+    buf.extend_from_slice(l.to_le_bytes().as_slice());
+    buf.extend_from_slice(p);
+  }
+  buf
+}
+
+fn deserialize_intern(sv: &[u8]) -> BytesTrieSet {
+  // sue me
+  let mut btm = BytesTrieMap::new();
+  let mut i = 0;
+  while i < sv.len() {
+    let l = usize::from_le_bytes((&sv[i..i+size_of::<usize>()]).try_into().unwrap());
+    i += size_of::<usize>();
+    btm.insert(&sv[i..i+l], ());
+    i += l;
+  }
+  BytesTrieSet { btm }
+}
+
 #[wasm_bindgen]
 pub fn object(bts: &BytesTrieSet) -> js_sys::Object {
   let mut s = vec![];
   json_intern(bts.btm.root(), &mut s);
   let r = js_sys::JSON::parse(unsafe { std::str::from_utf8_unchecked(&s[..]) });
   r.unwrap_or_else(|e| e).into()
+}
+
+#[wasm_bindgen]
+pub fn serialize(bts: &BytesTrieSet) -> Box<[u8]> {
+  serialize_intern(bts).into_boxed_slice()
+}
+
+#[wasm_bindgen]
+pub fn deserialize(jsbs: &js_sys::Uint8Array) -> BytesTrieSet {
+  let bs = jsbs.to_vec();
+  deserialize_intern(&bs[..])
 }
 
 fn d3_json_intern(node: &TrieNodeODRc<()>, s: &mut Vec<u8>) {
