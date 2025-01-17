@@ -325,6 +325,30 @@ export function path(r) {
 
 /**
  * @param {Reader} r
+ * @returns {Uint8Array}
+ */
+export function min_path(r) {
+    _assertClass(r, Reader);
+    const ret = wasm.min_path(r.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+}
+
+/**
+ * @param {Reader} r
+ * @returns {Uint8Array}
+ */
+export function max_path(r) {
+    _assertClass(r, Reader);
+    const ret = wasm.max_path(r.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+}
+
+/**
+ * @param {Reader} r
  * @returns {BytesTrieSet}
  */
 export function make_map(r) {

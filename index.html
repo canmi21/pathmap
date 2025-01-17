@@ -37,6 +37,9 @@
         <tr><td>N</td><td>Put the number of values under the reader position to console</td></tr>
         <tr><td>M</td><td>Put the submap under the reader position to console (and draw it)</td></tr>
         <tr><td>P</td><td>Put the path of the reader position to console</td></tr>
+        <tr><td>B</td><td>Put the bounds of the submap under reader position to console</td></tr>
+        <tr><td>I</td><td>Upload and deserialize a submap</td></tr>
+        <tr><td>O</td><td>Serialize and download the submap under the reader position</td></tr>
         <tr><td>?</td><td>Show/hide these instructions</td></tr>
     </table>
 </div>
@@ -97,7 +100,7 @@
             },
             {
                 label: "UInt",
-                value: d => d.p.length != 0 ? new DataView(new Uint8Array(d.p.concat(new Array(8 - d.p.length))).buffer).getBigUint64(0, true) : "",
+                value: d => d.p.length != 0 && d.p.length <= 8 ? new DataView(new Uint8Array(d.p.concat(new Array(8 - d.p.length))).buffer).getBigUint64(0, true) : "",
                 format: value => value,
                 x: 400
             }
@@ -509,7 +512,7 @@
         else { return parseInt(s, 10) }
     }
 
-    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction, decapitation, head, serialize, deserialize } from "./pkg/pathmap.js";
+    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction, decapitation, head, serialize, deserialize, min_path, max_path } from "./pkg/pathmap.js";
     init().then(() => {
         window.root_map = range_be_u32(50000, 100000, 74);
         window.doing_partial = false;
@@ -718,9 +721,11 @@
                 case "p":
                     console.log("reader located at:", path(r));
                     break;
+                case "b":
+                    console.log("submap bounds", min_path(r), max_path(r));
+                    break;
                 case "i":
                     upload_bin(o => {
-                        console.log(new Uint8Array(o.content));
                         nr = reader(deserialize(new Uint8Array(o.content)));
                         nr.origin = `uploaded ${o.name}`;
                         readers.push(nr);

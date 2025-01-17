@@ -288,6 +288,28 @@ pub fn path(r: &Reader) -> Box<[u8]> {
 }
 
 #[wasm_bindgen]
+pub fn min_path(r: &Reader) -> Box<[u8]> {
+  let mut rz = r.z.fork_read_zipper();
+  loop {
+    let cc = rz.child_count();
+    if cc == 0 { break }
+    else { rz.descend_first_byte(); }
+  }
+  rz.path().into()
+}
+
+#[wasm_bindgen]
+pub fn max_path(r: &Reader) -> Box<[u8]> {
+  let mut rz = r.z.fork_read_zipper();
+  loop {
+    let cc = rz.child_count(); // descend last byte?
+    if cc == 0 { break }
+    else { rz.descend_indexed_branch(cc - 1); }
+  }
+  rz.path().into()
+}
+
+#[wasm_bindgen]
 pub fn make_map(r: &Reader) -> BytesTrieSet {
   r.z.make_map().map(|m| BytesTrieSet{ btm: m }).unwrap_or(BytesTrieSet{ btm: BytesTrieMap::new() })
 }
