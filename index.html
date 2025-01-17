@@ -16,6 +16,9 @@
         <tr><td>Space</td><td>New reader at root</td></tr>
         <tr><td>Tab</td><td>Focus next reader</td></tr>
         <tr><td>Shift+Tab</td><td>Focus previous reader</td></tr>
+        <tr><td>Page-Up</td><td>Put focused reader on top</td></tr>
+        <tr><td>Page-Down</td><td>Put focused reader on bottom</td></tr>
+        <tr><td>Shift+Tab</td><td>Focus previous reader</td></tr>
         <tr><td>Shift+R</td><td>Range of type u32 with start, stop, and step</td></tr>
         <tr><td>Z</td><td>Fork reader</td></tr>
         <tr><td>|</td><td>Union of the top two readers</td></tr>
@@ -560,16 +563,23 @@
                     // if (e.shiftKey) { active = (readers.length + (active - 1)) % readers.length }
                     // else { active = (active + 1) % readers.length }
                     break;
+                case "PageUp":
+                    readers.splice(active, 1);
+                    readers.push(r);
+                    break;
+                case "PageDown":
+                    readers.splice(active, 1);
+                    readers.unshift(r);
+                    break;
                 case "Delete":
-                    readers.splice(active);
+                    readers.splice(active, 1);
                     if (readers.length === 0) {
                         let nr = reader(window.root_map);
                         nr.origin = "(default)"
                         readers.push(nr);
                     } else {
-                        active -= 1;
+                        active = Math.max(active - 1, 0);
                     }
-                    draw();
                     break;
                 case "R":
                     let [start, stop, step] = prompt("range(start, stop, step)").split(",");
