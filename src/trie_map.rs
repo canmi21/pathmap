@@ -3,7 +3,7 @@ use core::cell::UnsafeCell;
 use num_traits::{PrimInt, zero};
 use crate::trie_node::*;
 use crate::zipper::*;
-use crate::ring::{AlgebraicResult, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
+use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
 
 /// A map type that uses byte slices `&[u8]` as keys
 ///
@@ -21,21 +21,21 @@ use crate::ring::{AlgebraicResult, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRe
 /// assert!(!map.contains("three"));
 /// ```
 pub struct BytesTrieMap<V> {
-    root: UnsafeCell<Option<TrieNodeODRc<V>>>,
-    root_val: UnsafeCell<Option<V>>,
+    pub(crate) root: UnsafeCell<Option<TrieNodeODRc<V>>>,
+    pub(crate) root_val: UnsafeCell<Option<V>>,
 }
 
 unsafe impl<V: Send + Sync> Send for BytesTrieMap<V> {}
 unsafe impl<V: Send + Sync> Sync for BytesTrieMap<V> {}
 
-impl<V: Clone + Send + Sync> Clone for BytesTrieMap<V> {
+impl<V: Clone + Send + Sync + Unpin> Clone for BytesTrieMap<V> {
     fn clone(&self) -> Self {
         let root_ref = unsafe{ &*self.root.get() };
         Self::new_with_root(root_ref.clone())
     }
 }
 
-impl<V: Clone + Send + Sync> BytesTrieMap<V> {
+impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
     #[inline]
     pub(crate) fn root(&self) -> Option<&TrieNodeODRc<V>> {
         unsafe{ &*self.root.get() }.as_ref()
@@ -218,6 +218,12 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
         z.into_zipper_head()
     }
 
+    /// Transforms the map into a [Zipper], which is handy when you need to embed the zipper in another
+    /// struct without a lifetime parameter
+    pub fn into_read_zipper(self, path: &[u8]) -> ReadZipperOwned<V> {
+        ReadZipperOwned::new_with_map(self, path)
+    }
+
     // /// Transforms the map into a [ZipperHead] that owns the map's contents.  This is handy when the
     // /// ZipperHead needs to be part of another structure
     // //GOAT: This would be a really handy API, but it looks obnoxious to implement.  The "right" implementation
@@ -349,21 +355,14 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
         }
     }
 
-    /// Returns a new `BytesTrieMap` where the paths in `self` are restricted by the paths leading to 
-    /// values in `other`
+    /// Returns a new `BytesTrieMap` containing the union of the paths in `self` and the paths in `other`
+    pub fn join(&self, other: &Self) -> Self where V: Lattice {
+        result_into_map(self.pjoin(other), self, other)
+    }
+
+    /// Returns a new `BytesTrieMap` containing the intersection of the paths in `self` and the paths in `other`
     pub fn meet(&self, other: &Self) -> Self where V: Lattice {
-        match self.pmeet(other) {
-            AlgebraicResult::Element(new_map) => new_map,
-            AlgebraicResult::None => Self::new(),
-            AlgebraicResult::Identity(mask) => {
-                if mask & SELF_IDENT > 0 {
-                    self.clone()
-                } else {
-                    debug_assert_eq!(mask, COUNTER_IDENT);
-                    other.clone()
-                }
-            },
-        }
+        result_into_map(self.pmeet(other), self, other)
     }
 
     /// Returns a new `BytesTrieMap` where the paths in `self` are restricted by the paths leading to 
@@ -404,7 +403,7 @@ impl<V: Clone + Send + Sync> BytesTrieMap<V> {
     }
 }
 
-impl<V: Clone + Send + Sync, K: AsRef<[u8]>> FromIterator<(K, V)> for BytesTrieMap<V> {
+impl<V: Clone + Send + Sync + Unpin, K: AsRef<[u8]>> FromIterator<(K, V)> for BytesTrieMap<V> {
     fn from_iter<I: IntoIterator<Item=(K, V)>>(iter: I) -> Self {
         let mut map = Self::new();
         for (key, val) in iter {
@@ -414,36 +413,57 @@ impl<V: Clone + Send + Sync, K: AsRef<[u8]>> FromIterator<(K, V)> for BytesTrieM
     }
 }
 
-impl<V: Clone + Lattice + Send + Sync> Lattice for BytesTrieMap<V> {
-    fn join(&self, other: &Self) -> Self {
-        Self::new_with_root(self.root().join(&other.root()))
+/// Internal function to convert an AlgebraicResult (partial lattice result) into a BytesTrieMap
+fn result_into_map<V: Clone + Send + Sync + Unpin>(result: AlgebraicResult<BytesTrieMap<V>>, self_map: &BytesTrieMap<V>, other_map: &BytesTrieMap<V>) -> BytesTrieMap<V> {
+    match result {
+        AlgebraicResult::Element(new_map) => new_map,
+        AlgebraicResult::None => BytesTrieMap::new(),
+        AlgebraicResult::Identity(mask) => {
+            if mask & SELF_IDENT > 0 {
+                self_map.clone()
+            } else {
+                debug_assert_eq!(mask, COUNTER_IDENT);
+                other_map.clone()
+            }
+        },
     }
+}
 
-    fn join_into(&mut self, other: Self) {
+impl<V: Clone + Lattice + Send + Sync + Unpin> Lattice for BytesTrieMap<V> {
+    fn pjoin(&self, other: &Self) -> AlgebraicResult<Self> {
+        self.root().pjoin(&other.root()).map(|new_root| Self::new_with_root(new_root))
+    }
+    fn join_into(&mut self, other: Self) -> AlgebraicStatus {
         if let Some(other_root) = other.into_root() {
-            match self.get_or_init_root_mut().make_mut().join_into_dyn(other_root) {
+            let (status, result) = self.get_or_init_root_mut().make_mut().join_into_dyn(other_root);
+            match result {
                 Ok(()) => {},
                 Err(replacement) => { *self.get_or_init_root_mut() = replacement; }
             }
+            status
+        } else {
+            if self.is_empty() {
+                AlgebraicStatus::None
+            } else {
+                AlgebraicStatus::Identity
+            }
         }
     }
-
     fn pmeet(&self, other: &Self) -> AlgebraicResult<Self> {
         self.root().pmeet(&other.root()).map(|new_root| Self::new_with_root(new_root))
     }
-
     fn bottom() -> Self {
         BytesTrieMap::new()
     }
 }
 
-impl<V: Clone + Send + Sync + DistributiveLattice> DistributiveLattice for BytesTrieMap<V> {
+impl<V: Clone + Send + Sync + Unpin + DistributiveLattice> DistributiveLattice for BytesTrieMap<V> {
     fn psubtract(&self, other: &Self) -> AlgebraicResult<Self> {
         self.root().psubtract(&other.root()).map(|root| Self::new_with_root(root))
     }
 }
 
-impl<V: Clone + Send + Sync> Quantale for BytesTrieMap<V> {
+impl<V: Clone + Send + Sync + Unpin> Quantale for BytesTrieMap<V> {
     fn prestrict(&self, other: &Self) -> AlgebraicResult<Self> {
         match (self.root(), other.root()) {
             (Some(self_root), Some(other_root)) => self_root.prestrict(other_root).map(|root| Self::new_with_root(Some(root)) ),
@@ -452,7 +472,7 @@ impl<V: Clone + Send + Sync> Quantale for BytesTrieMap<V> {
     }
 }
 
-impl<V: Clone + Send + Sync> Default for BytesTrieMap<V> {
+impl<V: Clone + Send + Sync + Unpin> Default for BytesTrieMap<V> {
     fn default() -> Self {
         Self::new()
     }
@@ -736,6 +756,23 @@ mod tests {
         drop(z);
         drop(map_head);
         assert_eq!(map.get([]), Some(&2));
+    }
+
+    #[test]
+    fn owned_read_zipper_test() {
+        let table = ["A", "AB", "Ab", "ABC", "ABc", "ABCD", "B"];
+        let map: BytesTrieMap<usize> = table.iter().enumerate().map(|(n, s)| (s, n)).collect();
+        let mut zipper = map.into_read_zipper(b"AB");
+
+        let expected = [3, 5, 4];
+        let mut i = 0;
+        while let Some(val) = zipper.to_next_val() {
+            assert_eq!(*val, expected[i]);
+            i += 1;
+        }
+
+        let map = zipper.into_map();
+        assert_eq!(map.val_count(), 7);
     }
 
 }

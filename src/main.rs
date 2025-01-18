@@ -77,8 +77,8 @@ fn main() {
                 for i in N..(N+O) { assert!(!vnl.contains(gen_key(i, buffer)) && vnr.contains(gen_key(i, buffer))); }
                 for i in 0..(2*N) { assert_eq!(j.contains(gen_key(i, buffer)), (vnl.contains(gen_key(i, buffer)) || vnr.contains(gen_key(i, buffer)))); }
                 for i in 0..(2*N) { assert_eq!(m.contains(gen_key(i, buffer)), (vnl.contains(gen_key(i, buffer)) && vnr.contains(gen_key(i, buffer)))); }
-                for i in 0..(N+O) { assert_eq!(j.get(gen_key(i, buffer)).map(|v| *v), vnl.get(gen_key(i, buffer)).join(&vnr.get(gen_key(i, buffer)))); }
-                for i in O..N { assert_eq!(m.get(gen_key(i, buffer)).map(|v| *v), vnl.get(gen_key(i, buffer)).pmeet(&vnr.get(gen_key(i, buffer))).into_option([Some(vnl.get(gen_key(i, buffer)).cloned()), Some(vnr.get(gen_key(i, buffer)).cloned())]).flatten()); }
+                for i in 0..(N+O) { assert_eq!(j.get(gen_key(i, buffer)).map(|v| *v), vnl.get(gen_key(i, buffer)).pjoin(&vnr.get(gen_key(i, buffer))).into_option([vnl.get(gen_key(i, buffer)).cloned(), vnr.get(gen_key(i, buffer)).cloned()]).flatten()); }
+                for i in O..N { assert_eq!(m.get(gen_key(i, buffer)).map(|v| *v), vnl.get(gen_key(i, buffer)).pmeet(&vnr.get(gen_key(i, buffer))).into_option([vnl.get(gen_key(i, buffer)).cloned(), vnr.get(gen_key(i, buffer)).cloned()]).flatten()); }
                 // for i in 0..(2*N) { println!("{} {} {} {}", i, r.contains(i), vnl.contains(i), vnr.contains(i)); } // assert!(r.contains(i));
             }
             if !first { println!("{} ns/it N={N}, overlap={overlap} ", t0.elapsed().as_nanos() as f64/N as f64) };

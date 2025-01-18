@@ -235,11 +235,11 @@ pub trait TrieNode<V>: TrieNodeDowncast<V> + DynClone + core::fmt::Debug + Send 
 
     /// Allows for the implementation of the Lattice trait on different node implementations, and
     /// the logic to promote nodes to other node types
-    fn join_dyn(&self, other: &dyn TrieNode<V>) -> TrieNodeODRc<V> where V: Lattice;
+    fn pjoin_dyn(&self, other: &dyn TrieNode<V>) -> AlgebraicResult<TrieNodeODRc<V>> where V: Lattice;
 
     /// Allows for the implementation of the Lattice trait on different node implementations, and
     /// the logic to promote nodes to other node types
-    fn join_into_dyn(&mut self, other: TrieNodeODRc<V>) -> Result<(), TrieNodeODRc<V>> where V: Lattice;
+    fn join_into_dyn(&mut self, other: TrieNodeODRc<V>) -> (AlgebraicStatus, Result<(), TrieNodeODRc<V>>) where V: Lattice;
 
     /// Returns a node composed of the children of `self`, `byte_cnt` bytes downstream, all joined together,
     /// or `None` if the node has no children at that depth
@@ -1010,17 +1010,32 @@ mod opaque_dyn_rc_trie_node {
 // an empty node to return a reference to
 impl<V: Lattice + Clone> TrieNodeODRc<V> {
     #[inline]
-    pub fn join(&self, other: &Self) -> Self {
+    pub fn pjoin(&self, other: &Self) -> AlgebraicResult<Self> {
         if self.ptr_eq(other) {
-            self.clone()
+            AlgebraicResult::Identity(SELF_IDENT | COUNTER_IDENT)
         } else {
-            let node = self.borrow();
-            if !node.node_is_empty() {
-                node.join_dyn(other.borrow())
-            } else {
-                other.clone()
+            self.borrow().pjoin_dyn(other.borrow())
+            //GOAT, question: Is there any point to this pre-check, or is it enough to just let pjoin_dyn handle it?
+            // let node = self.borrow();
+            // let other_node = other.borrow();
+            // match (node.node_is_empty(), other_node.node_is_empty()) {
+            //     (false, false) => node.pjoin_dyn(other_node),
+            //     (false, true) => AlgebraicResult::Identity(SELF_IDENT),
+            //     (true, false) => AlgebraicResult::Identity(COUNTER_IDENT),
+            //     (true, true) => AlgebraicResult::None,
+            // }
+        }
+    }
+    #[inline]
+    pub fn join_into(&mut self, node: TrieNodeODRc<V>) -> AlgebraicStatus {
+        let (status, result) = self.make_mut().join_into_dyn(node);
+        match result {
+            Ok(()) => {},
+            Err(replacement_node) => {
+                *self = replacement_node;
             }
         }
+        status
     }
     #[inline]
     pub fn pmeet(&self, other: &Self) -> AlgebraicResult<Self> {
@@ -1050,15 +1065,15 @@ impl <V: Clone> Quantale for TrieNodeODRc<V> {
 }
 
 impl<V: Lattice + Clone> Lattice for Option<TrieNodeODRc<V>> {
-    fn join(&self, other: &Option<TrieNodeODRc<V>>) -> Option<TrieNodeODRc<V>> {
+    fn pjoin(&self, other: &Self) -> AlgebraicResult<Self> {
         match self {
-            None => { match other {
-                None => { None }
-                Some(r) => { Some(r.clone()) }
-            } }
+            None => match other {
+                None => { AlgebraicResult::None }
+                Some(_) => { AlgebraicResult::Identity(COUNTER_IDENT) }
+            },
             Some(l) => match other {
-                None => { Some(l.clone()) }
-                Some(r) => { Some(l.join(r)) }
+                None => { AlgebraicResult::Identity(SELF_IDENT) }
+                Some(r) => { l.pjoin(r).map(|result| Some(result)) }
             }
         }
     }
@@ -1094,15 +1109,15 @@ impl<V: Lattice + Clone> Lattice for Option<TrieNodeODRc<V>> {
 
 impl<V: Lattice + Clone> LatticeRef for Option<&TrieNodeODRc<V>> {
     type T = Option<TrieNodeODRc<V>>;
-    fn join(&self, other: &Option<&TrieNodeODRc<V>>) -> Option<TrieNodeODRc<V>> {
+    fn pjoin(&self, other: &Self) -> AlgebraicResult<Self::T> {
         match self {
-            None => { match other {
-                None => { None }
-                Some(r) => { Some((*r).clone()) }
-            } }
+            None => match other {
+                None => { AlgebraicResult::None }
+                Some(_) => { AlgebraicResult::Identity(COUNTER_IDENT) }
+            },
             Some(l) => match other {
-                None => { Some((*l).clone()) }
-                Some(r) => { Some(l.join(r)) }
+                None => { AlgebraicResult::Identity(SELF_IDENT) }
+                Some(r) => { l.pjoin(r).map(|result| Some(result)) }
             }
         }
     }

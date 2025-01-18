@@ -14,7 +14,7 @@ pub struct AllDenseCursor<'a, V> where V : Clone {
     nopush: bool
 }
 
-impl <'a, V : Clone + Send + Sync> AllDenseCursor<'a, V> {
+impl <'a, V : Clone + Send + Sync + Unpin> AllDenseCursor<'a, V> {
     pub fn new(btm: &'a BytesTrieMap<V>) -> Self {
         btm.ensure_root();
         Self {
@@ -251,7 +251,7 @@ pub struct PathMapCursor<'a, V> where V : Clone {
     btnis: Vec<(TaggedNodeRef<'a, V>, u128, usize)>,
 }
 
-impl <'a, V : Clone + Send + Sync> PathMapCursor<'a, V> {
+impl <'a, V : Clone + Send + Sync + Unpin> PathMapCursor<'a, V> {
     pub fn new(btm: &'a BytesTrieMap<V>) -> Self {
         const EXPECTED_DEPTH: usize = 16;
         const EXPECTED_PATH_LEN: usize = 256;

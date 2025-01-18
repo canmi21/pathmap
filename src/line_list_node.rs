@@ -849,10 +849,29 @@ impl<V: Clone + Send + Sync> LineListNode<V> {
 
         //If the overlap is illegal, split the prefix
         if overlap > 0 && !legal_overlap {
-            if let Some((shared_key, merged_payload)) = merge_guts::<V, 0, 1>(overlap, key0, self, key1, self) {
-                let mut new_node = Self::new();
-                unsafe{ new_node.set_payload_owned::<0>(shared_key, merged_payload) };
-                *self = new_node;
+            match merge_guts::<V, 0, 1>(overlap, key0, self, key1, self) {
+                AlgebraicResult::Element((shared_key, merged_payload)) => {
+                    let mut new_node = Self::new();
+                    unsafe{ new_node.set_payload_owned::<0>(shared_key, merged_payload) };
+                    *self = new_node;
+                },
+                AlgebraicResult::Identity(_mask) => {
+                    //The identity result won't be returned from `merge_guts` unless the keys are identical, but
+                    // identical keys can only happen in a case where one slot holds a value and the other holds
+                    // an onward link, which can't be merged.
+                    unreachable!();
+                    //GOAT: I don't think this code is actually needed
+                    // let mut new_node = Self::new();
+                    // //The only way `merge_guts` will return an identity result is when the keys are identical
+                    // if mask & SELF_IDENT > 0 {
+                    //     unsafe{ new_node.set_payload_owned::<0>(key0, self.clone_payload::<0>().unwrap()) };
+                    // } else {
+                    //     debug_assert!(mask & COUNTER_IDENT > 0);
+                    //     unsafe{ new_node.set_payload_owned::<0>(key0, self.clone_payload::<1>().unwrap()) };
+                    // }
+                    // *self = new_node;
+                },
+                AlgebraicResult::None => {}
             }
         }
     }
@@ -932,7 +951,7 @@ impl<V: Clone + Send + Sync> LineListNode<V> {
                         }
                     };
                     match meet_result {
-                        AlgebraicResult::None => FatAlgebraicResult::annihilated(),
+                        AlgebraicResult::None => FatAlgebraicResult::none(),
                         AlgebraicResult::Element(node) => FatAlgebraicResult::element(ValOrChild::Child(node)),
                         AlgebraicResult::Identity(mask) => {
                             if mask & SELF_IDENT > 0 {
@@ -948,7 +967,7 @@ impl<V: Clone + Send + Sync> LineListNode<V> {
                     let self_val = unsafe{ self.val_in_slot::<SLOT>() };
                     if let Some(other_val) = onward_node.node_get_val(onward_key) {
                         match self_val.pmeet(other_val) {
-                            AlgebraicResult::None => FatAlgebraicResult::annihilated(),
+                            AlgebraicResult::None => FatAlgebraicResult::none(),
                             AlgebraicResult::Element(val) => FatAlgebraicResult::element(ValOrChild::Val(val)),
                             AlgebraicResult::Identity(mask) => {
                                 if mask & SELF_IDENT > 0 {
@@ -988,7 +1007,7 @@ impl<V: Clone + Send + Sync> LineListNode<V> {
                         None => return AlgebraicResult::Identity(SELF_IDENT)
                     }
                 };
-                debug_assert!(difference.as_ref().map(|node| node.borrow().as_tagged().as_list().map(|node| validate_node(node)).unwrap_or(true)).unwrap_or(true, true));
+                debug_assert!(difference.as_ref().map(|node| node.borrow().as_tagged().as_list().map(|node| validate_node(node)).unwrap_or(true)).unwrap_or([true, true], true));
                 difference.map(|node| ValOrChildUnion::from(node))
             } else {
                 debug_assert!(onward_key.len() > 0);
@@ -1112,18 +1131,18 @@ fn should_swap_keys(key0: &[u8], key1: &[u8]) -> bool {
 
 /// Attempts to merge a specific slot in a ListNode with a specific slot in another ListNode.  Returns the merged
 /// (key, payload) pair if a merge was possible, otherwise None
-fn try_merge<'a, V: Clone + Lattice + Send + Sync, const ASLOT: usize, const BSLOT: usize>(a_key: &'a[u8], a: &LineListNode<V>, b_key: &'a[u8], b: &LineListNode<V>) -> Option<(&'a[u8], ValOrChild<V>)> {
+fn try_merge<'a, V: Clone + Lattice + Send + Sync, const ASLOT: usize, const BSLOT: usize>(a_key: &'a[u8], a: &LineListNode<V>, b_key: &'a[u8], b: &LineListNode<V>) -> AlgebraicResult<(&'a[u8], ValOrChild<V>)> {
     //Are there are any common paths between the nodes?
     let overlap = find_prefix_overlap(a_key, b_key);
     if overlap > 0 {
         merge_guts::<V, ASLOT, BSLOT>(overlap, a_key, a, b_key, b)
     } else {
-        None //No overlap between keys
+        AlgebraicResult::None //No overlap between keys
     }
 }
 
 /// The part of `try_merge` that we probably shouldn't inline
-fn merge_guts<'a, V: Clone + Lattice + Send + Sync, const ASLOT: usize, const BSLOT: usize>(mut overlap: usize, a_key: &'a[u8], a: &LineListNode<V>, b_key: &'a[u8], b: &LineListNode<V>) -> Option<(&'a[u8], ValOrChild<V>)> {
+fn merge_guts<'a, V: Clone + Lattice + Send + Sync, const ASLOT: usize, const BSLOT: usize>(mut overlap: usize, a_key: &'a[u8], a: &LineListNode<V>, b_key: &'a[u8], b: &LineListNode<V>) -> AlgebraicResult<(&'a[u8], ValOrChild<V>)> {
     debug_assert!(overlap > 0);
     let a_key_len = a_key.len();
     let b_key_len = b_key.len();
@@ -1144,14 +1163,12 @@ fn merge_guts<'a, V: Clone + Lattice + Send + Sync, const ASLOT: usize, const BS
             (true, true) => { //both are child nodes, so join them
                 let a_child = unsafe{ a.child_in_slot::<ASLOT>() };
                 let b_child = unsafe{ b.child_in_slot::<BSLOT>() };
-                let new_child = a_child.join(b_child);
-                return Some((a_key, ValOrChild::Child(new_child)))
+                return a_child.pjoin(b_child).map(|new_child| (a_key, ValOrChild::Child(new_child)))
             },
             (false, false) => { //both are values, so join them
                 let a_val = unsafe{ a.val_in_slot::<ASLOT>() };
                 let b_val = unsafe{ b.val_in_slot::<BSLOT>() };
-                let new_val = a_val.join(b_val);
-                return Some((a_key, ValOrChild::Val(new_val)))
+                return a_val.pjoin(b_val).map(|new_val| (a_key, ValOrChild::Val(new_val)))
             },
             _ => {}
         }
@@ -1165,8 +1182,15 @@ fn merge_guts<'a, V: Clone + Lattice + Send + Sync, const ASLOT: usize, const BS
         let mut intermediate_node = LineListNode::new();
         unsafe{ intermediate_node.set_payload_owned::<0>(&a_key[overlap..], a_payload); }
         debug_assert!(validate_node(&intermediate_node));
-        let joined = b_child.join(&TrieNodeODRc::new(intermediate_node));
-        return Some((&a_key[0..overlap], ValOrChild::Child(joined)))
+        let intermediate_node = TrieNodeODRc::new(intermediate_node);
+        let joined = b_child.pjoin(&intermediate_node).unwrap_or_else(|which_arg| {
+            match which_arg {
+                0 => b_child.clone(),
+                1 => intermediate_node,
+                _ => unreachable!()
+            }
+        }, || panic!());
+        return AlgebraicResult::Element((&a_key[0..overlap], ValOrChild::Child(joined)))
     }
     if a_key_len == overlap && a.is_child_ptr::<ASLOT>() && b_key_len > overlap {
         let a_child = unsafe{ a.child_in_slot::<ASLOT>() };
@@ -1174,8 +1198,15 @@ fn merge_guts<'a, V: Clone + Lattice + Send + Sync, const ASLOT: usize, const BS
         let mut intermediate_node = LineListNode::new();
         unsafe{ intermediate_node.set_payload_owned::<0>(&b_key[overlap..], b_payload); }
         debug_assert!(validate_node(&intermediate_node));
-        let joined = a_child.join(&TrieNodeODRc::new(intermediate_node));
-        return Some((&a_key[0..overlap], ValOrChild::Child(joined)))
+        let intermediate_node = TrieNodeODRc::new(intermediate_node);
+        let joined = a_child.pjoin(&intermediate_node).unwrap_or_else(|which_arg| {
+            match which_arg {
+                0 => a_child.clone(),
+                1 => intermediate_node,
+                _ => unreachable!()
+            }
+        }, || panic!());
+        return AlgebraicResult::Element((&a_key[0..overlap], ValOrChild::Child(joined)))
     }
 
     //If we have overlapping initial bytes that can be joined together, make a new prefix node
@@ -1208,13 +1239,14 @@ fn merge_guts<'a, V: Clone + Lattice + Send + Sync, const ASLOT: usize, const BS
             }
         }
         debug_assert!(validate_node(&new_node));
-        Some((&a_key[..overlap], ValOrChild::Child(TrieNodeODRc::new(new_node))))
+        AlgebraicResult::Element((&a_key[..overlap], ValOrChild::Child(TrieNodeODRc::new(new_node))))
     } else {
-        None
+        AlgebraicResult::None
     }
 }
 
-fn merge_list_nodes<V: Clone + Send + Sync + Lattice>(a: &LineListNode<V>, b: &LineListNode<V>) -> Result<LineListNode<V>, DenseByteNode<V>> {
+fn merge_list_nodes<V: Clone + Send + Sync + Lattice>(a: &LineListNode<V>, b: &LineListNode<V>) -> Result<AlgebraicResult<LineListNode<V>>, AlgebraicResult<DenseByteNode<V>>> {
+    debug_assert!(validate_node(a));
     debug_assert!(validate_node(b));
 
     let (self_key0, self_key1) = a.get_both_keys();
@@ -1222,42 +1254,81 @@ fn merge_list_nodes<V: Clone + Send + Sync + Lattice>(a: &LineListNode<V>, b: &L
     let mut entries: [MaybeUninit<(&[u8], ValOrChild<V>)>; 4] = [MaybeUninit::uninit(), MaybeUninit::uninit(), MaybeUninit::uninit(), MaybeUninit::uninit()];
     let mut entry_cnt = 0;
     let mut used: [bool; 4] = [false; 4]; //[self_0, self_1, other_0, other_1]
+    let mut identity_masks: [u64; 4] = [0; 4];
 
     // Try each pairing in self and other, to see if there is a key-join that can happen
     // We can assume two keys in the same node can't merge, because they would have already been merged,
     // and therefore we can also assume that if a key can be merged with one key of a node it can't be
     // merged with the other
     match try_merge::<V, 0, 0>(self_key0, a, other_key0, b) {
-        Some(joined) => {
+        AlgebraicResult::Element(joined) => {
             entries[entry_cnt] = MaybeUninit::new(joined);
             entry_cnt += 1;
             used[0] = true;
             used[2] = true;
         },
-        None => {}
+        AlgebraicResult::Identity(mask) => {
+            if mask & SELF_IDENT > 0 {
+                entries[entry_cnt] = MaybeUninit::new((self_key0, a.clone_payload::<0>().unwrap()));
+            } else {
+                debug_assert!(mask & COUNTER_IDENT > 0);
+                entries[entry_cnt] = MaybeUninit::new((other_key0, b.clone_payload::<0>().unwrap()));
+            }
+            identity_masks[entry_cnt] = mask;
+            entry_cnt += 1;
+            used[0] = true;
+            used[2] = true;
+        },
+        AlgebraicResult::None => { }
     }
     match try_merge::<V, 0, 1>(self_key0, a, other_key1, b) {
-        Some(joined) => {
+        AlgebraicResult::Element(joined) => {
             entries[entry_cnt] = MaybeUninit::new(joined);
             entry_cnt += 1;
             debug_assert!(used[0] == false); //If we create multiple joined entries from the same source, it's a bug somewhere
             used[0] = true;
             used[3] = true;
         },
-        None => {}
+        AlgebraicResult::Identity(mask) => {
+            if mask & SELF_IDENT > 0 {
+                entries[entry_cnt] = MaybeUninit::new((self_key0, a.clone_payload::<0>().unwrap()));
+            } else {
+                debug_assert!(mask & COUNTER_IDENT > 0);
+                entries[entry_cnt] = MaybeUninit::new((other_key1, b.clone_payload::<1>().unwrap()));
+            }
+            identity_masks[entry_cnt] = mask;
+            entry_cnt += 1;
+            debug_assert!(used[0] == false); //See above
+            used[0] = true;
+            used[3] = true;
+        },
+        AlgebraicResult::None => {}
     }
     match try_merge::<V, 1, 0>(self_key1, a, other_key0, b) {
-        Some(joined) => {
+        AlgebraicResult::Element(joined) => {
             entries[entry_cnt] = MaybeUninit::new(joined);
             entry_cnt += 1;
             debug_assert!(used[2] == false); //See above
             used[1] = true;
             used[2] = true;
         },
-        None => {}
+        AlgebraicResult::Identity(mask) => {
+            if mask & SELF_IDENT > 0 {
+                entries[entry_cnt] = MaybeUninit::new((self_key1, a.clone_payload::<1>().unwrap()));
+            } else {
+                debug_assert!(mask & COUNTER_IDENT > 0);
+                entries[entry_cnt] = MaybeUninit::new((other_key0, b.clone_payload::<0>().unwrap()));
+            }
+            identity_masks[entry_cnt] = mask;
+            entry_cnt += 1;
+            debug_assert!(used[2] == false); //See above
+            used[1] = true;
+            used[2] = true;
+        },
+        AlgebraicResult::None => {}
     }
     match try_merge::<V, 1, 1>(self_key1, a, other_key1, b) {
-        Some(joined) => {
+        AlgebraicResult::Element(joined) => {
             entries[entry_cnt] = MaybeUninit::new(joined);
             entry_cnt += 1;
             debug_assert!(used[1] == false); //See above
@@ -1265,7 +1336,21 @@ fn merge_list_nodes<V: Clone + Send + Sync + Lattice>(a: &LineListNode<V>, b: &L
             used[1] = true;
             used[3] = true;
         },
-        None => {}
+        AlgebraicResult::Identity(mask) => {
+            if mask & SELF_IDENT > 0 {
+                entries[entry_cnt] = MaybeUninit::new((self_key1, a.clone_payload::<1>().unwrap()));
+            } else {
+                debug_assert!(mask & COUNTER_IDENT > 0);
+                entries[entry_cnt] = MaybeUninit::new((other_key1, b.clone_payload::<1>().unwrap()));
+            }
+            identity_masks[entry_cnt] = mask;
+            entry_cnt += 1;
+            debug_assert!(used[1] == false); //See above
+            debug_assert!(used[3] == false); //See above
+            used[1] = true;
+            used[3] = true;
+        },
+        AlgebraicResult::None => {}
     }
 
     //Add the single entries that didn't merge
@@ -1273,6 +1358,7 @@ fn merge_list_nodes<V: Clone + Send + Sync + Lattice>(a: &LineListNode<V>, b: &L
         match a.clone_payload::<0>() {
             Some(payload) => {
                 entries[entry_cnt] = MaybeUninit::new((self_key0, payload));
+                identity_masks[entry_cnt] = SELF_IDENT;
                 entry_cnt += 1;
             },
             None => {}
@@ -1282,6 +1368,7 @@ fn merge_list_nodes<V: Clone + Send + Sync + Lattice>(a: &LineListNode<V>, b: &L
         match a.clone_payload::<1>() {
             Some(payload) => {
                 entries[entry_cnt] = MaybeUninit::new((self_key1, payload));
+                identity_masks[entry_cnt] = SELF_IDENT;
                 entry_cnt += 1;
             },
             None => {}
@@ -1291,6 +1378,7 @@ fn merge_list_nodes<V: Clone + Send + Sync + Lattice>(a: &LineListNode<V>, b: &L
         match b.clone_payload::<0>() {
             Some(payload) => {
                 entries[entry_cnt] = MaybeUninit::new((other_key0, payload));
+                identity_masks[entry_cnt] = COUNTER_IDENT;
                 entry_cnt += 1;
             },
             None => {}
@@ -1300,6 +1388,7 @@ fn merge_list_nodes<V: Clone + Send + Sync + Lattice>(a: &LineListNode<V>, b: &L
         match b.clone_payload::<1>() {
             Some(payload) => {
                 entries[entry_cnt] = MaybeUninit::new((other_key1, payload));
+                identity_masks[entry_cnt] = COUNTER_IDENT;
                 entry_cnt += 1;
             },
             None => {}
@@ -1315,24 +1404,35 @@ fn merge_list_nodes<V: Clone + Send + Sync + Lattice>(a: &LineListNode<V>, b: &L
 
         match entry_cnt {
             1 => {
-                unsafe{ joined_node.set_payload_owned::<0>(key0, payload0); }
+                if identity_masks[0] > 0 {
+                    return Ok(AlgebraicResult::Identity(identity_masks[0]))
+                } else {
+                    unsafe{ joined_node.set_payload_owned::<0>(key0, payload0); }
+                    debug_assert!(validate_node(&joined_node));
+                    return Ok(AlgebraicResult::Element(joined_node))
+                }
             },
             2 => {
                 let mut pair1: MaybeUninit<(&[u8], ValOrChild<V>)> = MaybeUninit::uninit();
                 core::mem::swap(&mut pair1, &mut entries[1]);
                 let (key1, payload1) = unsafe{ pair1.assume_init() };
-                if should_swap_keys(key0, key1) {
-                    unsafe{ joined_node.set_payload_owned::<0>(key1, payload1); }
-                    unsafe{ joined_node.set_payload_owned::<1>(key0, payload0); }
+                let new_ident_mask = identity_masks[0] & identity_masks[1];
+                if new_ident_mask > 0 {
+                    return Ok(AlgebraicResult::Identity(new_ident_mask))
                 } else {
-                    unsafe{ joined_node.set_payload_owned::<0>(key0, payload0); }
-                    unsafe{ joined_node.set_payload_owned::<1>(key1, payload1); }
+                    if should_swap_keys(key0, key1) {
+                        unsafe{ joined_node.set_payload_owned::<0>(key1, payload1); }
+                        unsafe{ joined_node.set_payload_owned::<1>(key0, payload0); }
+                    } else {
+                        unsafe{ joined_node.set_payload_owned::<0>(key0, payload0); }
+                        unsafe{ joined_node.set_payload_owned::<1>(key1, payload1); }
+                    }
+                    debug_assert!(validate_node(&joined_node));
+                    return Ok(AlgebraicResult::Element(joined_node))
                 }
             },
             _ => unreachable!()
         }
-        debug_assert!(validate_node(&joined_node));
-        return Ok(joined_node)
     }
 
     //Otherwise, create a DenseByteNode
@@ -1351,7 +1451,30 @@ fn merge_list_nodes<V: Clone + Send + Sync + Lattice>(a: &LineListNode<V>, b: &L
             joined_node.set_payload_owned(key[0], payload);
         }
     }
-    Err(joined_node)
+    Err(AlgebraicResult::Element(joined_node))
+}
+
+fn merge_into_list_nodes<V: Clone + Send + Sync + Lattice>(target: &mut LineListNode<V>, other: &LineListNode<V>) -> (AlgebraicStatus, Result<(), TrieNodeODRc<V>>) {
+    match merge_list_nodes(target, other) {
+        Ok(AlgebraicResult::Element(new_list_node)) => {
+            *target = new_list_node;
+            (AlgebraicStatus::Element, Ok(()))
+        },
+        Ok(AlgebraicResult::Identity(mask)) => {
+            if mask & SELF_IDENT > 0 {
+                (AlgebraicStatus::Identity, Ok(()))
+            } else {
+                debug_assert!(mask & COUNTER_IDENT > 0);
+                *target = other.clone();
+                (AlgebraicStatus::Element, Ok(()))
+            }
+        },
+        Err(AlgebraicResult::Element(new_dense_node)) => (AlgebraicStatus::Element, Err(TrieNodeODRc::new(new_dense_node))),
+        _ => unreachable!() //Each case enumerated below
+        // Ok(AlgebraicResult::None) => unreachable!(), //Join results are always a superset of self
+        // Err(AlgebraicResult::None) => unreachable!(), //Join results are always a superset of self
+        // Err(AlgebraicResult::Identity(_)) => unreachable!(), //A new node type can't be an identity
+    }
 }
 
 fn follow_path<'a, 'k, V>(mut node: &'a dyn TrieNode<V>, mut key: &'k[u8]) -> Option<(&'k[u8], &'a dyn TrieNode<V>)> {
@@ -1737,6 +1860,12 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
         //Case 1
         if key.len() == 0 {
             if key1.len() > 0 && key0[0] == key1[0] {
+                if key0.len() == 1 && self.is_child_ptr::<0>() {
+                    return (Some(key0), unsafe{ Some(self.child_in_slot::<0>().borrow()) });
+                }
+                if key1.len() == 1 && self.is_child_ptr::<1>() {
+                    return (Some(key0), unsafe{ Some(self.child_in_slot::<1>().borrow()) });
+                }
                 return (Some(&key0[0..1]), None);
             } else {
                 if self.is_child_ptr::<0>() {
@@ -2020,56 +2149,55 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
         None
     }
 
-    fn join_dyn(&self, other: &dyn TrieNode<V>) -> TrieNodeODRc<V> where V: Lattice {
+    fn pjoin_dyn(&self, other: &dyn TrieNode<V>) -> AlgebraicResult<TrieNodeODRc<V>> where V: Lattice {
         debug_assert!(validate_node(self));
         match other.as_tagged() {
             TaggedNodeRef::LineListNode(other_list_node) => {
                 match merge_list_nodes(self, other_list_node) {
-                    Ok(new_list_node) => TrieNodeODRc::new(new_list_node),
-                    Err(new_dense_node) => TrieNodeODRc::new(new_dense_node),
+                    Ok(joined_list_node) => joined_list_node.map(|node| TrieNodeODRc::new(node)),
+                    Err(joined_dense_node) => joined_dense_node.map(|node| TrieNodeODRc::new(node)),
                 }
             },
             TaggedNodeRef::DenseByteNode(other_dense_node) => {
                 let mut new_node = other_dense_node.clone();
-                new_node.merge_from_list_node(self);
-                TrieNodeODRc::new(new_node)
+                match new_node.merge_from_list_node(self) {
+                    AlgebraicStatus::None => unreachable!(), //Joining a non-empty node with another non-empty node should never produce an empty node
+                    AlgebraicStatus::Identity => AlgebraicResult::Identity(COUNTER_IDENT),
+                    AlgebraicStatus::Element => AlgebraicResult::Element(TrieNodeODRc::new(new_node))
+                }
             },
             #[cfg(feature = "bridge_nodes")]
             TaggedNodeRef::BridgeNode(_other_bridge_node) => {
                 unimplemented!()
             },
             TaggedNodeRef::TinyRefNode(tiny_node) => {
-                tiny_node.join_dyn(self)
+                tiny_node.pjoin_dyn(self)
             },
             TaggedNodeRef::CellByteNode(other_dense_node) => {
                 let mut new_node = other_dense_node.clone();
-                new_node.merge_from_list_node(self);
-                TrieNodeODRc::new(new_node)
+                match new_node.merge_from_list_node(self) {
+                    AlgebraicStatus::None => unreachable!(), //Joining a non-empty node with another non-empty node should never produce an empty node
+                    AlgebraicStatus::Identity => AlgebraicResult::Identity(COUNTER_IDENT),
+                    AlgebraicStatus::Element => AlgebraicResult::Element(TrieNodeODRc::new(new_node))
+                }
             },
             TaggedNodeRef::EmptyNode(_) => {
-                //GOAT, optimization opportunity.  Could communicate here that the resultant node is a clone
-                // so we could just bump the refcount rather than make a new TrieNodeODRc pointer
-                TrieNodeODRc::new(self.clone())
+                AlgebraicResult::Identity(SELF_IDENT)
             }
         }
     }
 
-    fn join_into_dyn(&mut self, other: TrieNodeODRc<V>) -> Result<(), TrieNodeODRc<V>> where V: Lattice {
+    fn join_into_dyn(&mut self, other: TrieNodeODRc<V>) -> (AlgebraicStatus, Result<(), TrieNodeODRc<V>>) where V: Lattice {
         debug_assert!(validate_node(self));
         match other.borrow().as_tagged() {
             TaggedNodeRef::LineListNode(other_list_node) => {
-                match merge_list_nodes(self, other_list_node) {
-                    Ok(new_list_node) => {
-                        *self = new_list_node;
-                        Ok(())
-                    },
-                    Err(new_dense_node) => Err(TrieNodeODRc::new(new_dense_node)),
-                }
+                merge_into_list_nodes(self, other_list_node)
             },
             TaggedNodeRef::DenseByteNode(other_dense_node) => {
                 let mut new_node = other_dense_node.clone();
-                new_node.merge_from_list_node(self);
-                Err(TrieNodeODRc::new(new_node))
+                let status = new_node.merge_from_list_node(self);
+                debug_assert!(!status.is_none());
+                (AlgebraicStatus::Element, Err(TrieNodeODRc::new(new_node)))
             },
             #[cfg(feature = "bridge_nodes")]
             TaggedNodeRef::BridgeNode(_other_bridge_node) => {
@@ -2077,20 +2205,15 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
             },
             TaggedNodeRef::TinyRefNode(tiny_node) => {
                 let other_tiny_node = tiny_node.into_list_node().unwrap();
-                match merge_list_nodes(self, &other_tiny_node) {
-                    Ok(new_list_node) => {
-                        *self = new_list_node;
-                        Ok(())
-                    },
-                    Err(new_dense_node) => Err(TrieNodeODRc::new(new_dense_node)),
-                }
+                merge_into_list_nodes(self, &other_tiny_node)
             },
             TaggedNodeRef::CellByteNode(other_dense_node) => {
                 let mut new_node = other_dense_node.clone();
-                new_node.merge_from_list_node(self);
-                Err(TrieNodeODRc::new(new_node))
+                let status = new_node.merge_from_list_node(self);
+                debug_assert!(!status.is_none());
+                (AlgebraicStatus::Element, Err(TrieNodeODRc::new(new_node)))
             },
-            TaggedNodeRef::EmptyNode(_) => { Ok(()) }
+            TaggedNodeRef::EmptyNode(_) => (AlgebraicStatus::Identity, Ok(()))
         }
     }
 
@@ -2206,9 +2329,12 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
         let new_key1 = &key1[chop_bytes-1..];
 
         let overlap = find_prefix_overlap(&key0[chop_bytes..], &key1[chop_bytes..]);
-        let merged_payload = if let Some((_shared_key, merged_payload)) = merge_guts::<V, 0, 1>(overlap+1, new_key0, &temp_node, new_key1, &temp_node) {
+        let merged_payload = if let AlgebraicResult::Element((_shared_key, merged_payload)) = merge_guts::<V, 0, 1>(overlap+1, new_key0, &temp_node, new_key1, &temp_node) {
             merged_payload
         } else {
+            //`merge_guts` shouldn't return AlgebraicResult::None because that should have been caught by an earlier case
+            //And it shouldn't return AlgebraicResult::Identity because two values or two onward links can't have the same key
+            // in the same node.  Check out the implamentation of `factor_prefix` for more discussion
             unreachable!()
         };
 
@@ -2475,14 +2601,17 @@ mod tests {
         let mut b = LineListNode::<u64>::new();
         b.node_set_val("banana".as_bytes(), 1).unwrap_or_else(|_| panic!());
 
-        let joined = a.join_dyn(&b);
-        debug_assert!(validate_node(joined.borrow().as_tagged().as_list().unwrap()));
-        assert_eq!(joined.borrow().node_get_val("apple".as_bytes()), Some(&0));
-        assert_eq!(joined.borrow().node_get_val("banana".as_bytes()), Some(&1));
+        let joined_result = a.pjoin_dyn(&b);
+        let join_list_node = joined_result.as_ref().map(|joined| joined.borrow().as_tagged().as_list().unwrap()).unwrap([&a, &b]);
+        debug_assert!(validate_node(join_list_node));
+        assert_eq!(join_list_node.node_get_val("apple".as_bytes()), Some(&0));
+        assert_eq!(join_list_node.node_get_val("banana".as_bytes()), Some(&1));
 
         //re-run join, just to make sure the source maps didn't get modified 
-        let joined = a.join_dyn(&b);
-        assert!(!joined.borrow().node_is_empty());
+        let joined_result = a.pjoin_dyn(&b);
+        let join_list_node = joined_result.as_ref().map(|joined| joined.borrow().as_tagged().as_list().unwrap()).unwrap([&a, &b]);
+        debug_assert!(validate_node(join_list_node));
+        assert!(!join_list_node.node_is_empty());
     }
 
     #[test]
@@ -2493,13 +2622,15 @@ mod tests {
         b.node_set_val("apple".as_bytes(), 24).unwrap_or_else(|_| panic!());
 
         //u64's default impl of Lattice::join just takes the value from self
-        let joined = a.join_dyn(&b);
-        debug_assert!(validate_node(joined.borrow().as_tagged().as_list().unwrap()));
-        assert_eq!(joined.borrow().node_get_val("apple".as_bytes()), Some(&42));
+        let joined_result = a.pjoin_dyn(&b);
+        let join_list_node = joined_result.as_ref().map(|joined| joined.borrow().as_tagged().as_list().unwrap()).unwrap([&a, &b]);
+        debug_assert!(validate_node(join_list_node));
+        assert_eq!(join_list_node.node_get_val("apple".as_bytes()), Some(&42));
 
         //re-run join, just to make sure the source maps didn't get modified 
-        let joined = a.join_dyn(&b);
-        assert!(!joined.borrow().node_is_empty());
+        let joined_result = a.pjoin_dyn(&b);
+        let join_list_node = joined_result.as_ref().map(|joined| joined.borrow().as_tagged().as_list().unwrap()).unwrap([&a, &b]);
+        assert!(!join_list_node.node_is_empty());
     }
 
     #[test]
@@ -2508,18 +2639,20 @@ mod tests {
         a.node_set_val("apple".as_bytes(), 42).unwrap_or_else(|_| panic!());
         let mut b = LineListNode::<u64>::new();
         b.node_set_val("apricot".as_bytes(), 24).unwrap_or_else(|_| panic!());
-        let joined = a.join_dyn(&b);
-        debug_assert!(validate_node(joined.borrow().as_tagged().as_list().unwrap()));
+        let joined_result = a.pjoin_dyn(&b);
+        let join_list_node = joined_result.as_ref().map(|joined| joined.borrow().as_tagged().as_list().unwrap()).unwrap([&a, &b]);
+        debug_assert!(validate_node(join_list_node));
 
-        let (remaining_key, child_node, _) = get_recursive("apple".as_bytes(), joined.borrow());
+        let (remaining_key, child_node, _) = get_recursive("apple".as_bytes(), join_list_node);
         assert_eq!(child_node.node_get_val(remaining_key), Some(&42));
 
-        let (remaining_key, child_node, _) = get_recursive("apricot".as_bytes(), joined.borrow());
+        let (remaining_key, child_node, _) = get_recursive("apricot".as_bytes(), join_list_node);
         assert_eq!(child_node.node_get_val(remaining_key), Some(&24));
 
         //re-run join, just to make sure the source maps didn't get modified 
-        let joined = a.join_dyn(&b);
-        assert!(!joined.borrow().node_is_empty());
+        let joined_result = a.pjoin_dyn(&b);
+        let join_list_node = joined_result.as_ref().map(|joined| joined.borrow().as_tagged().as_list().unwrap()).unwrap([&a, &b]);
+        assert!(!join_list_node.node_is_empty());
     }
 
     #[test]
@@ -2531,14 +2664,16 @@ mod tests {
         b.node_set_val("1".as_bytes(), 1).unwrap_or_else(|_| panic!());
         b.node_set_val("0".as_bytes(), 0).unwrap_or_else(|_| panic!());
 
-        let joined = a.join_dyn(&b);
-        debug_assert!(validate_node(joined.borrow().as_tagged().as_list().unwrap()));
-        assert_eq!(joined.borrow().node_get_val("0".as_bytes()), Some(&0));
-        assert_eq!(joined.borrow().node_get_val("1".as_bytes()), Some(&1));
+        let joined_result = a.pjoin_dyn(&b);
+        let join_list_node = joined_result.as_ref().map(|joined| joined.borrow().as_tagged().as_list().unwrap()).unwrap([&a, &b]);
+        debug_assert!(validate_node(join_list_node));
+        assert_eq!(join_list_node.node_get_val("0".as_bytes()), Some(&0));
+        assert_eq!(join_list_node.node_get_val("1".as_bytes()), Some(&1));
 
         //re-run join, just to make sure the source maps didn't get modified 
-        let joined = a.join_dyn(&b);
-        assert!(!joined.borrow().node_is_empty());
+        let joined_result = a.pjoin_dyn(&b);
+        let join_list_node = joined_result.as_ref().map(|joined| joined.borrow().as_tagged().as_list().unwrap()).unwrap([&a, &b]);
+        assert!(!join_list_node.node_is_empty());
     }
 
     #[test]
@@ -2552,14 +2687,16 @@ mod tests {
         debug_assert!(validate_node(&a));
         debug_assert!(validate_node(&b));
 
-        let joined = a.join_dyn(&b);
-        debug_assert!(validate_node(joined.borrow().as_tagged().as_list().unwrap()));
-        assert_eq!(joined.borrow().node_get_val("0".as_bytes()), Some(&0));
-        assert_eq!(joined.borrow().node_get_val("1".as_bytes()), Some(&1));
+        let joined_result = a.pjoin_dyn(&b);
+        let join_list_node = joined_result.as_ref().map(|joined| joined.borrow().as_tagged().as_list().unwrap()).unwrap([&a, &b]);
+        debug_assert!(validate_node(join_list_node));
+        assert_eq!(join_list_node.node_get_val("0".as_bytes()), Some(&0));
+        assert_eq!(join_list_node.node_get_val("1".as_bytes()), Some(&1));
 
         //re-run join, just to make sure the source maps didn't get modified 
-        let joined = a.join_dyn(&b);
-        assert!(!joined.borrow().node_is_empty());
+        let joined_result = a.pjoin_dyn(&b);
+        let join_list_node = joined_result.as_ref().map(|joined| joined.borrow().as_tagged().as_list().unwrap()).unwrap([&a, &b]);
+        assert!(!join_list_node.node_is_empty());
     }
 
     #[test]
@@ -2571,14 +2708,16 @@ mod tests {
         b.node_set_val("2".as_bytes(), 2).unwrap_or_else(|_| panic!());
         b.node_set_val("1".as_bytes(), 1).unwrap_or_else(|_| panic!());
 
-        let joined = a.join_dyn(&b);
-        assert_eq!(joined.borrow().node_get_val("0".as_bytes()), Some(&0));
-        assert_eq!(joined.borrow().node_get_val("1".as_bytes()), Some(&1));
-        assert_eq!(joined.borrow().node_get_val("2".as_bytes()), Some(&2));
+        let joined_result = a.pjoin_dyn(&b);
+        let joined_node = joined_result.as_ref().map(|joined| joined.borrow()).unwrap([&a as &dyn TrieNode<_>, &b]);
+        assert_eq!(joined_node.node_get_val("0".as_bytes()), Some(&0));
+        assert_eq!(joined_node.node_get_val("1".as_bytes()), Some(&1));
+        assert_eq!(joined_node.node_get_val("2".as_bytes()), Some(&2));
 
         //re-run join, just to make sure the source maps didn't get modified 
-        let joined = a.join_dyn(&b);
-        assert!(!joined.borrow().node_is_empty());
+        let joined_result = a.pjoin_dyn(&b);
+        let joined_node = joined_result.as_ref().map(|joined| joined.borrow()).unwrap([&a as &dyn TrieNode<_>, &b]);
+        assert!(!joined_node.node_is_empty());
     }
 
     #[test]
@@ -2590,15 +2729,17 @@ mod tests {
         b.node_set_val("2".as_bytes(), 2).unwrap_or_else(|_| panic!());
         b.node_set_val("3".as_bytes(), 3).unwrap_or_else(|_| panic!());
 
-        let joined = a.join_dyn(&b);
-        assert_eq!(joined.borrow().node_get_val("0".as_bytes()), Some(&0));
-        assert_eq!(joined.borrow().node_get_val("1".as_bytes()), Some(&1));
-        assert_eq!(joined.borrow().node_get_val("2".as_bytes()), Some(&2));
-        assert_eq!(joined.borrow().node_get_val("3".as_bytes()), Some(&3));
+        let joined_result = a.pjoin_dyn(&b);
+        let joined_node = joined_result.as_ref().map(|joined| joined.borrow()).unwrap([&a as &dyn TrieNode<_>, &b]);
+        assert_eq!(joined_node.node_get_val("0".as_bytes()), Some(&0));
+        assert_eq!(joined_node.node_get_val("1".as_bytes()), Some(&1));
+        assert_eq!(joined_node.node_get_val("2".as_bytes()), Some(&2));
+        assert_eq!(joined_node.node_get_val("3".as_bytes()), Some(&3));
 
         //re-run join, just to make sure the source maps didn't get modified 
-        let joined = a.join_dyn(&b);
-        assert!(!joined.borrow().node_is_empty());
+        let joined_result = a.pjoin_dyn(&b);
+        let joined_node = joined_result.as_ref().map(|joined| joined.borrow()).unwrap([&a as &dyn TrieNode<_>, &b]);
+        assert!(!joined_node.node_is_empty());
     }
 
     #[test]
@@ -2612,23 +2753,25 @@ mod tests {
         debug_assert!(validate_node(&a));
         debug_assert!(validate_node(&b));
 
-        let joined = a.join_dyn(&b);
+        let joined_result = a.pjoin_dyn(&b);
+        let joined_node = joined_result.as_ref().map(|joined| joined.borrow()).unwrap([&a as &dyn TrieNode<_>, &b]);
 
-        let (remaining_key, child_node, _) = get_recursive("0a".as_bytes(), joined.borrow());
+        let (remaining_key, child_node, _) = get_recursive("0a".as_bytes(), joined_node);
         assert_eq!(child_node.node_get_val(remaining_key), Some(&0));
 
-        let (remaining_key, child_node, _) = get_recursive("1a".as_bytes(), joined.borrow());
+        let (remaining_key, child_node, _) = get_recursive("1a".as_bytes(), joined_node);
         assert_eq!(child_node.node_get_val(remaining_key), Some(&1));
 
-        let (remaining_key, child_node, _) = get_recursive("1b".as_bytes(), joined.borrow());
+        let (remaining_key, child_node, _) = get_recursive("1b".as_bytes(), joined_node);
         assert_eq!(child_node.node_get_val(remaining_key), Some(&1));
 
-        let (remaining_key, child_node, _) = get_recursive("2b".as_bytes(), joined.borrow());
+        let (remaining_key, child_node, _) = get_recursive("2b".as_bytes(), joined_node);
         assert_eq!(child_node.node_get_val(remaining_key), Some(&2));
 
         //re-run join, just to make sure the source maps didn't get modified 
-        let joined = a.join_dyn(&b);
-        assert!(!joined.borrow().node_is_empty());
+        let joined_result = a.pjoin_dyn(&b);
+        let joined_node = joined_result.as_ref().map(|joined| joined.borrow()).unwrap([&a as &dyn TrieNode<_>, &b]);
+        assert!(!joined_node.node_is_empty());
     }
 
     #[test]
@@ -2787,15 +2930,13 @@ mod tests {
 
 }
 
-//GOAT, return status values from all algebraic ops, and tests to make sure the right values are returned
-//
 //GOAT, make an is_shared() zipper method, with all relevant caveats in the documentation
-
-//GOAT, want a tri-state or bi-state return flag for unmodified values.  For all lattice ops, incl join, meet, and subtract
 //
-//GOAT, want to promote the meet method to partial meet, to rreturn an "unmodified" flag
+//GOAT, tests to make sure the right status codes are returned from all algebraic ops
 //
-//GOAT, macro for the algebraic impl on primitive types
+//GOAT, merge wrappers for lattice impls on primitives
+//
+//GOAT, remove garbage lattice impls
 //
 //GOAT, rename BytesTrieMap to PathMap, consider other renames, marked by GOATs
 //

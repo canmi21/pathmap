@@ -238,12 +238,12 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
         AbstractNodeRef::None
     }
     fn take_node_at_key(&mut self, _key: &[u8]) -> Option<TrieNodeODRc<V>> { unreachable!() }
-    fn join_dyn(&self, other: &dyn TrieNode<V>) -> TrieNodeODRc<V> where V: Lattice {
+    fn pjoin_dyn(&self, other: &dyn TrieNode<V>) -> AlgebraicResult<TrieNodeODRc<V>> where V: Lattice {
         //GOAT, I can streamline this quite a lot, but for now I'll just up-convert to a ListNode to test
         // the basic premise of the TinyRefNode
-        self.into_full().unwrap().join_dyn(other)
+        self.into_full().unwrap().pjoin_dyn(other)
     }
-    fn join_into_dyn(&mut self, _other: TrieNodeODRc<V>) -> Result<(), TrieNodeODRc<V>> where V: Lattice { unreachable!() }
+    fn join_into_dyn(&mut self, _other: TrieNodeODRc<V>) -> (AlgebraicStatus, Result<(), TrieNodeODRc<V>>) where V: Lattice { unreachable!() }
     fn drop_head_dyn(&mut self, _byte_cnt: usize) -> Option<TrieNodeODRc<V>> where V: Lattice { unreachable!() }
     fn pmeet_dyn(&self, other: &dyn TrieNode<V>) -> AlgebraicResult<TrieNodeODRc<V>> where V: Lattice {
         //GOAT, is this worth bespoke code to save some cycles?

@@ -6,7 +6,7 @@ use crate::empty_node::EmptyNode;
 use crate::zipper::*;
 use crate::zipper::zipper_priv::*;
 use crate::zipper_tracking::*;
-use crate::ring::{AlgebraicResult, DistributiveLattice, Lattice, COUNTER_IDENT, SELF_IDENT};
+use crate::ring::{AlgebraicResult, AlgebraicStatus, DistributiveLattice, Lattice, COUNTER_IDENT, SELF_IDENT};
 
 /// Implemented on [Zipper] types that allow modification of the trie
 pub trait WriteZipper<V>: Zipper + WriteZipperPriv<V> {
@@ -72,22 +72,17 @@ pub trait WriteZipper<V>: Zipper + WriteZipperPriv<V> {
     /// Joins (union of) the subtrie below the zipper's focus with the subtrie downstream from the focus of
     /// `read_zipper`
     ///
-    /// Returns `true` if the join was sucessful, or `false` if `read_zipper` was at a nonexistent path.
-    ///
     /// If the &self zipper is at a path that does not exist, this method behaves like graft.
-    fn join<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: Lattice;
+    fn join<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice;
 
     /// Joins (union of) the trie below the zipper's focus with the contents of a [BytesTrieMap],
     /// consuming the map
-    ///
-    /// Returns `true` if the join was sucessful, or `false` if `map` was empty.
-    fn join_map(&mut self, map: BytesTrieMap<V>) -> bool where V: Lattice;
+    fn join_map(&mut self, map: BytesTrieMap<V>) -> AlgebraicStatus where V: Lattice;
 
     /// Joins the subtrie below the focus of `src_zipper` with the subtrie below the focus of `self`,
     /// consuming `src_zipper`'s subtrie
-    ///
-    /// Returns `true` if the join was sucessful, or `false` if `src_zipper` was at a nonexistent path.
-    fn join_into<Z: Zipper<V=V> + WriteZipper<V>>(&mut self, src_zipper: &mut Z) -> bool where V: Lattice;
+    //GOAT, `WriteZipper::join` already is "join_into", so `WriteZipper::join_into` should be renamed to something like `take_and_join`
+    fn join_into<Z: Zipper<V=V> + WriteZipper<V>>(&mut self, src_zipper: &mut Z) -> AlgebraicStatus where V: Lattice;
 
     /// Collapses all the paths below the zipper's focus by removing the leading `byte_cnt` bytes from
     /// each path and joining together all of the downstream sub-paths
@@ -121,33 +116,18 @@ pub trait WriteZipper<V>: Zipper + WriteZipperPriv<V> {
 
     /// Meets (retains the intersection of) the subtrie below the zipper's focus with the subtrie downstream
     /// from the focus of `read_zipper`
-    ///
-    /// Returns `true` if the meet was sucessful, or `false` if either `self` of `read_zipper` is at a
-    /// nonexistent path.
-    fn meet<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: Lattice;
+    fn meet<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice;
 
     /// Experiment.  GOAT, document this
-    fn meet_2<'z, ZA: Zipper<V=V>, ZB: Zipper<V=V>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> bool where V: Lattice;
+    fn meet_2<'z, ZA: Zipper<V=V>, ZB: Zipper<V=V>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice;
 
     /// Subtracts the subtrie downstream of the focus of `read_zipper` from the subtrie below the zipper's
     /// focus
-    ///
-    /// Returns `true` if the subtraction was sucessful, or `false` if either `self` of `read_zipper` is at a
-    /// nonexistent path.
-    ///
-    /// GOAT QUESTION: Should we return false if the subtraction had no effect?
-    /// E.g. nothing was removed, even though something possibly could have been with different args?
-    fn subtract<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: DistributiveLattice;
+    fn subtract<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice;
 
     /// Restricts paths in the subtrie downstream of the `self` focus to paths prefixed by a path to a value in
     /// `read_zipper`
-    ///
-    /// Returns `true` if the restriction was sucessful, or `false` if either `self` or `read_zipper` is at a
-    /// nonexistent path.
-    ///
-    /// GOAT QUESTION: Should we return false if the restriction had no effect and the result was identity?
-    /// E.g. nothing was removed, even though something possibly could have been with different args?
-    fn restrict<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool;
+    fn restrict<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus;
 
     /// Populates the "stem" paths in `self` with the corresponding subtries in `read_zipper`
     ///
@@ -157,6 +137,7 @@ pub trait WriteZipper<V>: Zipper + WriteZipperPriv<V> {
     /// operation is as a bunch of "stems" in the WriteZipper, that get their downstream contents populated
     /// by the corresponding paths in the ReadZipper.  Ideas for names are: "blossom", "fill_in", "expound",
     /// "populate", etc.  I avoided "bloom" and "expand" because those both have other connotations.
+    //GOAT, gotta document this much better and decide if a return of AlgebraicStatus is called for.  Probably.
     fn restricting<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool;
 
     /// Removes all branches below the zipper's focus.  Does not affect the value if there is one.  Returns `true`
@@ -202,7 +183,7 @@ impl<V> Drop for WriteZipperTracked<'_, '_, V> {
     fn drop(&mut self) { }
 }
 
-impl<V: Clone + Send + Sync> Zipper for WriteZipperTracked<'_, '_, V> {
+impl<V: Clone + Send + Sync + Unpin> Zipper for WriteZipperTracked<'_, '_, V> {
     type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
 
     fn at_root(&self) -> bool { self.z.at_root() }
@@ -224,6 +205,7 @@ impl<V: Clone + Send + Sync> Zipper for WriteZipperTracked<'_, '_, V> {
     fn ascend(&mut self, steps: usize) -> bool { self.z.ascend(steps) }
     fn ascend_byte(&mut self) -> bool { self.z.ascend_byte() }
     fn ascend_until(&mut self) -> bool { self.z.ascend_until() }
+    fn ascend_until_branch(&mut self) -> bool { self.z.ascend_until_branch() }
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
         let new_root_val = self.get_value();
         let rz_core = ReadZipperCore::new_with_node_and_path_internal(self.z.focus_stack.top().unwrap().as_tagged(), &self.z.key.node_key(), None, new_root_val);
@@ -238,7 +220,7 @@ impl<'a, 'path, V : Clone> zipper_priv::ZipperPriv for WriteZipperTracked<'a, 'p
     fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>> { self.z.try_borrow_focus() }
 }
 
-impl<'a, 'path, V: Clone + Send + Sync> WriteZipperTracked<'a, 'path, V> {
+impl<'a, 'path, V: Clone + Send + Sync + Unpin> WriteZipperTracked<'a, 'path, V> {
     //GOAT, this method currently isn't called
     // /// Creates a new zipper, with a path relative to a node
     // pub(crate) fn new_with_node_and_path(root_node: &'a mut TrieNodeODRc<V>, path: &'k [u8], tracker: ZipperTracker) -> Self {
@@ -272,7 +254,7 @@ impl<'a, 'path, V: Clone + Send + Sync> WriteZipperTracked<'a, 'path, V> {
     }
 }
 
-impl<'a, V: Clone + Send + Sync> WriteZipper<V> for WriteZipperTracked<'a, '_, V> {
+impl<'a, V: Clone + Send + Sync + Unpin> WriteZipper<V> for WriteZipperTracked<'a, '_, V> {
     type ZipperHead<'z> = ZipperHead<'z, 'a, V> where Self: 'z;
     fn get_value(&self) -> Option<&V> { self.z.get_value() }
     fn get_value_mut(&mut self) -> Option<&mut V> { self.z.get_value_mut() }
@@ -283,23 +265,23 @@ impl<'a, V: Clone + Send + Sync> WriteZipper<V> for WriteZipperTracked<'a, '_, V
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { self.z.zipper_head() }
     fn graft<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) { self.z.graft(read_zipper) }
     fn graft_map(&mut self, map: BytesTrieMap<V>) { self.z.graft_map(map) }
-    fn join<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: Lattice { self.z.join(read_zipper) }
-    fn join_map(&mut self, map: BytesTrieMap<V>) -> bool where V: Lattice { self.z.join_map(map) }
-    fn join_into<Z: Zipper<V=V> + WriteZipper<V>>(&mut self, src_zipper: &mut Z) -> bool where V: Lattice { self.z.join_into(src_zipper) }
+    fn join<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.join(read_zipper) }
+    fn join_map(&mut self, map: BytesTrieMap<V>) -> AlgebraicStatus where V: Lattice { self.z.join_map(map) }
+    fn join_into<Z: Zipper<V=V> + WriteZipper<V>>(&mut self, src_zipper: &mut Z) -> AlgebraicStatus where V: Lattice { self.z.join_into(src_zipper) }
     fn drop_head(&mut self, byte_cnt: usize) -> bool where V: Lattice { self.z.drop_head(byte_cnt) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { self.z.remove_prefix(n) }
-    fn meet<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: Lattice { self.z.meet(read_zipper) }
-    fn meet_2<ZA: Zipper<V=V>, ZB: Zipper<V=V>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> bool where V: Lattice { self.z.meet_2(rz_a, rz_b) }
-    fn subtract<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: DistributiveLattice { self.z.subtract(read_zipper) }
-    fn restrict<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool { self.z.restrict(read_zipper) }
+    fn meet<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.meet(read_zipper) }
+    fn meet_2<ZA: Zipper<V=V>, ZB: Zipper<V=V>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice { self.z.meet_2(rz_a, rz_b) }
+    fn subtract<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract(read_zipper) }
+    fn restrict<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus { self.z.restrict(read_zipper) }
     fn restricting<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool { self.z.restricting(read_zipper) }
     fn remove_branches(&mut self) -> bool { self.z.remove_branches() }
     fn take_map(&mut self) -> Option<BytesTrieMap<V>> { self.z.take_map() }
     fn remove_unmasked_branches(&mut self, mask: [u64; 4]) { self.z.remove_unmasked_branches(mask) }
 }
 
-impl<V: Clone + Send + Sync> WriteZipperPriv<V> for WriteZipperTracked<'_, '_, V> {
+impl<V: Clone + Send + Sync + Unpin> WriteZipperPriv<V> for WriteZipperTracked<'_, '_, V> {
     fn take_focus(&mut self) -> Option<TrieNodeODRc<V>> { self.z.take_focus() }
 }
 
@@ -322,7 +304,7 @@ impl<V> Drop for WriteZipperUntracked<'_, '_, V> {
     fn drop(&mut self) { }
 }
 
-impl<V: Clone + Send + Sync> Zipper for WriteZipperUntracked<'_, '_, V> {
+impl<V: Clone + Send + Sync + Unpin> Zipper for WriteZipperUntracked<'_, '_, V> {
     type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
 
     fn at_root(&self) -> bool { self.z.at_root() }
@@ -344,6 +326,7 @@ impl<V: Clone + Send + Sync> Zipper for WriteZipperUntracked<'_, '_, V> {
     fn ascend(&mut self, steps: usize) -> bool { self.z.ascend(steps) }
     fn ascend_byte(&mut self) -> bool { self.z.ascend_byte() }
     fn ascend_until(&mut self) -> bool { self.z.ascend_until() }
+    fn ascend_until_branch(&mut self) -> bool { self.z.ascend_until_branch() }
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
         let new_root_val = self.get_value();
         let rz_core = ReadZipperCore::new_with_node_and_path_internal(self.z.focus_stack.top().unwrap().as_tagged(), &self.z.key.node_key(), None, new_root_val);
@@ -358,7 +341,7 @@ impl<'a, 'k, V : Clone> zipper_priv::ZipperPriv for WriteZipperUntracked<'a, 'k,
     fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>> { self.z.try_borrow_focus() }
 }
 
-impl <'a, 'k, V: Clone + Send + Sync> WriteZipperUntracked<'a, 'k, V> {
+impl <'a, 'k, V: Clone + Send + Sync + Unpin> WriteZipperUntracked<'a, 'k, V> {
     /// Creates a new zipper, with a path relative to a node
     #[cfg(debug_assertions)]
     pub(crate) fn new_with_node_and_path(root_node: &'a mut TrieNodeODRc<V>, root_val: Option<&'a mut Option<V>>, path: &'k [u8], tracker: Option<ZipperTracker<TrackingWrite>>) -> Self {
@@ -403,7 +386,7 @@ impl <'a, 'k, V: Clone + Send + Sync> WriteZipperUntracked<'a, 'k, V> {
     }
 }
 
-impl<'a, V: Clone + Send + Sync> WriteZipper<V> for WriteZipperUntracked<'a, '_, V> {
+impl<'a, V: Clone + Send + Sync + Unpin> WriteZipper<V> for WriteZipperUntracked<'a, '_, V> {
     type ZipperHead<'z> = ZipperHead<'z, 'a, V> where Self: 'z;
     fn get_value(&self) -> Option<&V> { self.z.get_value() }
     fn get_value_mut(&mut self) -> Option<&mut V> { self.z.get_value_mut() }
@@ -414,23 +397,23 @@ impl<'a, V: Clone + Send + Sync> WriteZipper<V> for WriteZipperUntracked<'a, '_,
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { self.z.zipper_head() }
     fn graft<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) { self.z.graft(read_zipper) }
     fn graft_map(&mut self, map: BytesTrieMap<V>) { self.z.graft_map(map) }
-    fn join<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: Lattice { self.z.join(read_zipper) }
-    fn join_map(&mut self, map: BytesTrieMap<V>) -> bool where V: Lattice { self.z.join_map(map) }
-    fn join_into<Z: Zipper<V=V> + WriteZipper<V>>(&mut self, src_zipper: &mut Z) -> bool where V: Lattice { self.z.join_into(src_zipper) }
+    fn join<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.join(read_zipper) }
+    fn join_map(&mut self, map: BytesTrieMap<V>) -> AlgebraicStatus where V: Lattice { self.z.join_map(map) }
+    fn join_into<Z: Zipper<V=V> + WriteZipper<V>>(&mut self, src_zipper: &mut Z) -> AlgebraicStatus where V: Lattice { self.z.join_into(src_zipper) }
     fn drop_head(&mut self, byte_cnt: usize) -> bool where V: Lattice { self.z.drop_head(byte_cnt) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { self.z.remove_prefix(n) }
-    fn meet<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: Lattice { self.z.meet(read_zipper) }
-    fn meet_2<ZA: Zipper<V=V>, ZB: Zipper<V=V>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> bool where V: Lattice { self.z.meet_2(rz_a, rz_b) }
-    fn subtract<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: DistributiveLattice { self.z.subtract(read_zipper) }
-    fn restrict<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool { self.z.restrict(read_zipper) }
+    fn meet<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.meet(read_zipper) }
+    fn meet_2<ZA: Zipper<V=V>, ZB: Zipper<V=V>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice { self.z.meet_2(rz_a, rz_b) }
+    fn subtract<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract(read_zipper) }
+    fn restrict<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus { self.z.restrict(read_zipper) }
     fn restricting<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool { self.z.restricting(read_zipper) }
     fn remove_branches(&mut self) -> bool { self.z.remove_branches() }
     fn take_map(&mut self) -> Option<BytesTrieMap<V>> { self.z.take_map() }
     fn remove_unmasked_branches(&mut self, mask: [u64; 4]) { self.z.remove_unmasked_branches(mask) }
 }
 
-impl<V: Clone + Send + Sync> WriteZipperPriv<V> for WriteZipperUntracked<'_, '_, V> {
+impl<V: Clone + Send + Sync + Unpin> WriteZipperPriv<V> for WriteZipperUntracked<'_, '_, V> {
     fn take_focus(&mut self) -> Option<TrieNodeODRc<V>> { self.z.take_focus() }
 }
 
@@ -473,7 +456,7 @@ pub(crate) struct WriteZipperCore<'a, 'k, V> {
     pub(crate) root_val: Option<&'a mut Option<V>>,
 
     /// The stack of node references.  We need a "rooted" Vec in case we need to upgrade the node at the root of the zipper
-    pub(crate) focus_stack: MutCursorRootedVec<&'a mut TrieNodeODRc<V>, dyn TrieNode<V> + 'static>,
+    pub(crate) focus_stack: MutCursorRootedVec<'a, &'a mut TrieNodeODRc<V>, dyn TrieNode<V> + 'static>,
 }
 
 /// The part of the [WriteZipper] that contains the key-related fields.  So it can be borrowed separately
@@ -486,7 +469,7 @@ pub(crate) struct KeyFields<'path> {
     pub(crate) prefix_idx: Vec<usize>,
 }
 
-impl<V: Clone + Send + Sync> Zipper for WriteZipperCore<'_, '_, V> {
+impl<V: Clone + Send + Sync + Unpin> Zipper for WriteZipperCore<'_, '_, V> {
     type ReadZipperT<'a> = () where Self: 'a;
 
     #[inline]
@@ -641,6 +624,26 @@ impl<V: Clone + Send + Sync> Zipper for WriteZipperCore<'_, '_, V> {
             if self.key.node_key().len() == 0 {
                 self.ascend_across_nodes();
             }
+            if self.child_count() > 1 || self.is_value() {
+                break;
+            }
+        }
+        debug_assert!(self.key.node_key().len() > 0); //We should never finish with a zero-length node-key
+        true
+    }
+
+    fn ascend_until_branch(&mut self) -> bool {
+        if self.at_root() {
+            return false;
+        }
+        loop {
+            self.ascend_within_node();
+            if self.at_root() {
+                return true;
+            }
+            if self.key.node_key().len() == 0 {
+                self.ascend_across_nodes();
+            }
             if self.child_count() > 1 {
                 break;
             }
@@ -680,7 +683,7 @@ impl<'a, 'k, V : Clone> zipper_priv::ZipperPriv for WriteZipperCore<'a, 'k, V> {
     }
 }
 
-impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
+impl <'a, 'path, V: Clone + Send + Sync + Unpin> WriteZipperCore<'a, 'path, V> {
     /// Creates a new zipper, with a path relative to a node
     pub(crate) fn new_with_node_and_path(root_node: &'a mut TrieNodeODRc<V>, root_val: Option<&'a mut Option<V>>, path: &'path [u8]) -> Self {
         let (key, node) = node_along_path_mut(root_node, path, true);
@@ -689,7 +692,7 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
     /// See [WriteZipper::new_with_node_and_path_internal]
     pub(crate) fn new_with_node_and_path_internal(root_node: &'a mut TrieNodeODRc<V>, root_val: Option<&'a mut Option<V>>, path: &'path [u8]) -> Self {
         let mut focus_stack = MutCursorRootedVec::new(root_node);
-        focus_stack.advance_from_root(|root| Some(root.make_mut()));
+        focus_stack.advance_from_root_twostep(|root| Some(root), |root| Some(root.make_mut()));
         debug_assert!((path.len() == 0) != (root_val.is_none())); //We must have either a path or a root_val, but never both
         Self {
             key: KeyFields::new(path),
@@ -878,51 +881,104 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
         self.graft_internal(map.into_root());
     }
     /// See [WriteZipper::join]
-    pub fn join<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: Lattice {
+    pub fn join<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice {
         let src = read_zipper.get_focus();
+        let self_focus = self.get_focus();
         if src.is_none() {
-            return false
+            if self_focus.is_none() {
+                return AlgebraicStatus::None
+            } else {
+                return AlgebraicStatus::Identity
+            }
         }
-        match self.get_focus().try_borrow() {
+        match self_focus.try_borrow() {
             Some(self_node) => {
-                let joined = self_node.join_dyn(src.borrow());
-                self.graft_internal(Some(joined));
-                true
+                match self_node.pjoin_dyn(src.borrow()) {
+                    AlgebraicResult::Element(joined) => {
+                        self.graft_internal(Some(joined));
+                        AlgebraicStatus::Element
+                    }
+                    AlgebraicResult::Identity(mask) => {
+                        if mask & SELF_IDENT > 0 {
+                            AlgebraicStatus::Identity
+                        } else {
+                            debug_assert!(mask & COUNTER_IDENT > 0);
+                            self.graft_internal(src.into_option());
+                            AlgebraicStatus::Element
+                        }
+                    },
+                    AlgebraicResult::None => {
+                        self.graft_internal(None);
+                        AlgebraicStatus::None
+                    }
+                }
             },
-            None => { self.graft_internal(src.into_option()); true }
+            None => { self.graft_internal(src.into_option()); AlgebraicStatus::Element }
         }
     }
     /// See [WriteZipper::join_map]
-    pub fn join_map(&mut self, map: BytesTrieMap<V>) -> bool where V: Lattice {
+    pub fn join_map(&mut self, map: BytesTrieMap<V>) -> AlgebraicStatus where V: Lattice {
+        let self_focus = self.get_focus();
         let src = match map.into_root() {
             Some(src) => src,
-            None => return false
+            None => {
+                if self_focus.is_none() {
+                    return AlgebraicStatus::None
+                } else {
+                    return AlgebraicStatus::Identity
+                }
+            }
         };
-        match self.get_focus().try_borrow() {
+        match self_focus.try_borrow() {
             Some(self_node) => {
-                let joined = self_node.join_dyn(src.borrow());
-                self.graft_internal(Some(joined));
-                true
+                match self_node.pjoin_dyn(src.borrow()) {
+                    AlgebraicResult::Element(joined) => {
+                        self.graft_internal(Some(joined));
+                        AlgebraicStatus::Element
+                    },
+                    AlgebraicResult::Identity(mask) => {
+                        if mask & SELF_IDENT > 0 {
+                            AlgebraicStatus::Identity
+                        } else {
+                            debug_assert!(mask & COUNTER_IDENT > 0);
+                            self.graft_internal(Some(src));
+                            AlgebraicStatus::Element
+                        }
+                    },
+                    AlgebraicResult::None => {
+                        self.graft_internal(None);
+                        AlgebraicStatus::None
+                    }
+                }
             },
-            None => { self.graft_internal(Some(src)); true }
+            None => { self.graft_internal(Some(src)); AlgebraicStatus::Element }
         }
     }
     /// See [WriteZipper::join_into]
-    pub fn join_into<Z: Zipper<V=V> + WriteZipper<V>>(&mut self, src_zipper: &mut Z) -> bool where V: Lattice {
+    pub fn join_into<Z: Zipper<V=V> + WriteZipper<V>>(&mut self, src_zipper: &mut Z) -> AlgebraicStatus where V: Lattice {
         match src_zipper.take_focus() {
-            None => return false,
+            None => {
+                if self.get_focus().is_none() {
+                    return AlgebraicStatus::None
+                } else {
+                    return AlgebraicStatus::Identity
+                }
+            },
             Some(src) => {
-                let new_node = match self.take_focus() {
+                match self.take_focus() {
                     Some(mut self_node) => {
-                        match self_node.make_mut().join_into_dyn(src) {
-                            Ok(()) => self_node,
-                            Err(replacement_node) => replacement_node,
+                        let (status, result) = self_node.make_mut().join_into_dyn(src);
+                        match result {
+                            Ok(()) => self.graft_internal(Some(self_node)),
+                            Err(replacement_node) => self.graft_internal(Some(replacement_node)),
                         }
+                        status
                     },
-                    None => { src }
-                };
-                self.graft_internal(Some(new_node));
-                true
+                    None => {
+                        self.graft_internal(Some(src));
+                        AlgebraicStatus::Element
+                    }
+                }
             }
         }
         //GOAT!!!!!  We should prune the path at the source zipper, since we're effectively leaving behind an empty node
@@ -968,96 +1024,132 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
         fully_ascended
     }
     /// See [WriteZipper::meet]
-    pub fn meet<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: Lattice {
+    pub fn meet<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice {
         let src = read_zipper.get_focus();
         if src.is_none() {
-            return false
+            self.graft_internal(None);
+            return AlgebraicStatus::None
         }
         match self.get_focus().try_borrow() {
             Some(self_node) => {
                 match self_node.pmeet_dyn(src.borrow()) {
-                    AlgebraicResult::Element(intersection) => self.graft_internal(Some(intersection)),
-                    AlgebraicResult::None => self.graft_internal(None),
+                    AlgebraicResult::Element(intersection) => {
+                        self.graft_internal(Some(intersection));
+                        AlgebraicStatus::Element
+                    },
+                    AlgebraicResult::None => {
+                        self.graft_internal(None);
+                        AlgebraicStatus::None
+                    },
                     AlgebraicResult::Identity(mask) => {
                         if mask & SELF_IDENT > 0 {
-                            //nothing to do
+                            AlgebraicStatus::Identity
                         } else {
                             debug_assert_eq!(mask, COUNTER_IDENT); //It's gotta be self or other
-                            self.graft_internal(Some(src.into_option().unwrap()))
+                            self.graft_internal(Some(src.into_option().unwrap()));
+                            AlgebraicStatus::Element
                         }
                     },
                 }
-                true
             },
-            None => false
+            None => AlgebraicStatus::None
         }
     }
     /// See [WriteZipper::meet_2]
-    pub fn meet_2<ZA: Zipper<V=V>, ZB: Zipper<V=V>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> bool where V: Lattice {
+    pub fn meet_2<ZA: Zipper<V=V>, ZB: Zipper<V=V>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice {
         let a_focus = rz_a.get_focus();
         let a = match a_focus.try_borrow() {
             Some(src) => src,
-            None => return false
+            None => {
+                self.graft_internal(None);
+                return AlgebraicStatus::None
+            }
         };
         let b_focus = rz_b.get_focus();
         let b = match b_focus.try_borrow() {
             Some(src) => src,
-            None => return false
+            None => {
+                self.graft_internal(None);
+                return AlgebraicStatus::None
+            }
         };
         match a.pmeet_dyn(b) {
-            AlgebraicResult::Element(intersection) => self.graft_internal(Some(intersection)),
-            AlgebraicResult::None => self.graft_internal(None),
+            AlgebraicResult::Element(intersection) => {
+                self.graft_internal(Some(intersection));
+                AlgebraicStatus::Element
+            },
+            AlgebraicResult::None => {
+                self.graft_internal(None);
+                AlgebraicStatus::None
+            },
             AlgebraicResult::Identity(mask) => {
                 if mask & SELF_IDENT > 0 {
-                    self.graft_internal(Some(a_focus.into_option().unwrap()))
+                    //GOAT, document that meet_2 will not return identify because it doesn't actually check what's in the destination
+                    self.graft_internal(Some(a_focus.into_option().unwrap()));
                 } else {
                     debug_assert_eq!(mask, COUNTER_IDENT); //It's gotta be a or b
-                    self.graft_internal(Some(b_focus.into_option().unwrap()))
+                    self.graft_internal(Some(b_focus.into_option().unwrap()));
                 }
+                AlgebraicStatus::Element
             },
         }
-        true
     }
     /// See [WriteZipper::subtract]
-    pub fn subtract<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool where V: DistributiveLattice {
+    pub fn subtract<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice {
         let src = read_zipper.get_focus();
+        let self_focus = self.get_focus();
         if src.is_none() {
-            return false
+            if self_focus.is_none() {
+                return AlgebraicStatus::None
+            } else {
+                return AlgebraicStatus::Identity
+            }
         }
-        match self.get_focus().try_borrow() {
+        match self_focus.try_borrow() {
             Some(self_node) => {
                 match self_node.psubtract_dyn(src.borrow()) {
-                    AlgebraicResult::Element(diff) => self.graft_internal(Some(diff)),
-                    AlgebraicResult::None => self.graft_internal(None),
+                    AlgebraicResult::Element(diff) => {
+                        self.graft_internal(Some(diff));
+                        AlgebraicStatus::Element
+                    },
+                    AlgebraicResult::None => {
+                        self.graft_internal(None);
+                        AlgebraicStatus::None
+                    },
                     AlgebraicResult::Identity(mask) => {
                         debug_assert_eq!(mask, SELF_IDENT); //subtract is non-commutative
-                        //nothing to actually do
+                        AlgebraicStatus::Identity
                     },
                 }
-                true
             },
-            None => false
+            None => AlgebraicStatus::None
         }
     }
     /// See [WriteZipper::restrict]
-    pub fn restrict<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> bool {
+    pub fn restrict<Z: Zipper<V=V>>(&mut self, read_zipper: &Z) -> AlgebraicStatus {
         let src = read_zipper.get_focus();
         if src.is_none() {
-            return false
+            self.graft_internal(None);
+            return AlgebraicStatus::None
         }
         match self.get_focus().try_borrow() {
             Some(self_node) => {
                 match self_node.prestrict_dyn(src.borrow()) {
-                    AlgebraicResult::Element(restricted) => self.graft_internal(Some(restricted)),
-                    AlgebraicResult::None => self.graft_internal(None),
+                    AlgebraicResult::Element(restricted) => {
+                        self.graft_internal(Some(restricted));
+                        AlgebraicStatus::Element
+                    },
+                    AlgebraicResult::None => {
+                        self.graft_internal(None);
+                        AlgebraicStatus::None
+                    },
                     AlgebraicResult::Identity(mask) => {
                         debug_assert_eq!(mask, SELF_IDENT); //restrict is non-commutative
-                        //nothing to actually do
+                        AlgebraicStatus::Identity
                     },
                 }
-                true
             },
-            None => false
+            None => AlgebraicStatus::None
         }
     }
     /// See [WriteZipper::restricting]
@@ -1102,14 +1194,17 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
                 self.focus_stack.to_root();
                 let stack_root = self.focus_stack.root_mut().unwrap();
                 **stack_root = TrieNodeODRc::new(EmptyNode::new());
-                self.focus_stack.advance_from_root(|root| Some(root.make_mut()));
+                self.focus_stack.advance_from_root_twostep(|root| Some(root), |root| Some(root.make_mut()));
                 true
             }
         }
+        //GOAT, is this where we want to do the upstream pruning??  I think this is the place to do it, taking a prune flag into this method,
+        // because graft_internal calls here
     }
     /// See [WriteZipper::take_map]
     pub fn take_map(&mut self) -> Option<BytesTrieMap<V>> {
         self.take_focus().map(|node| BytesTrieMap::new_with_root(Some(node)))
+        //GOAT, we should prune upstream here!!
     }
     /// See [WriteZipper::remove_unmasked_branches]
     pub fn remove_unmasked_branches(&mut self, mask: [u64; 4]) {
@@ -1137,9 +1232,10 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
         if focus_node.node_is_empty() {
             self.prune_path();
         }
+        //GOAT, this method should have a switch as to whether to prune the upstream branch or not
     }
 
-    /// Internal method, Removes and returns the node at the zipper's focus
+    /// Internal method, Removes and returns the node at the zipper's focus.  This method may leave behind a dangling path
     #[inline]
     fn take_focus(&mut self) -> Option<TrieNodeODRc<V>> {
         let focus_node = self.focus_stack.top_mut().unwrap();
@@ -1150,7 +1246,7 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
             self.focus_stack.backtrack();
             let stack_root = self.focus_stack.root_mut().unwrap();
             core::mem::swap(*stack_root, &mut replacement_node);
-            self.focus_stack.advance_from_root(|root| Some(root.make_mut()));
+            self.focus_stack.advance_from_root_twostep(|root| Some(root), |root| Some(root.make_mut()));
             if !replacement_node.borrow().node_is_empty() {
                 Some(replacement_node)
             } else {
@@ -1194,7 +1290,7 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
                     self.focus_stack.to_root();
                     let stack_root = self.focus_stack.root_mut().unwrap();
                     **stack_root = src;
-                    self.focus_stack.advance_from_root(|root| Some(root.make_mut()));
+                    self.focus_stack.advance_from_root_twostep(|root| Some(root), |root| Some(root.make_mut()));
                 }
             },
             None => { self.remove_branches(); }
@@ -1268,7 +1364,7 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
                 node
             };
             self.focus_stack.replace_root(node);
-            self.focus_stack.advance_from_root(|root| Some(root.make_mut()));
+            self.focus_stack.advance_from_root_twostep(|root| Some(root), |root| Some(root.make_mut()));
         }
     }
 
@@ -1290,7 +1386,7 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
         }
 
         //Step until we get to the end of the key or find a leaf node
-        self.focus_stack.advance_if_empty(|root| root.make_mut());
+        self.focus_stack.advance_if_empty_twostep(|root| root, |root| root.make_mut());
         while self.focus_stack.advance(|node| {
             if let Some((consumed_byte_cnt, next_node)) = node.node_get_child_mut(key) {
                 if consumed_byte_cnt < key.len() {
@@ -1325,7 +1421,7 @@ impl <'a, 'path, V: Clone + Send + Sync> WriteZipperCore<'a, 'path, V> {
 
 /// An internal function to replace the node at a the top of the focus stack
 #[inline]
-pub(crate) fn replace_top_node<V>(focus_stack: &mut MutCursorRootedVec<&mut TrieNodeODRc<V>, dyn TrieNode<V>>,
+pub(crate) fn replace_top_node<'cursor, V>(focus_stack: &mut MutCursorRootedVec<'cursor, &'cursor mut TrieNodeODRc<V>, dyn TrieNode<V> + 'static>,
     key: &KeyFields, replacement_node: TrieNodeODRc<V>)
 {
     focus_stack.backtrack();
@@ -1338,14 +1434,14 @@ pub(crate) fn replace_top_node<V>(focus_stack: &mut MutCursorRootedVec<&mut Trie
         None => {
             let stack_root = focus_stack.root_mut().unwrap();
             **stack_root = replacement_node;
-            focus_stack.advance_from_root(|root| Some(root.make_mut()));
+            focus_stack.advance_from_root_twostep(|root| Some(root), |root| Some(root.make_mut()));
         }
     }
 }
 
 /// An internal function to replace the node at a the top of the focus stack
 #[inline]
-pub(crate) fn swap_top_node<V: Clone + Send + Sync, F>(focus_stack: &mut MutCursorRootedVec<&mut TrieNodeODRc<V>, dyn TrieNode<V>>,
+pub(crate) fn swap_top_node<'cursor, V: Clone + Send + Sync, F>(focus_stack: &mut MutCursorRootedVec<'cursor, &'cursor mut TrieNodeODRc<V>, dyn TrieNode<V> + 'static>,
     key: &KeyFields, func: F)
     where F: FnOnce(TrieNodeODRc<V>) -> Option<TrieNodeODRc<V>>
 {
@@ -1368,7 +1464,7 @@ pub(crate) fn swap_top_node<V: Clone + Send + Sync, F>(focus_stack: &mut MutCurs
                 Some(replacement_node) => { **stack_root = replacement_node; },
                 None => { },
             }
-            focus_stack.advance_from_root(|root| Some(root.make_mut()));
+            focus_stack.advance_from_root_twostep(|root| Some(root), |root| Some(root.make_mut()));
         }
     }
 }
@@ -1462,6 +1558,7 @@ impl<'k> KeyFields<'k> {
 
 #[cfg(test)]
 mod tests {
+    use crate::ring::AlgebraicStatus;
     use crate::trie_map::*;
     use crate::zipper::*;
 
@@ -1743,7 +1840,7 @@ mod tests {
         rz.descend_to(b"alli");
         wz.graft(&rz);
         rz.reset();
-        assert!(wz.join(&rz));
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Element);
         drop(wz);
 
         assert_eq!(map.val_count(), 5);
@@ -2132,6 +2229,100 @@ mod tests {
 
         let rz3 = zh.read_zipper_at_borrowed_path(b"123:").unwrap();
         assert_eq!(rz3.child_count(), 3);
+    }
+
+    #[test]
+    fn write_zipper_join_results_test() {
+        let mut map = BytesTrieMap::<bool>::new();
+        let head = map.zipper_head();
+
+        // Empty \/-> Empty should be `None`
+        let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
+        let rz = head.read_zipper_at_path(b"src:").unwrap();
+        assert_eq!(wz.join(&rz), AlgebraicStatus::None);
+        drop(wz);
+        drop(rz);
+
+        // Something \/-> Empty should be `Element`
+        let mut wz = head.write_zipper_at_exclusive_path(b"src:").unwrap();
+        wz.descend_to_byte(b'A');
+        wz.set_value(true);
+        drop(wz);
+        let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
+        let rz = head.read_zipper_at_path(b"src:").unwrap();
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Element);
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
+        drop(wz);
+        drop(rz);
+
+        // [A] \/-> [A] should be `Identity`
+        let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
+        let rz = head.read_zipper_at_path(b"src:").unwrap();
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity);
+        drop(wz);
+        drop(rz);
+
+        // [A, B] \/-> [A] should be `Element`
+        let mut wz = head.write_zipper_at_exclusive_path(b"src:").unwrap();
+        wz.descend_to_byte(b'B');
+        wz.set_value(true);
+        drop(wz);
+        let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
+        let rz = head.read_zipper_at_path(b"src:").unwrap();
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Element);
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
+        drop(wz);
+        drop(rz);
+
+        // [B] \/-> [A, B] should be `Identity`
+        let mut wz = head.write_zipper_at_exclusive_path(b"src:").unwrap();
+        wz.descend_to_byte(b'A');
+        wz.remove_value();
+        drop(wz);
+        let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
+        let rz = head.read_zipper_at_path(b"src:").unwrap();
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity);
+        drop(wz);
+        drop(rz);
+
+        // [C, D] \/-> [A, B] should be `Element`
+        let mut wz = head.write_zipper_at_exclusive_path(b"src:").unwrap();
+        wz.remove_branches();
+        wz.descend_to_byte(b'C');
+        wz.set_value(true);
+        wz.ascend_byte();
+        wz.descend_to_byte(b'D');
+        wz.set_value(true);
+        drop(wz);
+        let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
+        let rz = head.read_zipper_at_path(b"src:").unwrap();
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Element);
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
+        drop(wz);
+        drop(rz);
+
+        // [Carousel] \/-> [A, B, C, D] should be `Element`
+        let mut wz = head.write_zipper_at_exclusive_path(b"src:").unwrap();
+        wz.remove_branches();
+        wz.descend_to(b"Carousel");
+        wz.set_value(true);
+        drop(wz);
+        let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
+        let rz = head.read_zipper_at_path(b"src:").unwrap();
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Element);
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
+        drop(wz);
+        drop(rz);
+
+        // Empty \/-> Something should be `Identity`
+        let mut wz = head.write_zipper_at_exclusive_path(b"src:").unwrap();
+        wz.remove_branches();
+        drop(wz);
+        let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
+        let rz = head.read_zipper_at_path(b"src:").unwrap();
+        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity);
+        drop(wz);
+        drop(rz);
     }
 
 }

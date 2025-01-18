@@ -94,7 +94,7 @@ impl Conflict {
         }
     }
 
-    fn check_for_lock_along_path<'a, A: Clone + Send + Sync>(
+    fn check_for_lock_along_path<'a, A: Clone + Send + Sync + Unpin>(
         path: &[u8],
         zipper: &'a mut ReadZipperUntracked<A>,
     ) -> Option<&'a A> {

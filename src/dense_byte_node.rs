@@ -141,24 +141,27 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
         }
     }
 
-        /// The same as [set_child] if no child exists in the node at the key.  Otherwise joins the two nodes
+    /// The same as [set_child] if no child exists in the node at the key.  Otherwise joins the two nodes
     /// together
     #[inline]
-    pub fn join_child_into(&mut self, k: u8, node: TrieNodeODRc<V>) where V: Clone + Lattice {
+    pub fn join_child_into(&mut self, k: u8, node: TrieNodeODRc<V>) -> AlgebraicStatus where V: Clone + Lattice {
         let ix = self.left(k) as usize;
         if self.contains(k) {
             let cf = unsafe { self.values.get_unchecked_mut(ix) };
             match cf.rec_mut() {
                 Some(existing_node) => {
-                    let joined = existing_node.join(&node);
-                    *existing_node = joined;
+                    existing_node.join_into(node)
                 },
-                None => { cf.set_rec(node) }
+                None => {
+                    cf.set_rec(node);
+                    AlgebraicStatus::Element
+                }
             }
         } else {
             self.set(k);
             let new_cf = CoFree::new(Some(node), None);
             self.values.insert(ix, new_cf);
+            AlgebraicStatus::Element
         }
     }
 
@@ -193,21 +196,24 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
 
     /// Similar in behavior to [set_val], but will join v with the existing value instead of replacing it
     #[inline]
-    pub fn join_val_into(&mut self, k: u8, val: V) where V: Lattice {
+    pub fn join_val_into(&mut self, k: u8, val: V) -> AlgebraicStatus where V: Lattice {
         let ix = self.left(k) as usize;
         if self.contains(k) {
             let cf = unsafe { self.values.get_unchecked_mut(ix) };
             match cf.val_mut() {
                 Some(existing_val) => {
-                    let joined = existing_val.join(&val);
-                    *existing_val = joined;
+                    existing_val.join_into(val)
                 }
-                None => { cf.set_val(val) }
+                None => {
+                    cf.set_val(val);
+                    AlgebraicStatus::Element
+                }
             }
         } else {
             self.set(k);
             let new_cf = CoFree::new(None, Some(val));
             self.values.insert(ix, new_cf);
+            AlgebraicStatus::Element
         }
     }
 
@@ -229,17 +235,16 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
     /// Behavior is the same as [set_payload_owned], if the child or value doens't already exist, otherwise
     /// joins the existing entry with the supplied payload
     #[inline]
-    pub(crate) fn join_payload_into(&mut self, k: u8, payload: ValOrChild<V>) where V: Clone + Lattice {
+    pub(crate) fn join_payload_into(&mut self, k: u8, payload: ValOrChild<V>) -> AlgebraicStatus where V: Clone + Lattice {
         match payload {
             ValOrChild::Child(child) => {
-                self.join_child_into(k, child);
+                self.join_child_into(k, child)
             },
             ValOrChild::Val(val) => {
-                self.join_val_into(k, val);
+                self.join_val_into(k, val)
             }
         }
     }
-
 
     /// Internal method to remove a CoFree from the node
     #[inline]
@@ -503,32 +508,41 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> ByteNode<Cf> where Self: TrieNodeD
     }
 
     /// Merges the entries in the ListNode into the ByteNode
-    pub fn merge_from_list_node(&mut self, list_node: &LineListNode<V>) where V: Clone + Lattice {
+    pub fn merge_from_list_node(&mut self, list_node: &LineListNode<V>) -> AlgebraicStatus where V: Clone + Lattice {
         self.reserve_capacity(2);
 
-        if list_node.is_used::<0>() {
+        let slot0_status = if list_node.is_used::<0>() {
             let key = unsafe{ list_node.key_unchecked::<0>() };
             let payload = list_node.clone_payload::<0>().unwrap();
             if key.len() > 1 {
                 let mut child_node = LineListNode::<V>::new();
                 unsafe{ child_node.set_payload_owned::<0>(&key[1..], payload); }
-                self.join_child_into(key[0], TrieNodeODRc::new(child_node));
+                self.join_child_into(key[0], TrieNodeODRc::new(child_node))
             } else {
-                self.join_payload_into(key[0], payload);
+                self.join_payload_into(key[0], payload)
             }
-        }
+        } else {
+            AlgebraicStatus::None
+        };
 
-        if list_node.is_used::<1>() {
+        let slot1_status = if list_node.is_used::<1>() {
             let key = unsafe{ list_node.key_unchecked::<1>() };
             let payload = list_node.clone_payload::<1>().unwrap();
             if key.len() > 1 {
                 let mut child_node = LineListNode::<V>::new();
                 unsafe{ child_node.set_payload_owned::<0>(&key[1..], payload); }
-                self.join_child_into(key[0], TrieNodeODRc::new(child_node));
+                self.join_child_into(key[0], TrieNodeODRc::new(child_node))
             } else {
-                self.join_payload_into(key[0], payload);
+                self.join_payload_into(key[0], payload)
             }
-        }
+        } else {
+            AlgebraicStatus::None
+        };
+
+        //Note: (true, true) makes sense in the context of a join implementation because when the rec_status or
+        // val_status is None, it can only have gotten that way because the respective field was already None.
+        // This is because Join will never convert Some into None, but this logic isn't portable to other ops
+        slot0_status.merge(slot1_status, true, true)
     }
 }
 
@@ -1048,17 +1062,16 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> TrieNode<V> for ByteNode<Cf>
         }
     }
 
-    fn join_dyn(&self, other: &dyn TrieNode<V>) -> TrieNodeODRc<V> where V: Lattice {
+    fn pjoin_dyn(&self, other: &dyn TrieNode<V>) -> AlgebraicResult<TrieNodeODRc<V>> where V: Lattice {
         let other_node = other.as_tagged();
         match other_node {
             TaggedNodeRef::DenseByteNode(other_dense_node) => {
-                let new_node = self.join(other_dense_node);
-                TrieNodeODRc::new(new_node)
+                self.pjoin(other_dense_node).map(|new_node| TrieNodeODRc::new(new_node))
             },
             TaggedNodeRef::LineListNode(other_list_node) => {
                 let mut new_node = self.clone();
-                new_node.merge_from_list_node(other_list_node);
-                TrieNodeODRc::new(new_node)
+                let status = new_node.merge_from_list_node(other_list_node);
+                AlgebraicResult::from_status(status, || TrieNodeODRc::new(new_node))
             },
             #[cfg(feature = "bridge_nodes")]
             TaggedNodeRef::BridgeNode(other_bridge_node) => {
@@ -1068,41 +1081,38 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> TrieNode<V> for ByteNode<Cf>
                 TrieNodeODRc::new(new_node)
             },
             TaggedNodeRef::TinyRefNode(tiny_node) => {
-                tiny_node.join_dyn(self)
+                tiny_node.pjoin_dyn(self)
             },
             TaggedNodeRef::CellByteNode(other_byte_node) => {
-                let new_node = self.join(other_byte_node);
-                TrieNodeODRc::new(new_node)
+                self.pjoin(other_byte_node).map(|new_node| TrieNodeODRc::new(new_node))
             },
             TaggedNodeRef::EmptyNode(_) => {
-                //GOAT, optimization opportunity.  Could communicate here that the resultant node is a clone
-                // so we could just bump the refcount rather than make a new TrieNodeODRc pointer
-                TrieNodeODRc::new(self.clone())
+                AlgebraicResult::Identity(SELF_IDENT)
             }
         }
     }
 
-    fn join_into_dyn(&mut self, mut other: TrieNodeODRc<V>) -> Result<(), TrieNodeODRc<V>> where V: Lattice {
+    fn join_into_dyn(&mut self, mut other: TrieNodeODRc<V>) -> (AlgebraicStatus, Result<(), TrieNodeODRc<V>>) where V: Lattice {
         let other_node = other.make_mut().as_tagged_mut();
-        match other_node {
+        let status = match other_node {
             TaggedNodeRefMut::DenseByteNode(other_dense_node) => {
-                self.join_into(core::mem::take(other_dense_node));
+                self.join_into(core::mem::take(other_dense_node))
             },
             TaggedNodeRefMut::LineListNode(other_list_node) => {
                 //GOAT, optimization opportunity to take the contents from the list, rather than cloning
                 // them, to turn around and drop the ListNode and free them / decrement the refcounts
-                self.merge_from_list_node(other_list_node);
+                self.merge_from_list_node(other_list_node)
             },
             #[cfg(feature = "bridge_nodes")]
             TaggedNodeRefMut::BridgeNode(_other_bridge_node) => {
                 unimplemented!()
             },
             TaggedNodeRefMut::CellByteNode(other_byte_node) => {
-                self.join_into(core::mem::take(other_byte_node));
+                self.join_into(core::mem::take(other_byte_node))
             },
-            TaggedNodeRefMut::Unsupported => { }
-        }
-        Ok(())
+            TaggedNodeRefMut::Unsupported => unreachable!()
+        };
+        (status, Ok(()))
     }
 
     fn drop_head_dyn(&mut self, byte_cnt: usize) -> Option<TrieNodeODRc<V>> where V: Lattice {
@@ -1133,7 +1143,8 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> TrieNode<V> for ByteNode<Cf>
                     };
                     match child {
                         Some(child) => {
-                            new_node.join_into_dyn(child).unwrap();
+                            let (_status, result) = new_node.join_into_dyn(child);
+                            debug_assert!(result.is_ok());
                         },
                         None => {}
                     }
@@ -1589,23 +1600,63 @@ impl<V: Clone + Send + Sync> CoFree for CellCoFreeInsides<V> {
     }
 }
 
-impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> HeteroLattice<OtherCf> for Cf {
-    fn join(&self, other: &OtherCf) -> Self {
-        let rec = self.rec().join(&other.rec());
-        let val = self.val().join(&other.val());
-        CoFree::new(rec, val)
-    }
-    fn join_into(&mut self, other: OtherCf) {
-        let (other_rec, other_val) = other.into_both();
+//GOAT this is unneeded
+// impl<V: Clone + Send + Sync + Lattice> From<CellCoFree<V>> for OrdinaryCoFree<V> {
+//     fn from(other: CellCoFree<V>) -> Self {
+//         Self::from_cf(other)
+//     }
+// }
 
-        match self.rec_mut() {
-            Some(self_rec) => { other_rec.map(|other_rec| self_rec.make_mut().join_into_dyn(other_rec)); },
-            None => self.set_rec_option(other_rec)
-        }
-        match self.val_mut() {
-            Some(self_val) => { other_val.map(|other_val| self_val.join_into(other_val)); },
-            None => self.set_val_option(other_val)
-        }
+impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> HeteroLattice<OtherCf> for Cf {
+    fn pjoin(&self, other: &OtherCf) -> AlgebraicResult<Self> {
+        let rec_result = self.rec().pjoin(&other.rec()).flatten();
+        let val_result = self.val().pjoin(&other.val()).flatten();
+        rec_result.merge(val_result, |which_arg| {
+            match which_arg {
+                0 => self.rec().cloned(),
+                1 => other.rec().cloned(),
+                _ => unreachable!()
+            }
+        }, |which_arg| {
+            match which_arg {
+                0 => self.val().cloned(),
+                1 => other.val().cloned(),
+                _ => unreachable!()
+            }
+        }, |rec, val| AlgebraicResult::Element(Self::new(rec, val)))
+    }
+    fn join_into(&mut self, other: OtherCf) -> AlgebraicStatus {
+        let (other_rec, other_val) = other.into_both();
+        let rec_status = match self.rec_mut() {
+            Some(self_rec) => match other_rec {
+                Some(other_rec) => self_rec.make_mut().join_into_dyn(other_rec).0,
+                None => AlgebraicStatus::Identity,
+            },
+            None => match other_rec {
+                Some(_) => {
+                    self.set_rec_option(other_rec);
+                    AlgebraicStatus::Element
+                },
+                None => AlgebraicStatus::None
+            }
+        };
+        let val_status = match self.val_mut() {
+            Some(self_val) => match other_val {
+                Some(other_val) => self_val.join_into(other_val),
+                None => AlgebraicStatus::Identity,
+            },
+            None => match other_val {
+                Some(_) => {
+                    self.set_val_option(other_val);
+                    AlgebraicStatus::Element
+                },
+                None => AlgebraicStatus::None
+            }
+        };
+        //Note: (true, true) makes sense in the context of a join implementation because when the rec_status or
+        // val_status is None, it can only have gotten that way because the respective CF field was already None.
+        // This is because Join will never convert Some into None, but this logic isn't portable to other ops
+        rec_status.merge(val_status, true, true)
     }
     fn pmeet(&self, other: &OtherCf) -> AlgebraicResult<Self> {
         let rec = self.rec().pmeet(&other.rec());
@@ -1614,6 +1665,12 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
     }
     fn join_all(_xs: &[&Self]) -> Self where Self: Sized {
         unreachable!() //Currently not used
+    }
+    fn convert(other: OtherCf) -> Self {
+        Self::from_cf(other)
+    }
+    fn bottom() -> Self {
+        Self::default()
     }
 }
 
@@ -1729,7 +1786,7 @@ impl<V: Clone, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> CfShared<OtherCf> for Cf {
 }
 
 impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> HeteroLattice<ByteNode<OtherCf>> for ByteNode<Cf> {
-    fn join(&self, other: &ByteNode<OtherCf>) -> Self {
+    fn pjoin(&self, other: &ByteNode<OtherCf>) -> AlgebraicResult<Self> {
         let jm: [u64; 4] = [self.mask[0] | other.mask[0],
             self.mask[1] | other.mask[1],
             self.mask[2] | other.mask[2],
@@ -1738,6 +1795,9 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
             self.mask[1] & other.mask[1],
             self.mask[2] & other.mask[2],
             self.mask[3] & other.mask[3]];
+
+        let mut is_identity = (self.mask[0] == jm[0]) && (self.mask[1] == jm[1]) && (self.mask[2] == jm[2]) && (self.mask[3] == jm[3]);
+        let mut is_counter_identity = (other.mask[0] == jm[0]) && (other.mask[1] == jm[1]) && (other.mask[2] == jm[2]) && (other.mask[3] == jm[3]);
 
         let jmc = [jm[0].count_ones(), jm[1].count_ones(), jm[2].count_ones(), jm[3].count_ones()];
 
@@ -1756,20 +1816,46 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
                 let index = lm.trailing_zeros();
                 // println!("{}", index);
                 if ((1u64 << index) & mm[i]) != 0 {
+                    //This runs for cofrees that exist in both nodes
                     let lv = unsafe { self.values.get_unchecked(l) };
                     let rv = unsafe { other.values.get_unchecked(r) };
-                    let jv = lv.join(rv);
-                    debug_assert!(jv.has_rec() || jv.has_val());
+                    match lv.pjoin(rv) {
+                        AlgebraicResult::None => unreachable!(), //Some joined to Some should never be None
+                        AlgebraicResult::Identity(mask) => {
+                            debug_assert!((mask & SELF_IDENT > 0) || (mask & COUNTER_IDENT > 0));
+                            if mask & SELF_IDENT == 0 {
+                                is_identity = false;
+                            }
+                            if mask & COUNTER_IDENT == 0 {
+                                is_counter_identity = false;
+                            }
+                            if mask & SELF_IDENT > 0 {
+                                unsafe { new_v.get_unchecked_mut(c).write(lv.clone()) };
+                            } else {
+                                let new_cf = Cf::from_cf(rv.clone());
+                                unsafe { new_v.get_unchecked_mut(c).write(new_cf) };
+                            }
+                        },
+                        AlgebraicResult::Element(jv) => {
+                            is_identity = false;
+                            is_counter_identity = false;
+                            debug_assert!(jv.has_rec() || jv.has_val());
+                            unsafe { new_v.get_unchecked_mut(c).write(jv) };
+                        }
+                    }
                     // println!("pushing lv rv j {:?} {:?} {:?}", lv, rv, jv);
-                    unsafe { new_v.get_unchecked_mut(c).write(jv) };
                     l += 1;
                     r += 1;
                 } else if ((1u64 << index) & self.mask[i]) != 0 {
+                    // This runs for CoFrees that exist in only the left node
+                    is_counter_identity = false;
                     let lv = unsafe { self.values.get_unchecked(l) };
                     // println!("pushing lv {:?}", lv);
                     unsafe { new_v.get_unchecked_mut(c).write(lv.clone()) };
                     l += 1;
                 } else {
+                    // This runs for CoFrees that exist in only the right node
+                    is_identity = false;
                     let rv = unsafe { other.values.get_unchecked(r) };
                     // println!("pushing rv {:?}", rv);
                     unsafe { new_v.get_unchecked_mut(c).write(<_>::from_cf(rv.clone())) };
@@ -1781,10 +1867,21 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
         }
 
         unsafe{ v.set_len(c); }
-        return Self{ mask: jm, values: <_>::from(v) };
+        if c == 0 {
+            AlgebraicResult::None
+        } else {
+            if is_identity || is_counter_identity {
+                let mut mask = 0;
+                if is_identity { mask |= SELF_IDENT; }
+                if is_counter_identity { mask |= COUNTER_IDENT; }
+                AlgebraicResult::Identity(mask)
+            } else {
+                AlgebraicResult::Element(Self{ mask: jm, values: <_>::from(v) })
+            }
+        }
     }
 
-    fn join_into(&mut self, mut other: ByteNode<OtherCf>) {
+    fn join_into(&mut self, mut other: ByteNode<OtherCf>) -> AlgebraicStatus {
         let jm: [u64; 4] = [self.mask[0] | other.mask[0],
             self.mask[1] | other.mask[1],
             self.mask[2] | other.mask[2],
@@ -1793,6 +1890,8 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
             self.mask[1] & other.mask[1],
             self.mask[2] & other.mask[2],
             self.mask[3] & other.mask[3]];
+
+        let mut is_identity = (self.mask[0] == jm[0]) && (self.mask[1] == jm[1]) && (self.mask[2] == jm[2]) && (self.mask[3] == jm[3]);
 
         let jmc = [jm[0].count_ones(), jm[1].count_ones(), jm[2].count_ones(), jm[3].count_ones()];
 
@@ -1813,7 +1912,11 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
                 if ((1u64 << index) & mm[i]) != 0 {
                     let mut lv = unsafe { std::ptr::read(self.values.get_unchecked_mut(l)) };
                     let rv = unsafe { std::ptr::read(other.values.get_unchecked_mut(r)) };
-                    lv.join_into(rv);
+                    match lv.join_into(rv) {
+                        AlgebraicStatus::Identity => { },
+                        AlgebraicStatus::Element => { is_identity = false; },
+                        AlgebraicStatus::None => unreachable!(), //Some.join(Some) shouldn't create None
+                    }
                     unsafe { new_v.get_unchecked_mut(c).write(lv) };
                     l += 1;
                     r += 1;
@@ -1822,6 +1925,7 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
                     unsafe { new_v.get_unchecked_mut(c).write(lv) };
                     l += 1;
                 } else {
+                    is_identity = false;
                     let rv = unsafe { std::ptr::read(other.values.get_unchecked_mut(r)) };
                     unsafe { new_v.get_unchecked_mut(c).write(<_>::from_cf(rv)) };
                     r += 1;
@@ -1836,6 +1940,14 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
         unsafe { v.set_len(c) }
         self.mask = jm;
         self.values = <_>::from(v);
+
+        if c == 0 {
+            AlgebraicStatus::None
+        } else if is_identity {
+            AlgebraicStatus::Identity
+        } else {
+            AlgebraicStatus::Element
+        }
     }
 
     fn pmeet(&self, other: &ByteNode<OtherCf>) -> AlgebraicResult<Self> {
@@ -1964,6 +2076,16 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
 
         unsafe{ v.set_len(c); }
         return Self{ mask: jm, values: <_>::from(v) };
+    }
+    fn convert(other: ByteNode<OtherCf>) -> Self {
+        let values = other.values.into_iter().map(|other_cf| Cf::convert(other_cf)).collect();
+        Self {
+            mask: other.mask,
+            values
+        }
+    }
+    fn bottom() -> Self {
+        Self::default()
     }
 }
 

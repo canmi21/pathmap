@@ -1,6 +1,5 @@
 
 use divan::{Divan, Bencher, black_box};
-use pathmap::ring::*;
 use pathmap::trie_map::BytesTrieMap;
 use pathmap::zipper::*;
 
