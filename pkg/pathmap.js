@@ -1,5 +1,25 @@
 let wasm;
 
+function logError(f, args) {
+    try {
+        return f.apply(this, args);
+    } catch (e) {
+        let error = (function () {
+            try {
+                return e instanceof Error ? `${e.message}\n\nStack:\n${e.stack}` : e.toString();
+            } catch(_) {
+                return "<failed to stringify thrown value>";
+            }
+        }());
+        console.error("wasm-bindgen: imported JS function that was not marked as `catch` threw an error:", error);
+        throw e;
+    }
+}
+
+function _assertNum(n) {
+    if (typeof(n) !== 'number') throw new Error(`expected a number argument, found ${typeof(n)}`);
+}
+
 const cachedTextDecoder = (typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8', { ignoreBOM: true, fatal: true }) : { decode: () => { throw Error('TextDecoder not available') } } );
 
 if (typeof TextDecoder !== 'undefined') { cachedTextDecoder.decode(); };
@@ -47,6 +67,9 @@ export function empty() {
  * @returns {BytesTrieSet}
  */
 export function range_be_u32(start, stop, step) {
+    _assertNum(start);
+    _assertNum(stop);
+    _assertNum(step);
     const ret = wasm.range_be_u32(start, stop, step);
     return BytesTrieSet.__wrap(ret);
 }
@@ -63,7 +86,13 @@ function _assertClass(instance, klass) {
  */
 export function union(x, y) {
     _assertClass(x, BytesTrieSet);
+    if (x.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     _assertClass(y, BytesTrieSet);
+    if (y.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.union(x.__wbg_ptr, y.__wbg_ptr);
     return BytesTrieSet.__wrap(ret);
 }
@@ -75,7 +104,13 @@ export function union(x, y) {
  */
 export function intersection(x, y) {
     _assertClass(x, BytesTrieSet);
+    if (x.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     _assertClass(y, BytesTrieSet);
+    if (y.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.intersection(x.__wbg_ptr, y.__wbg_ptr);
     return BytesTrieSet.__wrap(ret);
 }
@@ -87,7 +122,13 @@ export function intersection(x, y) {
  */
 export function restriction(x, y) {
     _assertClass(x, BytesTrieSet);
+    if (x.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     _assertClass(y, BytesTrieSet);
+    if (y.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.restriction(x.__wbg_ptr, y.__wbg_ptr);
     return BytesTrieSet.__wrap(ret);
 }
@@ -99,7 +140,13 @@ export function restriction(x, y) {
  */
 export function subtraction(x, y) {
     _assertClass(x, BytesTrieSet);
+    if (x.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     _assertClass(y, BytesTrieSet);
+    if (y.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.subtraction(x.__wbg_ptr, y.__wbg_ptr);
     return BytesTrieSet.__wrap(ret);
 }
@@ -111,7 +158,13 @@ export function subtraction(x, y) {
  */
 export function raffination(x, y) {
     _assertClass(x, BytesTrieSet);
+    if (x.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     _assertClass(y, BytesTrieSet);
+    if (y.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.raffination(x.__wbg_ptr, y.__wbg_ptr);
     return BytesTrieSet.__wrap(ret);
 }
@@ -123,6 +176,10 @@ export function raffination(x, y) {
  */
 export function decapitation(x, k) {
     _assertClass(x, BytesTrieSet);
+    if (x.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
+    _assertNum(k);
     const ret = wasm.decapitation(x.__wbg_ptr, k);
     return BytesTrieSet.__wrap(ret);
 }
@@ -134,6 +191,10 @@ export function decapitation(x, k) {
  */
 export function head(x, k) {
     _assertClass(x, BytesTrieSet);
+    if (x.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
+    _assertNum(k);
     const ret = wasm.head(x.__wbg_ptr, k);
     return BytesTrieSet.__wrap(ret);
 }
@@ -145,7 +206,13 @@ export function head(x, k) {
  */
 export function product(x, y) {
     _assertClass(x, BytesTrieSet);
+    if (x.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     _assertClass(y, BytesTrieSet);
+    if (y.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.product(x.__wbg_ptr, y.__wbg_ptr);
     return BytesTrieSet.__wrap(ret);
 }
@@ -168,6 +235,8 @@ const encodeString = (typeof cachedTextEncoder.encodeInto === 'function'
 });
 
 function passStringToWasm0(arg, malloc, realloc) {
+
+    if (typeof(arg) !== 'string') throw new Error(`expected a string argument, found ${typeof(arg)}`);
 
     if (realloc === undefined) {
         const buf = cachedTextEncoder.encode(arg);
@@ -197,7 +266,7 @@ function passStringToWasm0(arg, malloc, realloc) {
         ptr = realloc(ptr, len, len = offset + arg.length * 3, 1) >>> 0;
         const view = getUint8ArrayMemory0().subarray(ptr + offset, ptr + len);
         const ret = encodeString(arg, view);
-
+        if (ret.read !== arg.length) throw new Error('failed to pass whole string');
         offset += ret.written;
         ptr = realloc(ptr, len, offset, 1) >>> 0;
     }
@@ -213,6 +282,9 @@ function passStringToWasm0(arg, malloc, realloc) {
  */
 export function regex_transform(bts, pattern, template) {
     _assertClass(bts, BytesTrieSet);
+    if (bts.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ptr0 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(template, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -234,6 +306,9 @@ function passArray8ToWasm0(arg, malloc) {
  */
 export function wrap(x, path) {
     _assertClass(x, BytesTrieSet);
+    if (x.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ptr0 = passArray8ToWasm0(path, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.wrap(x.__wbg_ptr, ptr0, len0);
@@ -247,6 +322,9 @@ export function wrap(x, path) {
  */
 export function contains(m, k) {
     _assertClass(m, BytesTrieSet);
+    if (m.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ptr0 = passArray8ToWasm0(k, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.contains(m.__wbg_ptr, ptr0, len0);
@@ -259,6 +337,9 @@ export function contains(m, k) {
  */
 export function paths(bts) {
     _assertClass(bts, BytesTrieSet);
+    if (bts.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.paths(bts.__wbg_ptr);
     return ret;
 }
@@ -269,6 +350,9 @@ export function paths(bts) {
  */
 export function object(bts) {
     _assertClass(bts, BytesTrieSet);
+    if (bts.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.object(bts.__wbg_ptr);
     return ret;
 }
@@ -283,6 +367,9 @@ function getArrayU8FromWasm0(ptr, len) {
  */
 export function serialize(bts) {
     _assertClass(bts, BytesTrieSet);
+    if (bts.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.serialize(bts.__wbg_ptr);
     var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
@@ -304,6 +391,9 @@ export function deserialize(jsbs) {
  */
 export function d3_hierarchy(bts) {
     _assertClass(bts, BytesTrieSet);
+    if (bts.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.d3_hierarchy(bts.__wbg_ptr);
     return ret;
 }
@@ -314,6 +404,9 @@ export function d3_hierarchy(bts) {
  */
 export function reader(bts) {
     _assertClass(bts, BytesTrieSet);
+    if (bts.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.reader(bts.__wbg_ptr);
     return Reader.__wrap(ret);
 }
@@ -325,6 +418,9 @@ export function reader(bts) {
  */
 export function descend_to(r, k) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ptr0 = passArray8ToWasm0(k, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.descend_to(r.__wbg_ptr, ptr0, len0);
@@ -337,6 +433,9 @@ export function descend_to(r, k) {
  */
 export function to_next_val(r) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.to_next_val(r.__wbg_ptr);
     return ret !== 0;
 }
@@ -348,6 +447,10 @@ export function to_next_val(r) {
  */
 export function descend_indexed_byte(r, i) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
+    _assertNum(i);
     const ret = wasm.descend_indexed_byte(r.__wbg_ptr, i);
     return ret !== 0;
 }
@@ -358,6 +461,9 @@ export function descend_indexed_byte(r, i) {
  */
 export function to_next_sibling_byte(r) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.to_next_sibling_byte(r.__wbg_ptr);
     return ret !== 0;
 }
@@ -368,6 +474,9 @@ export function to_next_sibling_byte(r) {
  */
 export function to_prev_sibling_byte(r) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.to_prev_sibling_byte(r.__wbg_ptr);
     return ret !== 0;
 }
@@ -379,6 +488,10 @@ export function to_prev_sibling_byte(r) {
  */
 export function ascend(r, k) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
+    _assertNum(k);
     const ret = wasm.ascend(r.__wbg_ptr, k);
     return ret !== 0;
 }
@@ -389,6 +502,9 @@ export function ascend(r, k) {
  */
 export function exists(r) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.exists(r.__wbg_ptr);
     return ret !== 0;
 }
@@ -399,6 +515,9 @@ export function exists(r) {
  */
 export function children(r) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.children(r.__wbg_ptr);
     var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
@@ -411,6 +530,9 @@ export function children(r) {
  */
 export function path(r) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.path(r.__wbg_ptr);
     var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
@@ -423,6 +545,9 @@ export function path(r) {
  */
 export function min_path(r) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.min_path(r.__wbg_ptr);
     var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
@@ -435,6 +560,9 @@ export function min_path(r) {
  */
 export function max_path(r) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.max_path(r.__wbg_ptr);
     var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
@@ -447,6 +575,9 @@ export function max_path(r) {
  */
 export function make_map(r) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.make_map(r.__wbg_ptr);
     return BytesTrieSet.__wrap(ret);
 }
@@ -457,6 +588,9 @@ export function make_map(r) {
  */
 export function val_count(r) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.val_count(r.__wbg_ptr);
     return ret >>> 0;
 }
@@ -467,6 +601,9 @@ export function val_count(r) {
  */
 export function fork_reader(r) {
     _assertClass(r, Reader);
+    if (r.__wbg_ptr === 0) {
+        throw new Error('Attempt to use a moved value');
+    }
     const ret = wasm.fork_reader(r.__wbg_ptr);
     return Reader.__wrap(ret);
 }
@@ -476,6 +613,10 @@ const BytesTrieSetFinalization = (typeof FinalizationRegistry === 'undefined')
     : new FinalizationRegistry(ptr => wasm.__wbg_bytestrieset_free(ptr >>> 0, 1));
 
 export class BytesTrieSet {
+
+    constructor() {
+        throw new Error('cannot invoke `new` directly');
+    }
 
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -503,6 +644,10 @@ const ReaderFinalization = (typeof FinalizationRegistry === 'undefined')
     : new FinalizationRegistry(ptr => wasm.__wbg_reader_free(ptr >>> 0, 1));
 
 export class Reader {
+
+    constructor() {
+        throw new Error('cannot invoke `new` directly');
+    }
 
     static __wrap(ptr) {
         ptr = ptr >>> 0;
@@ -559,37 +704,39 @@ async function __wbg_load(module, imports) {
 function __wbg_get_imports() {
     const imports = {};
     imports.wbg = {};
-    imports.wbg.__wbg_buffer_61b7ce01341d7f88 = function(arg0) {
+    imports.wbg.__wbg_buffer_609cc3eee51ed158 = function() { return logError(function (arg0) {
         const ret = arg0.buffer;
         return ret;
-    };
-    imports.wbg.__wbg_length_65d1cd11729ced11 = function(arg0) {
+    }, arguments) };
+    imports.wbg.__wbg_length_a446193dc22c12f8 = function() { return logError(function (arg0) {
         const ret = arg0.length;
+        _assertNum(ret);
         return ret;
-    };
-    imports.wbg.__wbg_new_254fa9eac11932ae = function() {
+    }, arguments) };
+    imports.wbg.__wbg_new_78feb108b6472713 = function() { return logError(function () {
         const ret = new Array();
         return ret;
-    };
-    imports.wbg.__wbg_new_3ff5b33b1ce712df = function(arg0) {
+    }, arguments) };
+    imports.wbg.__wbg_new_a12002a7f91c75be = function() { return logError(function (arg0) {
         const ret = new Uint8Array(arg0);
         return ret;
-    };
-    imports.wbg.__wbg_newwithbyteoffsetandlength_ba35896968751d91 = function(arg0, arg1, arg2) {
+    }, arguments) };
+    imports.wbg.__wbg_newwithbyteoffsetandlength_d97e637ebe145a9a = function() { return logError(function (arg0, arg1, arg2) {
         const ret = new Uint8Array(arg0, arg1 >>> 0, arg2 >>> 0);
         return ret;
-    };
-    imports.wbg.__wbg_parse_161c68378e086ae1 = function() { return handleError(function (arg0, arg1) {
+    }, arguments) };
+    imports.wbg.__wbg_parse_def2e24ef1252aff = function() { return handleError(function (arg0, arg1) {
         const ret = JSON.parse(getStringFromWasm0(arg0, arg1));
         return ret;
     }, arguments) };
-    imports.wbg.__wbg_push_6edad0df4b546b2c = function(arg0, arg1) {
+    imports.wbg.__wbg_push_737cfc8c1432c2c6 = function() { return logError(function (arg0, arg1) {
         const ret = arg0.push(arg1);
+        _assertNum(ret);
         return ret;
-    };
-    imports.wbg.__wbg_set_23d69db4e5c66a6e = function(arg0, arg1, arg2) {
+    }, arguments) };
+    imports.wbg.__wbg_set_65595bdd868b3009 = function() { return logError(function (arg0, arg1, arg2) {
         arg0.set(arg1, arg2 >>> 0);
-    };
+    }, arguments) };
     imports.wbg.__wbindgen_init_externref_table = function() {
         const table = wasm.__wbindgen_export_2;
         const offset = table.grow(4);

@@ -55,6 +55,7 @@ pub fn decapitation(x: &BytesTrieSet, k: usize) -> BytesTrieSet {
   let mut c = x.btm.clone();
   let mut wz = c.write_zipper();
   wz.drop_head(k);
+  drop(wz);
   BytesTrieSet { btm: c }
 }
 
@@ -104,6 +105,7 @@ pub fn wrap(x: &BytesTrieSet, path: &[u8]) -> BytesTrieSet {
   let mut btm = BytesTrieMap::new();
   let mut wz = btm.write_zipper_at_path(path);
   wz.graft_map(x.btm.clone());
+  drop(wz);
   BytesTrieSet { btm }
 }
 
@@ -190,7 +192,7 @@ fn deserialize_intern(sv: &[u8]) -> BytesTrieSet {
 #[wasm_bindgen]
 pub fn object(bts: &BytesTrieSet) -> js_sys::Object {
   let mut s = vec![];
-  json_intern(bts.btm.root(), &mut s);
+  json_intern(bts.btm.root().unwrap(), &mut s);
   let r = js_sys::JSON::parse(unsafe { std::str::from_utf8_unchecked(&s[..]) });
   r.unwrap_or_else(|e| e).into()
 }
@@ -254,7 +256,7 @@ fn d3_json_intern(node: &TrieNodeODRc<()>, s: &mut Vec<u8>) {
 pub fn d3_hierarchy(bts: &BytesTrieSet) -> js_sys::Object {
   let mut s = vec![];
   s.extend(b"{\"name\":\"root\",\"children\":");
-  d3_json_intern(bts.btm.root(), &mut s);
+  d3_json_intern(bts.btm.root().unwrap(), &mut s);
   s.push(b'}');
   let r = js_sys::JSON::parse(unsafe { std::str::from_utf8_unchecked(&s[..]) });
   r.unwrap_or_else(|e| e).into()

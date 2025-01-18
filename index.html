@@ -602,31 +602,37 @@
                     readers.push(nr);
                     break;
                 case "|":
+                    console.assert(readers.length > 1);
                     nr = reader(union(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
                     nr.origin = `union of (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))}) and (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))})`;
                     readers.push(nr);
                     break;
                 case "&":
+                    console.assert(readers.length > 1);
                     nr = reader(intersection(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
                     nr.origin = `intersection of (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))}) and (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))})`;
                     readers.push(nr);
                     break;
                 case "\\":
+                    console.assert(readers.length > 1);
                     nr = reader(subtraction(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
                     nr.origin = `subtraction of (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))}) and (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))})`;
                     readers.push(nr);
                     break;
                 case "/":
+                    console.assert(readers.length > 1);
                     nr = reader(subtraction(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 2])));
                     nr.origin = `subtraction of (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))}) and (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))})`;
                     readers.push(nr);
                     break;
                 case "<":
+                    console.assert(readers.length > 1);
                     nr = reader(restriction(make_map(readers[readers.length - 1]), make_map(readers[readers.length - 2])));
                     nr.origin = `restriction of (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))}) and (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))})`;
                     readers.push(nr);
                     break;
                 case ">":
+                    console.assert(readers.length > 1);
                     nr = reader(restriction(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 2])));
                     nr.origin = `restriction of (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))}) and (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))})`;
                     readers.push(nr);
@@ -642,6 +648,7 @@
                     readers.push(nr);
                     break;
                 case "x":
+                    console.assert(readers.length > 1);
                     nr = reader(product(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 1])));
                     nr.origin = `product of (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))}) and (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))})`;
                     readers.push(nr);
