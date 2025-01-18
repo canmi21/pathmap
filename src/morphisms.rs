@@ -1,3 +1,4 @@
+use crate::utils::byte_mask_set;
 use crate::zipper::*;
 
 pub trait ZipperMorphisms<V> {
@@ -36,6 +37,19 @@ impl<'a, Z, V: 'a> ZipperMorphisms<V> for Z where Z: ReadOnlyZipper<'a, V> + Zip
         CollapseF: FnMut(&V, W, &[u8]) -> W,
         AlgF: FnMut(&[u64; 4], &mut [W], &[u8]) -> W
     {
+        let mut line_f = |rtrace: &[u8], w: W, path: &[u8]| {
+            let mut r = Some(w);
+            for b in rtrace {
+                let mut m = [0u64; 4];
+                byte_mask_set(&mut m, *b);
+                let mut vec = [std::mem::take(&mut r).unwrap()];
+                // note path provided here is incorrect, it'd need to be extended by sliced reverse rtrace
+                r = Some(alg_f(&m, &mut vec[..], path));
+            }
+            r.unwrap()
+        };
+
+
         //`stack` holds a "frame" at each forking point above the zipper position.  No frames exist for values
         let mut stack = Vec::<StackFrame<W>>::with_capacity(12);
         let mut frame_idx = 0;
@@ -64,7 +78,7 @@ impl<'a, Z, V: 'a> ZipperMorphisms<V> for Z where Z: ReadOnlyZipper<'a, V> + Zip
                 let cur_w = self.get_value().map(|v| map_f(v, self.origin_path().unwrap()));
 
                 //Ascend back to the last fork point
-                let cur_w = ascend_to_fork(&mut self, &mut map_f, &mut collapse_f, cur_w);
+                let cur_w = ascend_to_fork(&mut self, &mut map_f, &mut collapse_f, &mut line_f, cur_w);
 
                 //Merge the result into the stack frame
                 match cur_w {
@@ -89,7 +103,7 @@ impl<'a, Z, V: 'a> ZipperMorphisms<V> for Z where Z: ReadOnlyZipper<'a, V> + Zip
                         }
 
                         //Ascend the rest of the way back up to the branch
-                        let w = ascend_to_fork(&mut self, &mut map_f, &mut collapse_f, Some(w)).unwrap();
+                        let w = ascend_to_fork(&mut self, &mut map_f, &mut collapse_f, &mut line_f, Some(w)).unwrap();
 
                         //Merge the result into the stack frame
                         stack[frame_idx].push_val(w);
@@ -122,15 +136,32 @@ impl<'a, Z, V: 'a> ZipperMorphisms<V> for Z where Z: ReadOnlyZipper<'a, V> + Zip
 }
 
 #[inline(always)]
-fn ascend_to_fork<'a, Z, V: 'a, W, MapF, CollapseF>(z: &mut Z, map_f: &mut MapF, collapse_f: &mut CollapseF, mut cur_w: Option<W>) -> Option<W>
+fn ascend_to_fork<'a, Z, V: 'a, W, MapF, CollapseF, LineF>(z: &mut Z, map_f: &mut MapF, collapse_f: &mut CollapseF, line_f: &mut LineF, mut cur_w: Option<W>) -> Option<W>
     where
     Z: ReadOnlyZipper<'a, V> + ZipperAbsolutePath,
     MapF: FnMut(&V, &[u8]) -> W,
     CollapseF: FnMut(&V, W, &[u8]) -> W,
+    LineF: FnMut(&[u8], W, &[u8]) -> W,
 {
     loop {
+        let mut acc = vec![];
 
-        z.ascend_until();
+        // we should be able to store the current path, get back how much we ascended, and slice based on that?
+        // No need to go step by step in the traversal, but I don't know how to implement it
+        loop {
+            let last = z.path().last().unwrap();
+            if z.ascend_byte() {
+                if !z.is_value() {
+                    acc.push(*last)
+                } else {
+                    break
+                }
+            } else {
+                break
+            }
+        }
+
+        cur_w = Some(line_f(&acc[..], cur_w.unwrap(), z.origin_path().unwrap()));
 
         if z.at_root() {
             return cur_w
@@ -215,6 +246,7 @@ impl<W> StackFrame<W> {
 #[cfg(test)]
 mod tests {
     use crate::trie_map::BytesTrieMap;
+    use crate::utils::{byte_mask_from_iter, byte_mask_join, IntoByteMaskIter};
     use super::*;
 
     #[test]
@@ -270,7 +302,6 @@ mod tests {
             |m, ws, p| { ws.iter().sum() });
         assert_eq!(cnt, 11);
 
-
         let longest = btm.read_zipper().into_cata(
             |v, p| { p.to_vec() },
             |v, w, p| { w },
@@ -283,8 +314,30 @@ mod tests {
             |m, ws: &mut [_], p| {
                 let mut r = ws.first_mut().map_or(vec![], std::mem::take);
                 for w in ws[1..].iter_mut() { r.extend(w.drain(..)); }
-                r
-            });
+                r });
         assert_eq!(at_truncated, vec![3]);
+
+        let char_set = btm.read_zipper().into_cata(
+            |v, p| { Err(()) },
+            |v, w, p| { w },
+            |m, ws: &mut [_], p| {
+                let mut r = m.clone();
+                for w in ws.into_iter() {
+                    if let Ok(cm) = w { r = byte_mask_join(*cm, r) }
+                }
+                Ok(r) });
+        // assert_eq!(char_set, Ok(byte_mask_from_iter(rs.into_iter().flat_map(|s| s.as_bytes()).copied())));
+        for b in rs.into_iter().flat_map(|s| s.as_bytes()) {
+            print!("{}, ", *b as char);
+        }
+        println!("mask");
+        for b in byte_mask_from_iter(rs.into_iter().flat_map(|s| s.as_bytes()).copied()).byte_mask_iter() {
+            print!("{}, ", b as char);
+        }
+        println!("gotten");
+        for b in char_set.ok().unwrap().byte_mask_iter() {
+            print!("{}, ", b as char);
+        }
+        println!();
     }
 }

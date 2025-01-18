@@ -1,5 +1,53 @@
+#[inline]
+pub fn byte_mask_subtract(x: [u64; 4], y: [u64; 4]) -> [u64; 4] {
+    [x[0] & !y[0], x[1] & !y[1], x[2] & !y[2], x[3] & !y[3]]
+}
 
+#[inline]
+pub fn byte_mask_meet(x: [u64; 4], y: [u64; 4]) -> [u64; 4] {
+    [x[0] & y[0], x[1] & y[1], x[2] & y[2], x[3] & y[3]]
+}
 
+#[inline]
+pub fn byte_mask_join(x: [u64; 4], y: [u64; 4]) -> [u64; 4] {
+    [x[0] | y[0], x[1] | y[1], x[2] | y[2], x[3] | y[3]]
+}
+
+#[inline]
+pub fn byte_mask_left(x: [u64; 4], pos: u8) -> u8 {
+    if pos == 0 { return 0 }
+    let mut c = 0u8;
+    let m = !0u64 >> (63 - ((pos - 1) & 0b00111111));
+    if pos > 0b01000000 { c += x[0].count_ones() as u8; }
+    else { return c + (x[0] & m).count_ones() as u8 }
+    if pos > 0b10000000 { c += x[1].count_ones() as u8; }
+    else { return c + (x[1] & m).count_ones() as u8 }
+    if pos > 0b11000000 { c += x[2].count_ones() as u8; }
+    else { return c + (x[2] & m).count_ones() as u8 }
+    c + (x[3] & m).count_ones() as u8
+}
+
+#[inline]
+pub fn byte_mask_contains(x: [u64; 4], k: u8) -> bool {
+    0 != (x[((k & 0b11000000) >> 6) as usize] & (1u64 << (k & 0b00111111)))
+}
+
+#[inline]
+pub fn byte_mask_set(x: &mut [u64; 4], k: u8) -> () {
+    x[((k & 0b11000000) >> 6) as usize] |= 1u64 << (k & 0b00111111);
+}
+
+#[inline]
+pub fn byte_mask_clear(x: &mut [u64; 4], k: u8) -> () {
+    x[((k & 0b11000000) >> 6) as usize] &= !(1u64 << (k & 0b00111111));
+}
+
+#[inline]
+pub fn byte_mask_from_iter<T: Iterator<Item=u8>>(iter: T) -> [u64; 4] {
+    let mut m = [0u64; 4];
+    iter.for_each(|b| byte_mask_set(&mut m, b));
+    m
+}
 
 /// An iterator to visit each byte in a byte mask, as you might get from [child_mask](crate::zipper::Zipper::child_mask)
 pub struct ByteMaskIter {

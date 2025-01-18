@@ -37,6 +37,7 @@ use crate::ring::*;
 
 use crate::trie_node::*;
 use crate::line_list_node::LineListNode;
+use crate::utils::{byte_mask_clear, byte_mask_set, byte_mask_contains, byte_mask_join, byte_mask_meet, byte_mask_subtract, byte_mask_left};
 
 //NOTE: This: `core::array::from_fn(|i| i as u8);` ought to work, but https://github.com/rust-lang/rust/issues/109341
 const ALL_BYTES: [u8; 256] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255];
@@ -91,50 +92,17 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
     pub fn reserve_capacity(&mut self, additional: usize) {
         self.values.reserve(additional)
     }
-    #[inline]
-    fn left(&self, pos: u8) -> u8 {
-        if pos == 0 { return 0 }
-        let mut c = 0u8;
-        let m = !0u64 >> (63 - ((pos - 1) & 0b00111111));
-        if pos > 0b01000000 { c += self.mask[0].count_ones() as u8; }
-        else { return c + (self.mask[0] & m).count_ones() as u8 }
-        if pos > 0b10000000 { c += self.mask[1].count_ones() as u8; }
-        else { return c + (self.mask[1] & m).count_ones() as u8 }
-        if pos > 0b11000000 { c += self.mask[2].count_ones() as u8; }
-        else { return c + (self.mask[2] & m).count_ones() as u8 }
-        // println!("{} {:b} {} {}", pos, self.mask[3], m.count_ones(), c);
-        return c + (self.mask[3] & m).count_ones() as u8;
-    }
-
-    #[inline]
-    fn contains(&self, k: u8) -> bool {
-        0 != (self.mask[((k & 0b11000000) >> 6) as usize] & (1u64 << (k & 0b00111111)))
-    }
-
-    #[inline]
-    fn set(&mut self, k: u8) -> () {
-        // println!("setting k {} : {} {:b}", k, ((k & 0b11000000) >> 6) as usize, 1u64 << (k & 0b00111111));
-        self.mask[((k & 0b11000000) >> 6) as usize] |= 1u64 << (k & 0b00111111);
-    }
-
-    /// Internal method to clear the bit associated with a given key.  This should be accompanied by removing the
-    /// cofree entry from the values Vec
-    #[inline]
-    fn clear(&mut self, k: u8) -> () {
-        // println!("setting k {} : {} {:b}", k, ((k & 0b11000000) >> 6) as usize, 1u64 << (k & 0b00111111));
-        self.mask[((k & 0b11000000) >> 6) as usize] &= !(1u64 << (k & 0b00111111));
-    }
 
     /// Adds a new child at the specified key byte.  Replaces and returns an existing branch.
     /// Use [join_child_into] to join with the existing branch
     #[inline]
     pub fn set_child(&mut self, k: u8, node: TrieNodeODRc<V>) -> Option<TrieNodeODRc<V>> {
-        let ix = self.left(k) as usize;
-        if self.contains(k) {
+        let ix = byte_mask_left(self.mask, k) as usize;
+        if byte_mask_contains(self.mask, k) {
             let cf = unsafe { self.values.get_unchecked_mut(ix) };
             cf.swap_rec(node)
         } else {
-            self.set(k);
+            byte_mask_set(&mut self.mask, k);
             let new_cf = CoFree::new(Some(node), None);
             self.values.insert(ix, new_cf);
             None
@@ -145,8 +113,8 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
     /// together
     #[inline]
     pub fn join_child_into(&mut self, k: u8, node: TrieNodeODRc<V>) -> AlgebraicStatus where V: Clone + Lattice {
-        let ix = self.left(k) as usize;
-        if self.contains(k) {
+        let ix = byte_mask_left(self.mask, k) as usize;
+        if byte_mask_contains(self.mask, k) {
             let cf = unsafe { self.values.get_unchecked_mut(ix) };
             match cf.rec_mut() {
                 Some(existing_node) => {
@@ -158,7 +126,7 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
                 }
             }
         } else {
-            self.set(k);
+            byte_mask_set(&mut self.mask, k);
             let new_cf = CoFree::new(Some(node), None);
             self.values.insert(ix, new_cf);
             AlgebraicStatus::Element
@@ -167,12 +135,12 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
 
     #[inline]
     pub fn set_val(&mut self, k: u8, val: V) -> Option<V> {
-        let ix = self.left(k) as usize;
-        if self.contains(k) {
+        let ix = byte_mask_left(self.mask, k) as usize;
+        if byte_mask_contains(self.mask, k) {
             let cf = unsafe { self.values.get_unchecked_mut(ix) };
             cf.swap_val(val)
         } else {
-            self.set(k);
+            byte_mask_set(&mut self.mask, k);
             let new_cf = CoFree::new(None, Some(val));
             self.values.insert(ix, new_cf);
             None
@@ -181,14 +149,14 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
 
     #[inline]
     pub fn remove_val(&mut self, k: u8) -> Option<V> {
-        let ix = self.left(k) as usize;
-        debug_assert!(self.contains(k));
+        let ix = byte_mask_left(self.mask, k) as usize;
+        debug_assert!(byte_mask_contains(self.mask, k));
 
         let cf = unsafe { self.values.get_unchecked_mut(ix) };
         let result = cf.take_val();
 
         if !cf.has_rec() {
-            self.clear(k);
+            byte_mask_clear(&mut self.mask, k);
             self.values.remove(ix);
         }
         result
@@ -197,8 +165,8 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
     /// Similar in behavior to [set_val], but will join v with the existing value instead of replacing it
     #[inline]
     pub fn join_val_into(&mut self, k: u8, val: V) -> AlgebraicStatus where V: Lattice {
-        let ix = self.left(k) as usize;
-        if self.contains(k) {
+        let ix = byte_mask_left(self.mask, k) as usize;
+        if byte_mask_contains(self.mask, k) {
             let cf = unsafe { self.values.get_unchecked_mut(ix) };
             match cf.val_mut() {
                 Some(existing_val) => {
@@ -210,7 +178,7 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
                 }
             }
         } else {
-            self.set(k);
+            byte_mask_set(&mut self.mask, k);
             let new_cf = CoFree::new(None, Some(val));
             self.values.insert(ix, new_cf);
             AlgebraicStatus::Element
@@ -249,10 +217,10 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
     /// Internal method to remove a CoFree from the node
     #[inline]
     fn remove(&mut self, k: u8) -> Option<Cf> {
-        if self.contains(k) {
-            let ix = self.left(k) as usize;
+        if byte_mask_contains(self.mask, k) {
+            let ix = byte_mask_left(self.mask, k) as usize;
             let v = self.values.remove(ix);
-            self.clear(k);
+            byte_mask_clear(&mut self.mask, k);
             return Some(v);
         }
         None
@@ -260,8 +228,8 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
 
     #[inline]
     fn get(&self, k: u8) -> Option<&Cf> {
-        if self.contains(k) {
-            let ix = self.left(k) as usize;
+        if byte_mask_contains(self.mask, k) {
+            let ix = byte_mask_left(self.mask, k) as usize;
             // println!("pos ix {} {} {:b}", pos, ix, self.mask);
             unsafe { Some(self.values.get_unchecked(ix)) }
         } else {
@@ -271,8 +239,8 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
 
     #[inline]
     fn get_mut(&mut self, k: u8) -> Option<&mut Cf> {
-        if self.contains(k) {
-            let ix = self.left(k) as usize;
+        if byte_mask_contains(self.mask, k) {
+            let ix = byte_mask_left(self.mask, k) as usize;
             unsafe { Some(self.values.get_unchecked_mut(ix)) }
         } else {
             None
@@ -286,14 +254,14 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
 
     #[inline]
     pub unsafe fn get_unchecked(&self, k: u8) -> &Cf {
-        let ix = self.left(k) as usize;
+        let ix = byte_mask_left(self.mask, k) as usize;
         // println!("pos ix {} {} {:b}", pos, ix, self.mask);
         self.values.get_unchecked(ix)
     }
 
     #[inline]
     unsafe fn get_unchecked_mut(&mut self, k: u8) -> &mut Cf {
-        let ix = self.left(k) as usize;
+        let ix = byte_mask_left(self.mask, k) as usize;
         // println!("pos ix {} {} {:b}", pos, ix, self.mask);
         self.values.get_unchecked_mut(ix)
     }
@@ -345,7 +313,7 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
         let prefix = i << 6 | (loc as usize);
         // println!("{:#066b}", self.focus.mask[i]);
         // println!("{i} {loc} {prefix}");
-        debug_assert!(self.contains(prefix as u8));
+        debug_assert!(byte_mask_contains(self.mask, prefix as u8));
 
         Some(prefix as u8)
     }
@@ -426,11 +394,11 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> ByteNode<Cf> where Self: TrieNodeD
 
                 //If we ended up with a value or a link in the CF, insert it into a new node
                 if new_cf.has_rec() || new_cf.has_val() {
-                    new_node.set(key_byte);
+                    byte_mask_set(&mut new_node.mask, key_byte);
                     new_node.values.push(new_cf);
                 }
             } else {
-                new_node.set(key_byte);
+                byte_mask_set(&mut new_node.mask, key_byte);
                 let cf = unsafe{ self_node.values.get_unchecked(cf_idx) };
                 new_node.values.push(cf.clone());
             }
@@ -460,7 +428,7 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> ByteNode<Cf> where Self: TrieNodeD
 
                 //If there is a comparable value in other, keep the whole cf
                 if let Some(_) = other.node_get_val(&[key_byte]) {
-                    new_node.set(key_byte);
+                    byte_mask_set(&mut new_node.mask, key_byte);
                     new_node.values.push(cf.clone());
                 } else {
 
@@ -482,7 +450,7 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> ByteNode<Cf> where Self: TrieNodeD
                                     },
                                 }
                                 if new_cf.has_rec() {
-                                    new_node.set(key_byte);
+                                    byte_mask_set(&mut new_node.mask, key_byte);
                                     new_node.values.push(new_cf);
                                 }
                             },
@@ -556,11 +524,11 @@ impl<V: Clone + Send + Sync> CellByteNode<V> {
     /// long as the first byte of each path is unique
     #[inline]
     pub(crate) fn prepare_cf(&mut self, k: u8) -> (&mut TrieNodeODRc<V>, &mut Option<V>) {
-        match self.contains(k) {
+        match byte_mask_contains(self.mask, k) {
             true => {},
             false => {
-                let ix = self.left(k) as usize;
-                self.set(k);
+                let ix = byte_mask_left(self.mask, k) as usize;
+                byte_mask_set(&mut self.mask, k);
                 let new_cf = CellCoFree::new(None, None);
                 self.values.insert(ix, new_cf);
             }
@@ -642,7 +610,7 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> TrieNode<V> for ByteNode<Cf>
     fn node_contains_partial_key(&self, key: &[u8]) -> bool {
         debug_assert!(key.len() > 0);
         if key.len() == 1 {
-            self.contains(key[0])
+            byte_mask_contains(self.mask, key[0])
         } else {
             false
         }
@@ -783,8 +751,8 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> TrieNode<V> for ByteNode<Cf>
         }
         debug_assert_eq!(key.len(), 1);
         let k = key[0];
-        if self.contains(k) {
-            let ix = self.left(k) as usize;
+        if byte_mask_contains(self.mask, k) {
+            let ix = byte_mask_left(self.mask, k) as usize;
             let cf = unsafe { self.values.get_unchecked_mut(ix) };
             match (cf.has_rec(), cf.has_val()) {
                 (true, true) => {
@@ -793,7 +761,7 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> TrieNode<V> for ByteNode<Cf>
                 },
                 (true, false) => {
                     self.values.remove(ix);
-                    self.clear(k);
+                    byte_mask_clear(&mut self.mask, k);
                     true
                 },
                 (false, _) => {
@@ -1030,7 +998,7 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> TrieNode<V> for ByteNode<Cf>
         // println!("{:?}", parent.items().map(|(k, _)| k).collect::<Vec<_>>());
         let sibling_key_char = n | ((mask_i << 6) as u8);
         // println!("candidate {}", sk);
-        debug_assert!(self.contains(sibling_key_char));
+        debug_assert!(byte_mask_contains(self.mask, sibling_key_char));
         let cf = unsafe{ self.get_unchecked(sibling_key_char) };
         (Some(sibling_key_char), cf.rec().map(|node| &*node.borrow()))
     }
