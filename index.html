@@ -21,6 +21,7 @@
         <tr><td>Shift+Tab</td><td>Focus previous reader</td></tr>
         <tr><td>Shift+R</td><td>Range of type u32 with start, stop, and step</td></tr>
         <tr><td>Z</td><td>Fork reader</td></tr>
+        <tr><td>Shift+Z</td><td>Fork reader and prefix it with a path</td></tr>
         <tr><td>|</td><td>Union of the top two readers</td></tr>
         <tr><td>&</td><td>Intersection of the top two readers</td></tr>
         <tr><td>\</td><td>Subtract top reader from second reader</td></tr>
@@ -29,6 +30,8 @@
         <tr><td>></td><td>Restrict second reader to top reader</td></tr>
         <tr><td>^</td><td>Decapitation of the top reader</td></tr>
         <tr><td>v</td><td>Head of the top reader</td></tr>
+        <tr><td>X</td><td>Take the product of the second and top reader; QUADRATIC</td></tr>
+        <tr><td>Shift+T</td><td>Transform the top reader according to a regex pattern and template</td></tr>
         <tr><td>W</td><td>Move reader to lower sibling byte</td></tr>
         <tr><td>S</td><td>Move reader to higher sibling byte</td></tr>
         <tr><td>A</td><td>Ascend reader one byte</td></tr>
@@ -515,7 +518,7 @@
         else { return parseInt(s, 10) }
     }
 
-    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction, decapitation, head, serialize, deserialize, min_path, max_path } from "./pkg/pathmap.js";
+    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction, decapitation, head, serialize, deserialize, min_path, max_path, product, wrap, regex_transform } from "./pkg/pathmap.js";
     init().then(() => {
         window.root_map = range_be_u32(50000, 100000, 74);
         window.doing_partial = false;
@@ -545,7 +548,7 @@
 
         window.addEventListener("keydown", e => {
             if (e.altKey || e.ctrlKey) { partial = null; return; }
-            window.requestAnimationFrame(draw);
+            // window.requestAnimationFrame(draw);
             if (e.key === "Escape") { partial = null; return; }
             if (partial != null) { if (!(partial.next(e))) { window.requestAnimationFrame(draw); return; } }
 
@@ -582,7 +585,7 @@
                     }
                     break;
                 case "R":
-                    let [start, stop, step] = prompt("range(start, stop, step)").split(",");
+                    let [start, stop, step] = prompt("range(start,stop,step)").split(",");
                     nr = reader(range_be_u32(parseInt(start, 10), parseInt(stop, 10), parseInt(step, 10)));
                     nr.origin = `range(${start},${stop},${step})`;
                     readers.push(nr);
@@ -590,6 +593,12 @@
                 case "z":
                     nr = fork_reader(r);
                     nr.origin = `fork(${r.origin} @ ${display_path(path(r))})`;
+                    readers.push(nr);
+                    break;
+                case "Z":
+                    let seq = new Uint8Array(prompt("b1 b2 ... bn").split(" ").map(parseByte));
+                    nr = reader(wrap(make_map(r), seq));
+                    nr.origin = `wrap ${display_path(seq)} (${r.origin} @ ${display_path(path(r))})`;
                     readers.push(nr);
                     break;
                 case "|":
@@ -630,6 +639,18 @@
                 case "v":
                     nr = reader(head(make_map(readers[readers.length - 1]), 1));
                     nr.origin = `head of (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))})`
+                    readers.push(nr);
+                    break;
+                case "x":
+                    nr = reader(product(make_map(readers[readers.length - 2]), make_map(readers[readers.length - 1])));
+                    nr.origin = `product of (${readers[readers.length - 2].origin} @ ${display_path(path(readers[readers.length - 2]))}) and (${readers[readers.length - 1].origin} @ ${display_path(path(readers[readers.length - 1]))})`;
+                    readers.push(nr);
+                    break;
+                case "T":
+                    let pattern = prompt("regex pattern");
+                    let template = prompt("regex template");
+                    nr = reader(regex_transform(make_map(r), pattern, template))
+                    nr.origin = `transform ${pattern} => ${template} (${r.origin} @ ${display_path(path(r))})`;
                     readers.push(nr);
                     break;
                 case "w":
@@ -713,27 +734,28 @@
                     break;
                 case "c":
                     console.log("children:", children(r));
-                    break;
+                    return;
                 case "n":
                     console.log("values under position:", val_count(r));
-                    break;
+                    return;
                 case "m":
                     console.log("map?", r);
-                    console.log("map under position:", object(make_map(r)));
+                    let m = make_map(r);
+                    console.log("map under position:", object(m));
                     if (window.draw_in_tab) {
                         let tab = window.open("about:blank");
-                        tab.onload = () => { tab.document.body.append(indented(d3_hierarchy(make_map(r)))) };
+                        tab.onload = () => { tab.document.body.append(indented(d3_hierarchy(m))) };
                     } else {
-                        if (document.getElementById("board").children.length === 0) { document.getElementById("board").append(indented(d3_hierarchy(make_map(r)))); }
-                        else { document.getElementById("board").replaceChild(indented(d3_hierarchy(make_map(r))), document.getElementById("board").firstChild); }
+                        if (document.getElementById("board").children.length === 0) { document.getElementById("board").append(indented(d3_hierarchy(m))); }
+                        else { document.getElementById("board").replaceChild(indented(d3_hierarchy(m)), document.getElementById("board").firstChild); }
                     }
-                    break;
+                    return;
                 case "p":
                     console.log("reader located at:", path(r));
-                    break;
+                    return;
                 case "b":
                     console.log("submap bounds", min_path(r), max_path(r));
-                    break;
+                    return;
                 case "i":
                     upload_bin(o => {
                         nr = reader(deserialize(new Uint8Array(o.content)));
@@ -741,10 +763,10 @@
                         readers.push(nr);
                         draw()
                     })
-                    break;
+                    return;
                 case "o":
                     download_bin("reader" + active + ".bin", serialize(make_map(r)));
-                    break
+                    return;
                 case "?":
                     if (document.getElementById("help").style.display === "none") { document.getElementById("help").style.display = "block"; }
                     else { document.getElementById("help").style.display = "none"; }

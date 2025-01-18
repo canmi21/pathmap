@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use std::ptr;
 use flate2::Compression;
+use regex::bytes::{Regex, RegexBuilder};
 use wasm_bindgen::prelude::*;
 use js_sys;
 use crate::ring::Lattice;
@@ -71,6 +72,39 @@ pub fn head(x: &BytesTrieSet, k: usize) -> BytesTrieSet {
     }
   }
   BytesTrieSet { btm: c }
+}
+
+#[wasm_bindgen]
+pub fn product(x: &BytesTrieSet, y: &BytesTrieSet) -> BytesTrieSet {
+  let mut btm = BytesTrieMap::new();
+  let mut rz = x.btm.read_zipper();
+  while let Some(_) = rz.to_next_val() {
+    btm.write_zipper_at_path(rz.path()).graft_map(y.btm.clone());
+  }
+  BytesTrieSet { btm }
+}
+
+#[wasm_bindgen]
+pub fn regex_transform(bts: &BytesTrieSet, pattern: &str, template: &str) -> BytesTrieSet {
+  // could be sublinear
+  let mut btm = BytesTrieMap::new();
+  let engine = RegexBuilder::new(pattern).dot_matches_new_line(true).unicode(false).ignore_whitespace(false).multi_line(true).build().unwrap();
+  let mut rz = bts.btm.read_zipper();
+  while let Some(_) = rz.to_next_val() {
+    if engine.is_match(rz.path()) {
+      let res = engine.replace(rz.path(), template.as_bytes());
+      btm.insert(&res[..], ());
+    }
+  }
+  BytesTrieSet { btm }
+}
+
+#[wasm_bindgen]
+pub fn wrap(x: &BytesTrieSet, path: &[u8]) -> BytesTrieSet {
+  let mut btm = BytesTrieMap::new();
+  let mut wz = btm.write_zipper_at_path(path);
+  wz.graft_map(x.btm.clone());
+  BytesTrieSet { btm }
 }
 
 #[wasm_bindgen]
