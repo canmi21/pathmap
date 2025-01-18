@@ -630,6 +630,25 @@ mod tests {
 
         cata!(usize, (), btm, &|m, ws, p| { }, &|s, p| { println!("path {s} {}", std::str::from_utf8(p).unwrap()) }, &|v, w, p| { });
 
+        let char_set = cata!(usize, Result<[u64; 4], ()>, btm,
+            |m: [u64; 4], ws: &[Result<[u64; 4], ()>], p| {
+                let mut r = m;
+                for w in ws.into_iter() {
+                    if let Ok(cm) = w { r = [cm[0] | r[0], cm[1] | r[1], cm[2] | r[2], cm[3] | r[3]] }
+                }
+                Ok(r) },
+            |v, p| { Err(()) },
+            |v, w: &Result<[u64; 4], ()>, p| { *w });
+        // assert_eq!(char_set, Ok(byte_mask_from_iter(rs.into_iter().flat_map(|s| s.as_bytes()).copied())));
+        for b in rs.into_iter().flat_map(|s| s.as_bytes()) {
+            print!("{}, ", *b as char);
+        }
+        println!("gotten");
+        for b in char_set.ok().unwrap().byte_mask_iter() {
+            print!("{}, ", b as char);
+        }
+        println!();
+
         // like val count, but without counting internal values
         // let cnt = cata!(usize, i64, btm, &|m, ws: &[i64], p| { ws.iter().sum() }, &|s, p| { 1 }, &|v, w: &i64, p| { *w });
         // println!("cnt {}", cnt);
