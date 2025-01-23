@@ -231,6 +231,11 @@ pub trait ZipperAbsolutePath: Zipper {
     /// Returns the path beginning from the origin to the current focus.  Returns `None` if the zipper
     /// is relative and does not have an origin path
     fn origin_path(&self) -> Option<&[u8]>;
+
+    /// Returns the path from the origin to the zipper root
+    ///
+    /// After [Zipper::reset] is called, `zip.root_prefix_path() == zip.origin_path()`
+    fn root_prefix_path(&self) -> Option<&[u8]>;
 }
 
 pub(crate) mod zipper_priv {
@@ -241,6 +246,11 @@ pub(crate) mod zipper_priv {
 
         fn get_focus(&self) -> AbstractNodeRef<Self::V>;
         fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>>;
+
+        /// Internal method to get the path, beyond its length.  Panics if `len` > the path's capacity, or
+        /// if the zipper is relative and doesn't have an `origin_path`
+        fn origin_path_assert_len(&self, len: usize) -> &[u8];
+        fn prepare_buffers(&mut self);
     }
 }
 use zipper_priv::*;
@@ -301,6 +311,8 @@ impl<V: Clone + Send + Sync> zipper_priv::ZipperPriv for ReadZipperTracked<'_, '
 
     fn get_focus(&self) -> AbstractNodeRef<Self::V> { self.z.get_focus() }
     fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>> { self.z.try_borrow_focus() }
+    fn origin_path_assert_len(&self, len: usize) -> &[u8] { self.z.origin_path_assert_len(len) }
+    fn prepare_buffers(&mut self) { self.z.prepare_buffers() }
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin> ZipperIteration<'a, V> for ReadZipperTracked<'a, '_, V> {
@@ -312,6 +324,7 @@ impl<'a, V: Clone + Send + Sync + Unpin> ZipperIteration<'a, V> for ReadZipperTr
 
 impl<V: Clone + Send + Sync + Unpin> ZipperAbsolutePath for ReadZipperTracked<'_, '_, V> {
     fn origin_path(&self) -> Option<&[u8]> { self.z.origin_path() }
+    fn root_prefix_path(&self) -> Option<&[u8]> { self.z.root_prefix_path() }
 }
 
 impl<'a, 'path, V: Clone + Send + Sync> ReadZipperTracked<'a, 'path, V> {
@@ -405,6 +418,8 @@ impl<V: Clone + Send + Sync> zipper_priv::ZipperPriv for ReadZipperUntracked<'_,
 
     fn get_focus(&self) -> AbstractNodeRef<Self::V> { self.z.get_focus() }
     fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>> { self.z.try_borrow_focus() }
+    fn origin_path_assert_len(&self, len: usize) -> &[u8] { self.z.origin_path_assert_len(len) }
+    fn prepare_buffers(&mut self) { self.z.prepare_buffers() }
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin> ZipperIteration<'a, V> for ReadZipperUntracked<'a, '_, V> {
@@ -416,6 +431,7 @@ impl<'a, V: Clone + Send + Sync + Unpin> ZipperIteration<'a, V> for ReadZipperUn
 
 impl<V: Clone + Send + Sync + Unpin> ZipperAbsolutePath for ReadZipperUntracked<'_, '_, V> {
     fn origin_path(&self) -> Option<&[u8]> { self.z.origin_path() }
+    fn root_prefix_path(&self) -> Option<&[u8]> { self.z.root_prefix_path() }
 }
 
 impl<'a, 'path, V: Clone + Send + Sync> ReadZipperUntracked<'a, 'path, V> {
@@ -488,9 +504,17 @@ pub struct ReadZipperOwned<V: 'static> {
     z: ReadZipperCore<'static, 'static, V>,
 }
 
+impl<V: 'static + Clone + Send + Sync + Unpin> Clone for ReadZipperOwned<V> {
+    fn clone(&self) -> Self {
+        let new_map = (*self.map).clone();
+        Self::new_with_map(new_map, self.root_prefix_path().unwrap())
+    }
+}
+
 impl<V: 'static + Clone + Send + Sync + Unpin> ReadZipperOwned<V> {
     /// See [ReadZipperCore::new_with_node_and_cloned_path]
-    pub(crate) fn new_with_map(map: BytesTrieMap<V>, path: &[u8]) -> Self {
+    pub(crate) fn new_with_map<K: AsRef<[u8]>>(map: BytesTrieMap<V>, path: K) -> Self {
+        let path = path.as_ref();
         let map = Box::pin(map);
         let root_ref = unsafe{ &*map.root.get() }.as_ref().unwrap().borrow();
         let root_val = unsafe{ &*map.root_val.get() }.as_ref();
@@ -544,6 +568,8 @@ impl<V: Clone + Send + Sync> zipper_priv::ZipperPriv for ReadZipperOwned<V> {
 
     fn get_focus(&self) -> AbstractNodeRef<Self::V> { self.z.get_focus() }
     fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>> { self.z.try_borrow_focus() }
+    fn origin_path_assert_len(&self, len: usize) -> &[u8] { self.z.origin_path_assert_len(len) }
+    fn prepare_buffers(&mut self) { self.z.prepare_buffers() }
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin> ZipperIteration<'a, V> for ReadZipperOwned<V> {
@@ -555,6 +581,7 @@ impl<'a, V: Clone + Send + Sync + Unpin> ZipperIteration<'a, V> for ReadZipperOw
 
 impl<V: Clone + Send + Sync + Unpin> ZipperAbsolutePath for ReadZipperOwned<V> {
     fn origin_path(&self) -> Option<&[u8]> { self.z.origin_path() }
+    fn root_prefix_path(&self) -> Option<&[u8]> { self.z.root_prefix_path() }
 }
 
 // ***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---
@@ -766,10 +793,10 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for ReadZipperCore<'_, '_, V> {
         debug_assert!(self.is_regularized());
 
         self.prefix_buf.push(k);
+        self.focus_iter_token = NODE_ITER_INVALID;
         if let Some((_consumed_byte_cnt, next_node)) = self.focus_node.node_get_child(self.node_key()) {
             self.ancestors.push((self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
             self.focus_node = next_node.as_tagged();
-            self.focus_iter_token = NODE_ITER_INVALID;
             return true;
         }
         self.focus_node.node_contains_partial_key(self.node_key())
@@ -789,6 +816,7 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for ReadZipperCore<'_, '_, V> {
             },
             (Some(prefix), None) => {
                 self.prefix_buf.push(prefix);
+                self.focus_iter_token = NODE_ITER_INVALID;
                 true
             },
             (None, _) => false
@@ -809,14 +837,18 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for ReadZipperCore<'_, '_, V> {
             if full_key.len() == node_key_len+1 {
                 self.regularize();
             }
+            self.focus_iter_token = NODE_ITER_INVALID;
             return true;
         }
 
         let (new_tok, key_bytes, child_node, _value) = self.focus_node.next_items(self.focus_iter_token);
-        self.focus_iter_token = new_tok;
 
         if new_tok != NODE_ITER_FINISHED {
             let byte_idx = self.node_key().len();
+            if byte_idx >= key_bytes.len() {
+                return false; //We can't go any deeper down this path
+            }
+            self.focus_iter_token = new_tok;
             self.prefix_buf.push(key_bytes[byte_idx]);
 
             if key_bytes.len() == byte_idx+1 {
@@ -832,6 +864,7 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for ReadZipperCore<'_, '_, V> {
 
             true
         } else {
+            self.focus_iter_token = new_tok;
             false
         }
     }
@@ -916,6 +949,10 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for ReadZipperCore<'_, '_, V> {
 
             //Check to see if the iter result has modified more than one byte
             let node_key = self.node_key();
+            if node_key.len() == 0 {
+                self.focus_iter_token = NODE_ITER_INVALID;
+                return false;
+            }
             let fixed_len = node_key.len() - 1;
             if fixed_len > key_bytes.len() || key_bytes[..fixed_len] != node_key[..fixed_len] {
                 return false;
@@ -1046,6 +1083,26 @@ impl<V: Clone + Send + Sync> zipper_priv::ZipperPriv for ReadZipperCore<'_, '_, 
             }
         }
     }
+    fn origin_path_assert_len(&self, len: usize) -> &[u8] {
+        if self.root_key_offset.is_some() {
+            if self.prefix_buf.capacity() > 0 {
+                assert!(len <= self.prefix_buf.capacity());
+                unsafe{ core::slice::from_raw_parts(&*self.prefix_buf.as_ptr(), len) }
+            } else {
+                assert!(len <= self.origin_path.len());
+                unsafe{ &self.origin_path.as_slice_unchecked() }
+            }
+        } else {
+            panic!()
+        }
+    }
+    /// Internal method to ensure buffers to facilitate movement of zipper are allocated and initialized
+    #[inline(always)]
+    fn prepare_buffers(&mut self) {
+        if self.prefix_buf.capacity() == 0 {
+            self.prepare_buffers_guts()
+        }
+    }
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin> ReadOnlyZipper<'a, V> for ReadZipperCore<'a, '_, V>{
@@ -1138,7 +1195,7 @@ impl<'a, V: Clone + Send + Sync + Unpin> ZipperIteration<'a, V> for ReadZipperCo
         if self.child_count() == 0 {
             //We can stop ascending when we succeed in moving to a sibling
             while !self.to_next_sibling_byte() {
-                if !self.ascend(1) {
+                if !self.ascend_byte() {
                     return false;
                 }
             }
@@ -1191,6 +1248,17 @@ impl<V: Clone + Send + Sync + Unpin> ZipperAbsolutePath for ReadZipperCore<'_, '
         if self.root_key_offset.is_some() {
             if self.prefix_buf.len() > 0 {
                 Some(&self.prefix_buf)
+            } else {
+                Some(unsafe{ &self.origin_path.as_slice_unchecked() })
+            }
+        } else {
+            None
+        }
+    }
+    fn root_prefix_path(&self) -> Option<&[u8]> {
+        if self.root_key_offset.is_some() {
+            if self.prefix_buf.len() > 0 {
+                Some(&self.prefix_buf[..self.origin_path.len()])
             } else {
                 Some(unsafe{ &self.origin_path.as_slice_unchecked() })
             }
@@ -2046,6 +2114,9 @@ mod tests {
                 20 => assert_eq!(zipper.path(), b"roman"),
                 21 => assert_eq!(zipper.path(), b"romane"),
                 23 => assert_eq!(zipper.path(), b"romanus"),
+                24 => assert_eq!(zipper.path(), b"romu"),
+                25 => assert_eq!(zipper.path(), b"romul"),
+                26 => assert_eq!(zipper.path(), b"romulu"),
                 27 => assert_eq!(zipper.path(), b"romulus"),
                 28 => assert_eq!(zipper.path(), b"ru"),
                 32 => assert_eq!(zipper.path(), b"rubens"),
@@ -2407,6 +2478,48 @@ mod tests {
         assert_eq!(zipper.path(), &[6, 193]);
         assert_eq!(zipper.descend_first_byte(), true);
         assert_eq!(zipper.path(), &[6, 193, 7]);
+    }
+
+    #[test]
+    fn zipper_byte_iter_test4() {
+        let keys = vec!["ABC", "ABCDEF", "ABCdef"];
+        let map: BytesTrieMap<()> = keys.into_iter().map(|v| (v, ())).collect();
+        let mut zipper = map.read_zipper();
+
+        //Check that we end up at the first leaf by depth-first search
+        while zipper.descend_first_byte() {}
+        assert_eq!(zipper.path(), b"ABCDEF");
+
+        //Try taking a different branch
+        zipper.reset();
+        assert!(zipper.descend_to(b"ABC"));
+        assert_eq!(zipper.path(), b"ABC");
+        assert!(zipper.descend_indexed_branch(1));
+        assert_eq!(zipper.path(), b"ABCd");
+        assert!(zipper.descend_first_byte());
+        assert_eq!(zipper.path(), b"ABCde");
+        assert!(zipper.descend_first_byte());
+        assert_eq!(zipper.path(), b"ABCdef");
+        assert!(!zipper.descend_first_byte());
+    }
+
+    #[test]
+    fn zipper_byte_iter_test5() {
+        let keys = vec![[0, 3], [0, 4], [0, 5]];
+        let map: BytesTrieMap<()> = keys.into_iter().map(|v| (v, ())).collect();
+
+        let mut r0 = map.read_zipper();
+        assert_eq!(r0.descend_to_byte(0), true);
+        let mut r1 = r0.fork_read_zipper();
+        assert_eq!(r1.to_next_sibling_byte(), false);
+        assert_eq!(r1.child_mask()[0], (1<<3) | (1<<4) | (1<<5));
+        assert_eq!(r1.descend_to_byte(3), true);
+        assert_eq!(r1.child_mask()[0], 0);
+        assert_eq!(r1.to_next_sibling_byte(), true);
+        assert_eq!(r1.origin_path().unwrap(), &[0, 4]);
+        assert_eq!(r1.path(), &[4]);
+        assert_eq!(r1.to_next_sibling_byte(), true);
+        assert_eq!(r1.to_next_sibling_byte(), false);
     }
 }
 

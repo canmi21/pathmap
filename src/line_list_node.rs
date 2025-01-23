@@ -1680,6 +1680,13 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
     fn new_iter_token(&self) -> u128 {
         0
     }
+    /// Explanation of logic: The ListNode contains a sorted list of keys (up to 2 of them), and the
+    /// query `key` argument is a third key.  We want to determine where the `key` arg falls in the sorted
+    /// list.
+    /// - < key0, we want to return (0, &[])
+    /// - == key0, we should return (1, key0) or (2, key0) in the case where key0 == key1
+    /// - > key0 && <= key1, we should return (2, key1)
+    /// - > key1, (NODE_ITER_FINISHED, &[])
     #[inline(always)]
     fn iter_token_for_path(&self, key: &[u8]) -> (u128, &[u8]) {
         if key.len() == 0 {
@@ -1702,18 +1709,8 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
                 }
             }
         }
-        if key1.len() >= key.len() {
-            let short_key = &key1[..key.len()];
-            if key < short_key {
-                return (1, key0)
-            }
-            if key == short_key {
-                if key1.len() > key.len() {
-                    return (1, key0)
-                } else {
-                    return (2, key1)
-                }
-            }
+        if key1 >= key {
+            return (2, key1)
         }
         (NODE_ITER_FINISHED, &[])
     }

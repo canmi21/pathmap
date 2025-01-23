@@ -1,6 +1,7 @@
 use core::cell::UnsafeCell;
 
 use num_traits::{PrimInt, zero};
+use crate::morphisms::{new_map_from_ana, ChildBuilder};
 use crate::trie_node::*;
 use crate::zipper::*;
 use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
@@ -125,6 +126,35 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
         }
     }
 
+    /// Creates a new `PathMap` by evaluating the specified anamorphism
+    ///
+    /// `alg_f`: `alg(w: W, val: &mut Option<V>, children: &mut ChildBuilder<W>, path: &[u8])`
+    /// generates the value downstream and downstream children from a path
+    ///
+    /// Setting the `val` option to `Some` within the closure sets the value at the current path.
+    ///
+    /// The example below creates a trie with binary tree, 3 levels deep, where each level has a 'L'
+    /// and an 'R' branch, and the leaves have a unit value.
+    /// ```
+    /// # use pathmap::trie_map::BytesTrieMap;
+    /// let map: BytesTrieMap<()> = BytesTrieMap::<()>::new_from_ana(3, |idx, val, children, _path| {
+    ///     if idx > 0 {
+    ///         children.push(b"L", idx - 1);
+    ///         children.push(b"R", idx - 1);
+    ///     } else {
+    ///         *val = Some(());
+    ///     }
+    /// });
+    /// ```
+    pub fn new_from_ana<W, AlgF>(w: W, alg_f: AlgF) -> Self
+        where
+        V: 'static,
+        W: Default,
+        AlgF: FnMut(W, &mut Option<V>, &mut ChildBuilder<W>, &[u8])
+    {
+        new_map_from_ana(w, alg_f)
+    }
+
     /// Creates a new read-only [Zipper], starting at the root of a BytesTrieMap
     pub fn read_zipper(&self) -> ReadZipperUntracked<V> {
         self.ensure_root();
@@ -220,23 +250,21 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
 
     /// Transforms the map into a [Zipper], which is handy when you need to embed the zipper in another
     /// struct without a lifetime parameter
-    pub fn into_read_zipper(self, path: &[u8]) -> ReadZipperOwned<V> {
+    pub fn into_read_zipper<K: AsRef<[u8]>>(self, path: K) -> ReadZipperOwned<V> {
         ReadZipperOwned::new_with_map(self, path)
     }
 
-    // /// Transforms the map into a [ZipperHead] that owns the map's contents.  This is handy when the
-    // /// ZipperHead needs to be part of another structure
-    // //GOAT: This would be a really handy API, but it looks obnoxious to implement.  The "right" implementation
-    // // is to make a variant of WriteZipperCore that holds an `TrieNodeODRc<V>` and an `Option<V>`, rather
-    // // than `&mut` references to them.  The "wrong" implementation is to make a self-referential struct.
-    // // I think it would be possible to genericize WriteZipperCore, but I got part-way down this path and
-    // // decided there are more urgent things I need to work on.
-    // pub fn into_zipper_head(mut self) -> ZipperHead<'static, 'static, V> {
-    //     let root_node = self.root.into_inner();
-    //     let root_val = self.root_val.into_inner();
-    //     let z = WriteZipperCore::new_with_node_and_path_internal(root_node, Some(root_val), &[]);
-    //     z.into_zipper_head()
-    // }
+    /// Transforms the map into a [WriteZipper], which is handy when you need to embed the zipper in another
+    /// struct without a lifetime parameter
+    pub fn into_write_zipper<K: AsRef<[u8]>>(self, path: K) -> WriteZipperOwned<V> {
+        WriteZipperOwned::new_with_map(self, path)
+    }
+
+    /// Transforms the map into a [ZipperHead] that owns the map's contents.  This is handy when the
+    /// ZipperHead needs to be part of another structure
+    pub fn into_zipper_head(self) -> ZipperHeadOwned<V> {
+        ZipperHeadOwned::new(self.into_write_zipper(&[]))
+    }
 
     /// Returns an iterator over all key-value pairs within the map
     ///
