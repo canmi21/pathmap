@@ -109,6 +109,12 @@
                 value: d => d.p.length != 0 && d.p.length <= 8 ? new DataView(new Uint8Array(d.p.concat(new Array(8 - d.p.length))).buffer).getBigUint64(0, true) : "",
                 format: value => value,
                 x: 400
+            },
+            {
+                label: "Chars",
+                value: d => d.p.map(b => b < 127 && b > 33 ? String.fromCharCode(b) : "\\u{" + b.toString(16) + "}").join(""),
+                format: value => value,
+                x: 460
             }
         ];
 
@@ -518,7 +524,7 @@
         else { return parseInt(s, 10) }
     }
 
-    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction, decapitation, head, serialize, deserialize, min_path, max_path, product, wrap, regex_transform } from "./pkg/pathmap.js";
+    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction, decapitation, head, serialize, deserialize, min_path, max_path, product, wrap, regex_transform, from_paths } from "./pkg/pathmap.js";
     init().then(() => {
         window.root_map = range_be_u32(50000, 100000, 74);
         window.doing_partial = false;
@@ -746,7 +752,6 @@
                     console.log("values under position:", val_count(r));
                     return;
                 case "m":
-                    console.log("map?", r);
                     let m = make_map(r);
                     console.log("map under position:", object(m));
                     if (window.draw_in_tab) {
@@ -762,6 +767,22 @@
                     return;
                 case "b":
                     console.log("submap bounds", min_path(r), max_path(r));
+                    return;
+                case "e":
+                    let tab = window.open("about:blank");
+                    let text_box = document.createElement("textarea", {name: "paths"});
+                    text_box.style.fontSize = "22pt";
+                    text_box.style.width = "100%";
+                    text_box.style.height = "100%";
+                    tab.onload = () => { tab.document.body.append(text_box) };
+                    tab.onbeforeunload = () => {
+                        let lines = text_box.value.split("\n");
+                        let paths = lines.map(l => new Uint8Array(l.split(" ").map(parseByte)))
+                        nr = reader(from_paths(paths));
+                        nr.origin = `manual edit ${new Date().toLocaleTimeString()}`;
+                        readers.push(nr);
+                        draw()
+                    }
                     return;
                 case "i":
                     upload_bin(o => {

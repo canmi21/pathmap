@@ -124,6 +124,17 @@ pub fn paths(bts: &BytesTrieSet) -> js_sys::Array {
   v
 }
 
+#[wasm_bindgen]
+pub fn from_paths(paths: &js_sys::Array) -> BytesTrieSet {
+  let mut btm = BytesTrieMap::new();
+  for path in paths.iter() {
+    let path_array = js_sys::Uint8Array::try_from(path).unwrap();
+    let path_vec = path_array.to_vec();
+    btm.insert(path_vec, ());
+  }
+  BytesTrieSet { btm }
+}
+
 fn json_intern(node: &TrieNodeODRc<()>, s: &mut Vec<u8>) {
   let bnode = node.borrow();
   let cm = bnode.node_branches_mask(&[]);
@@ -169,7 +180,7 @@ fn serialize_intern(bts: &BytesTrieSet) -> Vec<u8> {
   let mut rz = bts.btm.read_zipper();
   while let Some(_) = rz.to_next_val() {
     let p = rz.path();
-    let l = p.len();
+    let l = p.len() as u32;
     buf.extend_from_slice(l.to_le_bytes().as_slice());
     buf.extend_from_slice(p);
   }
@@ -181,8 +192,8 @@ fn deserialize_intern(sv: &[u8]) -> BytesTrieSet {
   let mut btm = BytesTrieMap::new();
   let mut i = 0;
   while i < sv.len() {
-    let l = usize::from_le_bytes((&sv[i..i+size_of::<usize>()]).try_into().unwrap());
-    i += size_of::<usize>();
+    let l = u32::from_le_bytes((&sv[i..i+size_of::<u32>()]).try_into().unwrap()) as usize;
+    i += size_of::<u32>();
     btm.insert(&sv[i..i+l], ());
     i += l;
   }
