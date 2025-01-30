@@ -22,6 +22,8 @@
         <tr><td>Shift+R</td><td>Range of type u32 with start, stop, and step</td></tr>
         <tr><td>Z</td><td>Fork reader</td></tr>
         <tr><td>Shift+Z</td><td>Fork reader and prefix it with a path</td></tr>
+        <tr><td>E</td><td>Manually enter the paths of a new space</td></tr>
+        <tr><td>G</td><td>Manually edit paths based on the top reader</td></tr>
         <tr><td>|</td><td>Union of the top two readers</td></tr>
         <tr><td>&</td><td>Intersection of the top two readers</td></tr>
         <tr><td>\</td><td>Subtract top reader from second reader</td></tr>
@@ -36,7 +38,7 @@
         <tr><td>S</td><td>Move reader to higher sibling byte</td></tr>
         <tr><td>A</td><td>Ascend reader one byte</td></tr>
         <tr><td>D</td><td>Descend reader to first child byte</td></tr>
-        <tr><td>Shift+D</td><td>Descend reader to nth child byte</td></tr>
+        <tr><td>Shift+D</td><td>Descend reader to nth child byte (negative count from the last byte)</td></tr>
         <tr><td>F</td><td>Descend to first value</td></tr>
         <tr><td>Shift+F</td><td>Descend reader to a specific byte</td></tr>
         <tr><td>C</td><td>Put the direct reader position children to console</td></tr>
@@ -112,9 +114,9 @@
             },
             {
                 label: "Chars",
-                value: d => d.p.map(b => b < 127 && b > 33 ? String.fromCharCode(b) : "\\u{" + b.toString(16) + "}").join(""),
+                value: d => d.p.toReversed().map(b => b < 127 && b > 33 ? String.fromCharCode(b) : "\\u{" + b.toString(16) + "}").join(""),
                 format: value => value,
-                x: 460
+                x: 480
             }
         ];
 
@@ -524,7 +526,21 @@
         else { return parseInt(s, 10) }
     }
 
-    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction, decapitation, head, serialize, deserialize, min_path, max_path, product, wrap, regex_transform, from_paths } from "./pkg/pathmap.js";
+    function parseBytes(s) {
+        s = s.replaceAll(/"((\\{2})*|(.*?[^\\](\\{2})*))"/g, x =>
+            Array.from(x.slice(1, x.length-1)).map(c => "'" + c + " ").join(""));
+
+        s = s.replaceAll(/(\d+)u32/g, x => {
+            const buffer = new Uint8Array(4);
+            const view = new DataView(buffer.buffer);
+            view.setUint32(0, parseInt(x, 10));
+            return Array.from(buffer).join(" ")
+        });
+
+        return s.split(" ").map(parseByte);
+    }
+
+    import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction, decapitation, head, serialize, deserialize, min_path, max_path, product, wrap, regex_transform, from_paths, read_paths } from "./pkg/pathmap.js";
     init().then(() => {
         window.root_map = range_be_u32(50000, 100000, 74);
         window.doing_partial = false;
@@ -602,7 +618,7 @@
                     readers.push(nr);
                     break;
                 case "Z":
-                    let seq = new Uint8Array(prompt("b1 b2 ... bn").split(" ").map(parseByte));
+                    let seq = new Uint8Array(parseBytes(prompt("b1 b2 ... bn")));
                     nr = reader(wrap(make_map(r), seq));
                     nr.origin = `wrap ${display_path(seq)} (${r.origin} @ ${display_path(path(r))})`;
                     readers.push(nr);
@@ -707,7 +723,7 @@
                     } else {
                         let s = prompt("n");
                         if (s === "") { descend_indexed_byte(r, 0); }
-                        else { descend_indexed_byte(r, parseByte(s)); }
+                        else { s.split(" ").forEach(sx => descend_indexed_byte(r, parseByte(sx))); }
                     }
                     break;
                 case "f":
@@ -742,7 +758,7 @@
                     } else {
                         let s = prompt("b");
                         if (s === "") { }
-                        else { descend_to(r, new Uint8Array([parseByte(s)])); }
+                        else { descend_to(r, new Uint8Array(parseBytes(s))); }
                     }
                     break;
                 case "c":
@@ -777,9 +793,28 @@
                     tab.onload = () => { tab.document.body.append(text_box) };
                     tab.onbeforeunload = () => {
                         let lines = text_box.value.split("\n");
-                        let paths = lines.map(l => new Uint8Array(l.split(" ").map(parseByte)))
+                        let paths = lines.map(l => new Uint8Array(parseBytes(l)));
                         nr = reader(from_paths(paths));
                         nr.origin = `manual edit ${new Date().toLocaleTimeString()}`;
+                        readers.push(nr);
+                        draw()
+                    }
+                    return;
+                case "g":
+                    let ctab = window.open("about:blank");
+                    let ctext_box = document.createElement("textarea", {name: "paths"});
+                    ctext_box.style.fontSize = "22pt";
+                    ctext_box.style.width = "100%";
+                    ctext_box.style.height = "100%";
+                    let topr = readers[readers.length - 1];
+                    let topr_origin = topr.origin;
+                    ctext_box.value = read_paths(topr).map(p => display_path(p)).join("\n");
+                    ctab.onload = () => { ctab.document.body.append(ctext_box) };
+                    ctab.onbeforeunload = () => {
+                        let lines = ctext_box.value.split("\n");
+                        let paths = lines.map(l => new Uint8Array(parseBytes(l)));
+                        nr = reader(from_paths(paths));
+                        nr.origin = `manual edit ${new Date().toLocaleTimeString()} of (${topr_origin})`;
                         readers.push(nr);
                         draw()
                     }

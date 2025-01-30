@@ -115,16 +115,6 @@ pub fn contains(m: &BytesTrieSet, k: &[u8]) -> bool {
 }
 
 #[wasm_bindgen]
-pub fn paths(bts: &BytesTrieSet) -> js_sys::Array {
-  let mut rz = bts.btm.read_zipper();
-  let mut v = js_sys::Array::new();
-  while let Some(_) = rz.to_next_val() {
-    v.push(&js_sys::Uint8Array::from(rz.path()));
-  }
-  v
-}
-
-#[wasm_bindgen]
 pub fn from_paths(paths: &js_sys::Array) -> BytesTrieSet {
   let mut btm = BytesTrieMap::new();
   for path in paths.iter() {
@@ -294,8 +284,9 @@ pub fn to_next_val(r: &mut Reader) -> bool {
 }
 
 #[wasm_bindgen]
-pub fn descend_indexed_byte(r: &mut Reader, i: usize) -> bool {
-  r.z.descend_indexed_branch(i)
+pub fn descend_indexed_byte(r: &mut Reader, i: i16) -> bool {
+  if i < 0 { r.z.descend_indexed_branch((r.z.child_count() as i16 + i).max(0) as usize) }
+  else { r.z.descend_indexed_branch((i as usize).min(r.z.child_count())) }
 }
 
 #[wasm_bindgen]
@@ -341,6 +332,30 @@ pub fn children(r: &Reader) -> Box<[u8]> {
 #[wasm_bindgen]
 pub fn path(r: &Reader) -> Box<[u8]> {
   r.z.path().into()
+}
+
+#[wasm_bindgen]
+pub fn read_paths(r: &Reader) -> js_sys::Array {
+  let mut rz = r.z.fork_read_zipper();
+  let mut v = js_sys::Array::new();
+  while let Some(_) = rz.to_next_val() {
+    v.push(&js_sys::Uint8Array::from(rz.path()));
+  }
+  v
+}
+
+#[wasm_bindgen]
+pub fn traverse_paths(r: &mut Reader, value_limit: usize, byte_limit: usize) -> js_sys::Array {
+  let mut v = js_sys::Array::new();
+  let mut values = 0usize;
+  let mut bytes = 0usize;
+  while let Some(_) = r.z.to_next_val() {
+    if values > value_limit || bytes > byte_limit { break }
+    v.push(&js_sys::Uint8Array::from(r.z.path()));
+    values += 1;
+    bytes += r.z.path().len();
+  }
+  v
 }
 
 #[wasm_bindgen]
