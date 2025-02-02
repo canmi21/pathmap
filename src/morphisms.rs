@@ -64,7 +64,7 @@
 //!
 
 
-//GOAT QUESTION: Why not combine map_f and collapse_F by passing `Option<W>` to the closure?
+//GOAT QUESTION: Why not combine leaf_f and collapse_F by passing `Option<Acc>` to the closure?
 
 // GOAT!! Are these names (collapse, and alg) part of math canon?  They are not very descriptive and hopefully we can change them.
 // "map" is good because it's a perfect equivalent to map in map->reduce.
@@ -72,96 +72,106 @@
 use crate::trie_map::BytesTrieMap;
 use crate::zipper::*;
 
+
+pub type ChildMask      = [u64;4];
+pub type OriginPath<'a> = &'a [u8];
+pub type BranchPath<'a> = &'a [u8];
+
 pub trait Catamorphism<V> {
+    /// ```ignore
+    /// type ChildMask = [u64;4];
+    /// type OriginPath<'a> = &'a [u8];
+    /// ```
     /// Applies a catamorphism to the trie descending from the zipper's root
     ///
     /// ## Args
-    /// - `map_f`: `mapper(v: &V, path: &[u8]) -> W`
-    /// Maps value `v` at a leaf `path` into an intermediate result
+    /// - `leaf_f`: Maps value `v` at a leaf `path` into an intermediate result
     ///
-    /// - `collapse_f`: `collapse(v: &V, w: W, path: &[u8]) -> W`
-    /// Folds value `v` at a non-leaf `path` with the aggregated results from the trie below `path`
+    /// - `node_f`: Folds value `v` at a non-leaf `path` with the aggregated results from the trie below `path`
     ///
-    /// - `alg_f`: `alg(m: [u64; 4], cs: &mut [W], path: &[u8]) -> W`
-    /// Aggregates the results from the child branches, `cs`, descending from `path` into a single result
+    /// - `shared_f`: Aggregates the results from the child branches, `cs`, descending from `path` into a single result
     ///
     /// The focus position of the zipper will be ignored and it will be immediately reset to the root.
     ///
     /// In all cases, the `path` arg is the [origin_path](ZipperAbsolutePath::origin_path)
-    fn into_cata_side_effect<W, MapF, CollapseF, AlgF>(self, map_f: MapF, collapse_f: CollapseF, alg_f: AlgF) -> W
+    fn into_cata_side_effect<Acc, LeafF, NodeF, SharedF>(self, leaf_f: LeafF, node_f: NodeF, shared_f: SharedF) -> Acc
         where
-        MapF: FnMut(&V, &[u8]) -> W,
-        CollapseF: FnMut(&V, W, &[u8]) -> W,
-        AlgF: FnMut(&[u64; 4], &mut [W], &[u8]) -> W;
+        LeafF: FnMut(&V, OriginPath) -> Acc,
+        NodeF: FnMut(&V, Acc, OriginPath) -> Acc,
+        SharedF: FnMut(&ChildMask, &mut [Acc], OriginPath) -> Acc;
 
+    /// ```ignore
+    /// type ChildMask      = [u64;4];
+    /// type OriginPath<'a> = &'a [u8];
+    /// type BranchPath<'a> = &'a [u8];
+    /// ```
     /// Applies a "jumping" catamorphism to the trie
     ///
     /// ## Args
-    /// - `jump_f`: `FnMut(sub_path: &[u8], w: W, path: &[u8]) -> W`
-    /// Elevates a result `w` descending from the relative path, `sub_path` to the current position at `path`
+    /// - `branch_f`: Elevates a result `w` descending from the relative path, `branch_path` to the current position at `path`
     ///
-    /// See [into_cata_side_effect](ZipperMorphisms::into_cata_side_effect) for explanation of other behavior
-    fn into_cata_jumping_side_effect<W, MapF, CollapseF, AlgF, JumpF>(self, map_f: MapF, collapse_f: CollapseF, alg_f: AlgF, jump_f: JumpF) -> W
+    /// See [into_cata_side_effect](crate::morphisms::Catamorphism::into_cata_side_effect()) for explanation of other behavior
+    fn into_cata_jumping_side_effect<Acc, LeafF, NodeF, SharedF, BranchF>(self, leaf_f: LeafF, node_f: NodeF, shared_f: SharedF, jump_f: BranchF) -> Acc
         where
-        MapF: FnMut(&V, &[u8]) -> W,
-        CollapseF: FnMut(&V, W, &[u8]) -> W,
-        AlgF: FnMut(&[u64; 4], &mut [W], &[u8]) -> W,
-        JumpF: FnMut(&[u8], W, &[u8]) -> W;
+        LeafF: FnMut(&V, OriginPath) -> Acc,
+        NodeF: FnMut(&V, Acc, OriginPath) -> Acc,
+        SharedF: FnMut(&ChildMask, &mut [Acc], OriginPath) -> Acc,
+        BranchF: FnMut(BranchPath, Acc, OriginPath) -> Acc;
 }
 
 impl<'a, Z, V: 'a> Catamorphism<V> for Z where Z: ReadOnlyZipper<'a, V> + ZipperAbsolutePath {
-    fn into_cata_side_effect<W, MapF, CollapseF, AlgF>(self, map_f: MapF, collapse_f: CollapseF, alg_f: AlgF) -> W
+    fn into_cata_side_effect<Acc, LeafF, NodeF, SharedF>(self, leaf_f: LeafF, node_f: NodeF, shared_f: SharedF) -> Acc
         where
-        MapF: FnMut(&V, &[u8]) -> W,
-        CollapseF: FnMut(&V, W, &[u8]) -> W,
-        AlgF: FnMut(&[u64; 4], &mut [W], &[u8]) -> W,
+        LeafF: FnMut(&V, OriginPath) -> Acc,
+        NodeF: FnMut(&V, Acc, OriginPath) -> Acc,
+        SharedF: FnMut(&ChildMask, &mut [Acc], OriginPath) -> Acc,
     {
-        cata_side_effect_body::<Self, V, W, MapF, CollapseF, AlgF, _, false>(self, map_f, collapse_f, alg_f, |_, _, _| unreachable!())
+        cata_side_effect_body::<Self, V, Acc, LeafF, NodeF, SharedF, _, false>(self, leaf_f, node_f, shared_f, |_, _, _| unreachable!())
     }
-    fn into_cata_jumping_side_effect<W, MapF, CollapseF, AlgF, JumpF>(self, map_f: MapF, collapse_f: CollapseF, alg_f: AlgF, jump_f: JumpF) -> W
+    fn into_cata_jumping_side_effect<Acc, LeafF, NodeF, SharedF, BranchF>(self, leaf_f: LeafF, node_f: NodeF, shared_f: SharedF, jump_f: BranchF) -> Acc
         where
-        MapF: FnMut(&V, &[u8]) -> W,
-        CollapseF: FnMut(&V, W, &[u8]) -> W,
-        AlgF: FnMut(&[u64; 4], &mut [W], &[u8]) -> W,
-        JumpF: FnMut(&[u8], W, &[u8]) -> W
+        LeafF: FnMut(&V, OriginPath) -> Acc,
+        NodeF: FnMut(&V, Acc, OriginPath) -> Acc,
+        SharedF: FnMut(&ChildMask, &mut [Acc], OriginPath) -> Acc,
+        BranchF: FnMut(BranchPath, Acc, OriginPath) -> Acc
     {
-        cata_side_effect_body::<Self, V, W, MapF, CollapseF, AlgF, JumpF, true>(self, map_f, collapse_f, alg_f, jump_f)
+        cata_side_effect_body::<Self, V, Acc, LeafF, NodeF, SharedF, BranchF, true>(self, leaf_f, node_f, shared_f, jump_f)
     }
 }
 
 impl<V: 'static + Clone + Send + Sync + Unpin> Catamorphism<V> for BytesTrieMap<V> {
-    fn into_cata_side_effect<W, MapF, CollapseF, AlgF>(self, map_f: MapF, collapse_f: CollapseF, alg_f: AlgF) -> W
+    fn into_cata_side_effect<Acc, LeafF, NodeF, SharedF>(self, leaf_f: LeafF, node_f: NodeF, shared_f: SharedF) -> Acc
         where
-        MapF: FnMut(&V, &[u8]) -> W,
-        CollapseF: FnMut(&V, W, &[u8]) -> W,
-        AlgF: FnMut(&[u64; 4], &mut [W], &[u8]) -> W,
+        LeafF: FnMut(&V, OriginPath) -> Acc,
+        NodeF: FnMut(&V, Acc, OriginPath) -> Acc,
+        SharedF: FnMut(&ChildMask, &mut [Acc], OriginPath) -> Acc,
     {
         let rz = self.into_read_zipper(&[]);
-        cata_side_effect_body::<ReadZipperOwned<V>, V, W, MapF, CollapseF, AlgF, _, false>(rz, map_f, collapse_f, alg_f, |_, _, _| unreachable!())
+        cata_side_effect_body::<ReadZipperOwned<V>, V, Acc, LeafF, NodeF, SharedF, _, false>(rz, leaf_f, node_f, shared_f, |_, _, _| unreachable!())
     }
-    fn into_cata_jumping_side_effect<W, MapF, CollapseF, AlgF, JumpF>(self, map_f: MapF, collapse_f: CollapseF, alg_f: AlgF, jump_f: JumpF) -> W
+    fn into_cata_jumping_side_effect<Acc, LeafF, NodeF, SharedF, BranchF>(self, leaf_f: LeafF, node_f: NodeF, shared_f: SharedF, jump_f: BranchF) -> Acc
         where
-        MapF: FnMut(&V, &[u8]) -> W,
-        CollapseF: FnMut(&V, W, &[u8]) -> W,
-        AlgF: FnMut(&[u64; 4], &mut [W], &[u8]) -> W,
-        JumpF: FnMut(&[u8], W, &[u8]) -> W
+        LeafF: FnMut(&V, OriginPath) -> Acc,
+        NodeF: FnMut(&V, Acc, OriginPath) -> Acc,
+        SharedF: FnMut(&ChildMask, &mut [Acc], OriginPath) -> Acc,
+        BranchF: FnMut(BranchPath, Acc, OriginPath) -> Acc
     {
         let rz = self.into_read_zipper(&[]);
-        cata_side_effect_body::<ReadZipperOwned<V>, V, W, MapF, CollapseF, AlgF, JumpF, true>(rz, map_f, collapse_f, alg_f, jump_f)
+        cata_side_effect_body::<ReadZipperOwned<V>, V, Acc, LeafF, NodeF, SharedF, BranchF, true>(rz, leaf_f, node_f, shared_f, jump_f)
     }
 }
 
 #[inline(always)]
-fn cata_side_effect_body<'a, Z, V: 'a, W, MapF, CollapseF, AlgF, JumpF, const JUMPING: bool>(mut z: Z, mut map_f: MapF, mut collapse_f: CollapseF, mut alg_f: AlgF, mut jump_f: JumpF) -> W
+fn cata_side_effect_body<'a, Z, V: 'a, Acc, LeafF, NodeF, SharedF, BranchF, const JUMPING: bool>(mut z: Z, mut leaf_f: LeafF, mut node_f: NodeF, mut shared_f: SharedF, mut jump_f: BranchF) -> Acc
     where
     Z: ReadOnlyZipper<'a, V> + ZipperAbsolutePath,
-    MapF: FnMut(&V, &[u8]) -> W,
-    CollapseF: FnMut(&V, W, &[u8]) -> W,
-    AlgF: FnMut(&[u64; 4], &mut [W], &[u8]) -> W,
-    JumpF: FnMut(&[u8], W, &[u8]) -> W,
+    LeafF: FnMut(&V, OriginPath) -> Acc,
+    NodeF: FnMut(&V, Acc, OriginPath) -> Acc,
+    SharedF: FnMut(&ChildMask, &mut [Acc], OriginPath) -> Acc,
+    BranchF: FnMut(BranchPath, Acc, OriginPath) -> Acc,
 {
     //`stack` holds a "frame" at each forking point above the zipper position.  No frames exist for values
-    let mut stack = Vec::<StackFrame<W>>::with_capacity(12);
+    let mut stack = Vec::<StackFrame<Acc>>::with_capacity(12);
     let mut frame_idx = 0;
 
     z.reset();
@@ -171,7 +181,7 @@ fn cata_side_effect_body<'a, Z, V: 'a, W, MapF, CollapseF, AlgF, JumpF, const JU
     stack.push(StackFrame::new(z.child_count(), z.child_mask()));
     if !z.descend_first_byte() {
         //Empty trie is a special case
-        return alg_f(&[0; 4], &mut [], z.origin_path().unwrap());
+        return shared_f(&[0; 4], &mut [], z.origin_path().unwrap());
     }
 
     loop {
@@ -186,14 +196,14 @@ fn cata_side_effect_body<'a, Z, V: 'a, W, MapF, CollapseF, AlgF, JumpF, const JU
 
         if is_leaf {
             //Map the value from this leaf
-            let mut cur_w = z.get_value().map(|v| map_f(v, z.origin_path().unwrap()));
+            let mut cur_acc = z.get_value().map(|v| leaf_f(v, z.origin_path().unwrap()));
 
             //Ascend back to the last fork point
-            cur_w = ascend_to_fork::<Z, V, W, MapF, CollapseF, AlgF, JumpF, JUMPING>(&mut z, &mut map_f, &mut collapse_f, &mut alg_f, &mut jump_f, cur_w);
+            cur_acc = ascend_to_fork::<Z, V, Acc, LeafF, NodeF, SharedF, BranchF, JUMPING>(&mut z, &mut leaf_f, &mut node_f, &mut shared_f, &mut jump_f, cur_acc);
 
             //Merge the result into the stack frame
-            match cur_w {
-                Some(w) => stack[frame_idx].push_val(w),
+            match cur_acc {
+                Some(acc) => stack[frame_idx].push_val(acc),
                 None => stack[frame_idx].push_none(),
             }
 
@@ -202,22 +212,22 @@ fn cata_side_effect_body<'a, Z, V: 'a, W, MapF, CollapseF, AlgF, JumpF, const JU
 
                 //We finished all the children from this branch, so run the aggregate function
                 let stack_frame = &mut stack[frame_idx];
-                let mut w = alg_f(&stack_frame.child_mask, &mut stack_frame.children, z.origin_path().unwrap());
+                let mut acc = shared_f(&stack_frame.child_mask, &mut stack_frame.children, z.origin_path().unwrap());
                 if frame_idx == 0 {
-                    return w
+                    return acc
                 } else {
                     frame_idx -= 1;
 
                     //Check to see if we have a value here we need to collapse
                     if let Some(v) = z.get_value() {
-                        w = collapse_f(v, w, z.origin_path().unwrap());
+                        acc = node_f(v, acc, z.origin_path().unwrap());
                     }
 
                     //Ascend the rest of the way back up to the branch
-                    w = ascend_to_fork::<Z, V, W, MapF, CollapseF, AlgF, JumpF, JUMPING>(&mut z, &mut map_f, &mut collapse_f, &mut alg_f, &mut jump_f, Some(w)).unwrap();
+                    acc = ascend_to_fork::<Z, V, Acc, LeafF, NodeF, SharedF, BranchF, JUMPING>(&mut z, &mut leaf_f, &mut node_f, &mut shared_f, &mut jump_f, Some(acc)).unwrap();
 
                     //Merge the result into the stack frame
-                    stack[frame_idx].push_val(w);
+                    stack[frame_idx].push_val(acc);
                     debug_assert!(stack[frame_idx].child_idx <= z.child_count());
                 }
             }
@@ -244,19 +254,19 @@ fn cata_side_effect_body<'a, Z, V: 'a, W, MapF, CollapseF, AlgF, JumpF, const JU
 }
 
 #[inline(always)]
-fn ascend_to_fork<'a, Z, V: 'a, W, MapF, CollapseF, AlgF, JumpF, const JUMPING: bool>(z: &mut Z, 
-        map_f: &mut MapF,
-        collapse_f: &mut CollapseF,
-        alg_f: &mut AlgF,
-        jump_f: &mut JumpF,
-        mut cur_w: Option<W>
-) -> Option<W>
+fn ascend_to_fork<'a, Z, V: 'a, Acc, LeafF, NodeF, SharedF, BranchF, const JUMPING: bool>(z: &mut Z, 
+        leaf_f: &mut LeafF,
+        node_f: &mut NodeF,
+        shared_f: &mut SharedF,
+        jump_f: &mut BranchF,
+        mut cur_acc: Option<Acc>
+) -> Option<Acc>
     where
     Z: ReadOnlyZipper<'a, V> + ZipperAbsolutePath,
-    MapF: FnMut(&V, &[u8]) -> W,
-    CollapseF: FnMut(&V, W, &[u8]) -> W,
-    AlgF: FnMut(&[u64; 4], &mut [W], &[u8]) -> W,
-    JumpF: FnMut(&[u8], W, &[u8]) -> W,
+    LeafF: FnMut(&V, OriginPath) -> Acc,
+    NodeF: FnMut(&V, Acc, OriginPath) -> Acc,
+    SharedF: FnMut(&ChildMask, &mut [Acc], OriginPath) -> Acc,
+    BranchF: FnMut(BranchPath, Acc, OriginPath) -> Acc,
 {
     loop {
         let mut old_path_len = z.origin_path().unwrap().len();
@@ -271,58 +281,58 @@ fn ascend_to_fork<'a, Z, V: 'a, W, MapF, CollapseF, AlgF, JumpF, const JUMPING: 
 
         if JUMPING {
             if old_path_len > new_path_len+1 || (!at_fork && !at_root) {
-                if let Some(w) = cur_w {
-                    cur_w = Some(jump_f(&z.origin_path_assert_len(old_path_len)[new_path_len..], w, z.origin_path().unwrap()));
+                if let Some(acc) = cur_acc {
+                    cur_acc = Some(jump_f(&z.origin_path_assert_len(old_path_len)[new_path_len..], acc, z.origin_path().unwrap()));
                 }
             }
         } else {
-            //This is the default code to call the `alg_f` for each intermediate path step
-            // NOTE: the reason this is a special case rather than just a default JumpF is because I want
+            //This is the default code to call the `shared_f` for each intermediate path step
+            // NOTE: the reason this is a special case rather than just a default BranchF is because I want
             // to be able to re-use the `path_buf`, but that's not possible through the defined interface
             while old_path_len > new_path_len {
                 let byte = z.origin_path_assert_len(old_path_len).last().unwrap();
                 old_path_len -= 1;
                 if old_path_len > new_path_len || (!at_fork && !at_root) {
-                    if let Some(w) = cur_w {
+                    if let Some(acc) = cur_acc {
                         let mut mask = [0u64; 4];
                         let word_idx = (byte / 64) as usize;
                         mask[word_idx] = 1u64 << (byte % 64);
-                        cur_w = Some(alg_f(&mask, &mut[w], &z.origin_path_assert_len(old_path_len)));
+                        cur_acc = Some(shared_f(&mask, &mut[acc], &z.origin_path_assert_len(old_path_len)));
                     }
                 }
             }
         }
 
         if at_root {
-            return cur_w
+            return cur_acc
         }
 
         if !at_fork {
             //This unwrap shouldn't panic, because `ascend_until` should only stop at values and forks
             let v = z.get_value().unwrap();
-            match cur_w {
-                None => { cur_w = Some(map_f(v, z.origin_path().unwrap())); },
-                Some(w) => { cur_w = Some(collapse_f(v, w, z.origin_path().unwrap())); }
+            match cur_acc {
+                None => { cur_acc = Some(leaf_f(v, z.origin_path().unwrap())); },
+                Some(acc) => { cur_acc = Some(node_f(v, acc, z.origin_path().unwrap())); }
             }
         } else {
             break;
         }
     }
-    cur_w
+    cur_acc
 }
 
 /// Internal structure to hold temporary info used inside morphism apply methods
-struct StackFrame<W> {
-    child_mask: [u64; 4],
+struct StackFrame<Acc> {
+    child_mask: ChildMask,
     mask_word_idx: usize,
     child_idx: usize,
     remaining_children_mask: u64,
-    children: Vec<W>,
+    children: Vec<Acc>,
 }
 
-impl<W> StackFrame<W> {
+impl<Acc> StackFrame<Acc> {
     /// Allocates a new StackFrame
-    fn new(child_count: usize, child_mask: [u64; 4]) -> Self {
+    fn new(child_count: usize, child_mask: ChildMask) -> Self {
         let mut frame = Self {
             child_mask: <_>::default(),
             child_idx: 0,
@@ -334,7 +344,7 @@ impl<W> StackFrame<W> {
         frame
     }
     /// Resets a StackFrame to the state needed to iterate a new forking point
-    fn reset(&mut self, child_mask: [u64; 4]) {
+    fn reset(&mut self, child_mask: ChildMask) {
         self.mask_word_idx = 0;
         self.child_idx = 0;
         while child_mask[self.mask_word_idx] == 0 && self.mask_word_idx < 3 {
@@ -344,8 +354,8 @@ impl<W> StackFrame<W> {
         self.child_mask = child_mask;
         self.children.clear();
     }
-    fn push_val(&mut self, w: W) {
-        self.children.push(w);
+    fn push_val(&mut self, acc: Acc) {
+        self.children.push(acc);
         self.child_idx += 1;
         debug_assert!(self.remaining_children_mask > 0); //If this assert trips, then it means we're trying to push a value for a non-existent child
         let index = self.remaining_children_mask.trailing_zeros();
@@ -374,21 +384,21 @@ impl<W> StackFrame<W> {
 }
 
 /// Internal function to generate a new root trie node from an anamorphism
-pub(crate) fn new_map_from_ana<V, W, AlgF>(w: W, mut alg_f: AlgF) -> BytesTrieMap<V>
+pub(crate) fn new_leaf_from_ana<V, Acc, SharedF>(acc: Acc, mut shared_f: SharedF) -> BytesTrieMap<V>
     where
     V: 'static + Clone + Send + Sync + Unpin,
-    W: Default,
-    AlgF: FnMut(W, &mut Option<V>, &mut ChildBuilder<W>, &[u8])
+    Acc: Default,
+    SharedF: FnMut(Acc, &mut Option<V>, &mut ChildBuilder<Acc>, OriginPath)
 {
-    let mut stack = Vec::<(ChildBuilder<W>, usize)>::with_capacity(12);
+    let mut stack = Vec::<(ChildBuilder<Acc>, usize)>::with_capacity(12);
     let mut frame_idx = 0;
 
     let mut z = WriteZipperOwned::new();
     let mut val = None;
 
     //The root is a special case
-    stack.push((ChildBuilder::<W>::new(), 0));
-    alg_f(w, &mut val, &mut stack[frame_idx].0, z.path());
+    stack.push((ChildBuilder::<Acc>::new(), 0));
+    shared_f(acc, &mut val, &mut stack[frame_idx].0, z.path());
     stack[frame_idx].0.finalize();
     if let Some(val) = core::mem::take(&mut val) {
         z.set_value(val);
@@ -396,7 +406,7 @@ pub(crate) fn new_map_from_ana<V, W, AlgF>(w: W, mut alg_f: AlgF) -> BytesTrieMa
     loop {
 
         //Should we descend?
-        if let Some(w) = stack[frame_idx].0.take_next() {
+        if let Some(acc) = stack[frame_idx].0.take_next() {
             //TODO Optimization Opportunity: There is likely a 2x speedup in here, that can be achieved by
             // setting all the children at the same time.  I'm going to hold off until the explicit path
             // API is fully settled, since ideally we'd call a WriteZipper method to set multiple downstream
@@ -420,14 +430,14 @@ pub(crate) fn new_map_from_ana<V, W, AlgF>(w: W, mut alg_f: AlgF) -> BytesTrieMa
             debug_assert!(frame_idx < stack.len());
             frame_idx += 1;
             if frame_idx == stack.len() {
-                stack.push((ChildBuilder::<W>::new(), child_path_len));
+                stack.push((ChildBuilder::<Acc>::new(), child_path_len));
             } else {
                 stack[frame_idx].0.reset();
                 stack[frame_idx].1 = child_path_len;
             }
 
             //Run the alg if we just descended
-            alg_f(w, &mut val, &mut stack[frame_idx].0, z.path());
+            shared_f(acc, &mut val, &mut stack[frame_idx].0, z.path());
             stack[frame_idx].0.finalize();
             if let Some(val) = core::mem::take(&mut val) {
                 z.set_value(val);
@@ -446,18 +456,18 @@ pub(crate) fn new_map_from_ana<V, W, AlgF>(w: W, mut alg_f: AlgF) -> BytesTrieMa
 }
 
 /// A [Vec]-like struct for assembling all the downstream branches from a path in the trie
-pub struct ChildBuilder<W> {
-    child_mask: [u64; 4],
+pub struct ChildBuilder<Acc> {
+    child_mask: ChildMask,
     cur_mask_word: usize,
     cur_struct_idx: usize,
     cur_path_idx: usize,
     real_child_structs_len: usize,
     real_child_paths_len: usize,
     child_paths: Vec<(usize, Vec<u8>)>,
-    child_structs: Vec<W>,
+    child_structs: Vec<Acc>,
 }
 
-impl<W: Default> ChildBuilder<W> {
+impl<Acc: Default> ChildBuilder<Acc> {
     /// Internal method to make a new empty `ChildBuilder`
     fn new() -> Self {
         Self {
@@ -487,11 +497,11 @@ impl<W: Default> ChildBuilder<W> {
         }
     }
     /// Internal method to get the next child from the builder in the push order.  Used by the anamorphism
-    fn take_next(&mut self) -> Option<W> {
+    fn take_next(&mut self) -> Option<Acc> {
         if self.cur_struct_idx < self.real_child_structs_len {
-            let w = &mut self.child_structs[self.cur_struct_idx];
+            let acc = &mut self.child_structs[self.cur_struct_idx];
             self.cur_struct_idx += 1;
-            Some(core::mem::take(w))
+            Some(core::mem::take(acc))
         } else {
             None
         }
@@ -510,7 +520,7 @@ impl<W: Default> ChildBuilder<W> {
     }
     /// Internal method.  After [Self::take_next] returns `Some`, this method will return the associated path
     /// beyond the first byte, or `None` if the path is only 1-byte long
-    fn taken_child_remaining_path(&mut self) -> Option<&[u8]> {
+    fn taken_child_remaining_path(&mut self) -> Option<BranchPath> {
         debug_assert!(self.cur_path_idx <= self.real_child_paths_len);
         if self.cur_path_idx == self.real_child_paths_len {
             return None
@@ -530,7 +540,7 @@ impl<W: Default> ChildBuilder<W> {
     ///
     /// Panics if existing children have already been set / pushed, or if the number of bits set in `mask`
     /// doesn't match `children.len()`.
-    pub fn set_child_mask<C: AsMut<[W]>>(&mut self, mask: [u64; 4], mut children: C) {
+    pub fn set_child_mask<C: AsMut<[Acc]>>(&mut self, mask: ChildMask, mut children: C) {
         if self.real_child_structs_len != 0 {
             panic!("set_mask called over existing children")
         }
@@ -551,7 +561,7 @@ impl<W: Default> ChildBuilder<W> {
     /// Pushes a new child branch into the `ChildBuilder` with the specified `byte`
     ///
     /// Panics if `byte <=` the first byte of any previosuly pushed paths.
-    pub fn push_byte(&mut self, byte: u8, w: W) {
+    pub fn push_byte(&mut self, byte: u8, acc: Acc) {
         let mask_word = (byte / 64) as usize;
         if mask_word < self.cur_mask_word {
             panic!("children must be pushed in sorted order")
@@ -563,22 +573,22 @@ impl<W: Default> ChildBuilder<W> {
         }
         self.child_mask[mask_word] |= mask_delta;
 
-        //Push the `W`
+        //Push the `Acc`
         debug_assert!(self.real_child_structs_len <= self.child_structs.len());
         if self.real_child_structs_len < self.child_structs.len() {
             let child_struct = &mut self.child_structs[self.real_child_structs_len];
-            *child_struct = w;
+            *child_struct = acc;
         } else {
-            self.child_structs.push(w);
+            self.child_structs.push(acc);
         }
         self.real_child_structs_len += 1;
     }
-    /// Pushes a new child branch into the `ChildBuilder` with the specified `sub_path`
+    /// Pushes a new child branch into the `ChildBuilder` with the specified `branch_path`
     ///
-    /// Panics if `sub_path` fails to meet any of the following conditions:
-    /// - `sub_path.len() > 0`.
-    /// - `sub_path` must not begin with the same byte as any previously-pushed path.
-    /// - `sub_path` must alphabetically sort after all previously pushed paths.
+    /// Panics if `branch_path` fails to meet any of the following conditions:
+    /// - `branch_path.len() > 0`.
+    /// - `branch_path` must not begin with the same byte as any previously-pushed path.
+    /// - `branch_path` must alphabetically sort after all previously pushed paths.
     ///
     /// For example, pushing `b"horse"` and then `b"hour"` is wrong.  Instead you should push `b"ho"`, and
     /// push the remaining parts of the path from the triggered closures downstream.
@@ -586,32 +596,32 @@ impl<W: Default> ChildBuilder<W> {
     //TODO, could make a `push_unchecked` method to turn these these checks from `assert!` to `debug_assert`.
     // Not sure if it would make any difference.  Feels unlikely, but might be worth a try after we've implemented
     // the other speedup ideas
-    pub fn push(&mut self, sub_path: &[u8], w: W) {
-        assert!(sub_path.len() > 0);
+    pub fn push(&mut self, branch_path: BranchPath, acc: Acc) {
+        assert!(branch_path.len() > 0);
 
         //Push the remaining path
-        if sub_path.len() > 1 {
+        if branch_path.len() > 1 {
             debug_assert!(self.real_child_paths_len <= self.child_paths.len());
             if self.real_child_paths_len < self.child_paths.len() {
                 let child_path = &mut self.child_paths[self.real_child_paths_len];
                 child_path.1.clear();
-                child_path.1.extend(&sub_path[1..]);
+                child_path.1.extend(&branch_path[1..]);
                 child_path.0 = self.real_child_structs_len;
             } else {
-                self.child_paths.push((self.real_child_structs_len, sub_path[1..].to_vec()));
+                self.child_paths.push((self.real_child_structs_len, branch_path[1..].to_vec()));
             }
             self.real_child_paths_len += 1;
         }
 
-        self.push_byte(sub_path[0], w);
+        self.push_byte(branch_path[0], acc);
     }
     /// Returns the child mask from the `ChildBuilder`, representing paths that have been pushed so far
-    pub fn child_mask(&self) -> [u64; 4] {
+    pub fn child_mask(&self) -> ChildMask {
         self.child_mask
     }
     //GOAT, feature removed.  See below
-    // /// Returns an [`Iterator`] type to iterate over the `(sub_path, w)` pairs that have been pushed
-    // pub fn iter(&self) -> ChildBuilderIter<'_, W> {
+    // /// Returns an [`Iterator`] type to iterate over the `(branch_path, w)` pairs that have been pushed
+    // pub fn iter(&self) -> ChildBuilderIter<'_, Acc> {
     //     self.into_iter()
     // }
 }
@@ -619,9 +629,9 @@ impl<W: Default> ChildBuilder<W> {
 //GOAT, the IntoIterator impl is obnoxious because I don't have a contiguous buffer that holds the path anymore
 // It's unnecessary anyway, so I'm just going to chuck it
 //
-// impl<'a, W> IntoIterator for &'a ChildBuilder<W> {
-//     type Item = (&'a[u8], &'a W);
-//     type IntoIter = ChildBuilderIter<'a, W>;
+// impl<'a, Acc> IntoIterator for &'a ChildBuilder<Acc> {
+//     type Item = (&'a[u8], &'a Acc);
+//     type IntoIter = ChildBuilderIter<'a, Acc>;
 
 //     fn into_iter(self) -> Self::IntoIter {
 //         ChildBuilderIter {
@@ -634,15 +644,15 @@ impl<W: Default> ChildBuilder<W> {
 // }
 
 // /// An [`Iterator`] type for a [`ChildBuilder`]
-// pub struct ChildBuilderIter<'a, W> {
-//     cb: &'a ChildBuilder<W>,
+// pub struct ChildBuilderIter<'a, Acc> {
+//     cb: &'a ChildBuilder<Acc>,
 //     cur_mask: u64,
 //     mask_word: usize,
 //     i: usize,
 // }
 
-// impl<'a, W> Iterator for ChildBuilderIter<'a, W> {
-//     type Item = (&'a[u8], &'a W);
+// impl<'a, Acc> Iterator for ChildBuilderIter<'a, Acc> {
+//     type Item = (&'a[u8], &'a Acc);
 //     fn next(&mut self) -> Option<Self::Item> {
 //         while self.mask_word < 4 {
 //             let tz = self.cur_mask.trailing_zeros();
@@ -681,30 +691,30 @@ mod tests {
             let map: BytesTrieMap<()> = keys.into_iter().map(|v| (v, ())).collect();
             let zip = map.read_zipper();
 
-            let map_f = |_v: &(), path: &[u8]| {
+            let leaf_f = |_v: &(), path: OriginPath| {
                 let val = (*path.last().unwrap() as char).to_digit(10).unwrap();
                 // println!("map path=\"{}\" val={val}", String::from_utf8_lossy(path));
                 val
             };
-            let collapse_f = |_v: &(), upstream: u32, path: &[u8]| {
+            let node_f = |_v: &(), upstream: u32, path: OriginPath| {
                 let this_digit = (*path.last().unwrap() as char).to_digit(10).unwrap();
                 // println!("collapse path=\"{}\", upstream={upstream}, this_digit={this_digit}, sum={}", String::from_utf8_lossy(path), upstream + this_digit);
                 upstream + this_digit
             };
-            let alg_f = |_child_mask: &[u64; 4], children: &mut [u32], _path: &[u8]| {
+            let shared_f = |_child_mask: &ChildMask, children: &mut [u32], _path: OriginPath| {
                 // println!("aggregate path=\"{}\", children={children:?}", String::from_utf8_lossy(_path));
                 children.into_iter().fold(0, |sum, child| sum + *child)
             };
-            let jump_f = |_subpath: &[u8], w: u32, _path: &[u8]| {
+            let jump_f = |_subpath: BranchPath, acc: u32, _path: OriginPath| {
                 // println!("jump sub-path=\"{}\", upstream={w} path=\"{}\",", String::from_utf8_lossy(_subpath), String::from_utf8_lossy(_path));
-                w
+                acc
             };
 
             //Test both the jumping and non-jumping versions, since they ought to do the same thing
-            let sum = zip.clone().into_cata_side_effect(map_f, collapse_f, alg_f);
+            let sum = zip.clone().into_cata_side_effect(leaf_f, node_f, shared_f);
             assert_eq!(sum, expected_sum);
 
-            let sum = zip.into_cata_jumping_side_effect(map_f, collapse_f, alg_f, jump_f);
+            let sum = zip.into_cata_jumping_side_effect(leaf_f, node_f, shared_f, jump_f);
             assert_eq!(sum, expected_sum);
         }
     }
@@ -783,15 +793,15 @@ mod tests {
             let map: BytesTrieMap<()> = keys.into_iter().map(|v| (v, ())).collect();
             let zip = map.read_zipper();
 
-            let map_f = |_v: &(), _path: &[u8]| {
+            let leaf_f = |_v: &(), _path: OriginPath| {
                 // println!("map path=\"{}\"", String::from_utf8_lossy(_path));
                 1
             };
-            let collapse_f = |_v: &(), upstream: u32, _path: &[u8]| {
+            let node_f = |_v: &(), upstream: u32, _path: OriginPath| {
                 // println!("collapse path=\"{}\", upstream={upstream}", String::from_utf8_lossy(_path));
                 upstream
             };
-            let alg_f = |_child_mask: &[u64; 4], children: &mut [u32], path: &[u8]| {
+            let shared_f = |_child_mask: &ChildMask, children: &mut [u32], path: OriginPath| {
                 // println!("aggregate path=\"{}\", children={children:?}", String::from_utf8_lossy(path));
                 let sum = children.into_iter().fold(0, |sum, child| sum + *child);
                 if path.len() > 0 {
@@ -802,10 +812,10 @@ mod tests {
             };
 
             //Test both the jumping and non-jumping versions
-            let sum = zip.clone().into_cata_side_effect(map_f, collapse_f, alg_f);
+            let sum = zip.clone().into_cata_side_effect(leaf_f, node_f, shared_f);
             assert_eq!(sum, expected_sum_ordinary);
 
-            let sum = zip.into_cata_jumping_side_effect(map_f, collapse_f, alg_f, |_subpath, w, _path| w);
+            let sum = zip.into_cata_jumping_side_effect(leaf_f, node_f, shared_f, |_subpath, w, _path| w);
             assert_eq!(sum, expected_sum_jumping);
         }
     }
