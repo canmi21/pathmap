@@ -2,7 +2,7 @@
 <html lang="en-US">
 <head>
     <meta charset="utf-8" />
-    <title>hello-wasm example</title>
+    <title>Zippy</title>
 </head>
 <body>
 <div>
@@ -116,7 +116,7 @@
                 label: "Chars",
                 value: d => d.p.toReversed().map(b => b < 127 && b > 33 ? String.fromCharCode(b) : "\\u{" + b.toString(16) + "}").join(""),
                 format: value => value,
-                x: 480
+                x: 520
             }
         ];
 
@@ -152,7 +152,7 @@
         node.append("text")
             .attr("dy", "0.32em")
             .attr("x", d => d.depth * nodeSize + 6)
-            .text(d => d.data.name);
+            .text(d => display_path([d.data.name]));
 
         node.append("title")
             .text(d => d.ancestors().reverse().map(d => d.data.name).join("/"));
@@ -540,6 +540,15 @@
         return s.split(" ").map(parseByte);
     }
 
+    function display_path(p, sep = window.path_seperator) {
+        switch (window.display_mode) {
+            case "hex": return p.map(x => x.toString(16)).join(sep);
+            case "binary": return p.map(x => x.toString(2)).join(sep);
+            case "decimal": return p.map(x => x.toString()).join(sep);
+            case "char": return p.map(x => String.fromCharCode(x)).join(sep);
+        }
+    }
+
     import init, { range_be_u32, object, contains, reader, children, to_next_val, descend_to, descend_indexed_byte, to_next_sibling_byte, to_prev_sibling_byte, ascend, path, exists, d3_hierarchy, val_count, make_map, fork_reader, union, intersection, restriction, subtraction, decapitation, head, serialize, deserialize, min_path, max_path, product, wrap, regex_transform, from_paths, read_paths } from "./pkg/pathmap.js";
     init().then(() => {
         window.root_map = range_be_u32(50000, 100000, 74);
@@ -550,15 +559,6 @@
         let readers = [];
         let active = 0;
         let partial = null;
-
-        let display_path = (p, sep = window.path_seperator) => {
-            switch (window.display_mode) {
-                case "hex": return p.map(x => x.toString(16)).join(sep);
-                case "binary": return p.map(x => x.toString(2)).join(sep);
-                case "decimal": return p.map(x => x.toString()).join(sep);
-                case "char": return p.map(x => String.fromCharCode(x)).join(sep);
-            }
-        }
 
         let draw = () => {
             let r = readers[active];
