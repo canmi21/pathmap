@@ -25,6 +25,7 @@
 //! - [ascend_until](zipper::Zipper::ascend_until)
 //!
 
+use std::fmt::{Debug, Display, Formatter, Pointer};
 use crate::trie_node::*;
 use crate::trie_map::BytesTrieMap;
 
@@ -371,6 +372,244 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin> std::iter::IntoIterator for Read
         self.z.clone().into_iter()
     }
 }
+
+// ***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---
+// ProductReadZipperUntracked
+// ***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---
+
+
+/// A [Zipper] that is unable to modify the trie, used when it is possible to statically guarantee
+/// non-interference between zippers
+#[derive(Clone)]
+pub struct ProductReadZipperUntracked<'a, 'path, V> {
+    combined: Vec<u8>,
+    left: ReadZipperCore<'a, 'path, V>,
+    right: ReadZipperCore<'a, 'path, V>,
+}
+
+impl<'a, 'path, V: Clone + Send + Sync + Unpin> Display for ProductReadZipperUntracked<'a, 'path, V> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("Product {{ left: {:?} right: {:?} }}", std::str::from_utf8(self.left.path()).unwrap(), std::str::from_utf8(self.right.path()).unwrap()))
+    }
+}
+
+impl<'a, 'path, V: Clone + Send + Sync + Unpin> ProductReadZipperUntracked<'a, 'path, V> {
+    pub(crate) fn new(mut l: ReadZipperCore<'a, 'path, V>, r: ReadZipperCore<'a, 'path, V>) -> ProductReadZipperUntracked<'a, 'path, V> {
+        ProductReadZipperUntracked { combined: vec![], left: l, right: r }
+    }
+}
+
+#[cfg(debug_assertions)]
+//We only need a custom drop when we have a tracker
+impl<V> Drop for crate::zipper::ProductReadZipperUntracked<'_, '_, V> {
+    fn drop(&mut self) { }
+}
+
+impl<V: Clone + Send + Sync + Unpin> Zipper for crate::zipper::ProductReadZipperUntracked<'_, '_, V> {
+    type ReadZipperT<'a> = crate::zipper::ProductReadZipperUntracked<'a, 'a, V>
+    where Self: 'a;
+
+    fn at_root(&self) -> bool { self.left.at_root() }
+    fn reset(&mut self) {
+        self.left.reset();
+        self.right.reset();
+        self.combined.clear();
+    }
+    #[inline]
+    fn path(&self) -> &[u8] {
+        self.combined.as_slice()
+    }
+    fn path_exists(&self) -> bool { self.left.path_exists() && self.right.path_exists() }
+    fn is_value(&self) -> bool { self.left.path_exists() && self.right.is_value() }
+    fn val_count(&self) -> usize { self.left.val_count()*self.right.val_count() }
+    fn child_count(&self) -> usize { self.right.child_count() }
+    fn child_mask(&self) -> [u64; 4] {
+        if self.right.at_root() {
+            self.left.child_mask()
+        } else {
+            self.right.child_mask()
+        }
+    }
+    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool {
+        let k: &[u8] = k.as_ref();
+        self.combined.extend(k);
+        if self.right.at_root() {
+            self.left.prepare_buffers();
+            debug_assert!(self.left.is_regularized());
+
+            self.left.prefix_buf.extend(k.as_ref());
+            let mut key_start = self.left.node_key_start();
+            let mut key = &self.left.prefix_buf[key_start..];
+
+            //Step until we get to the end of the key or find a leaf node
+            while let Some((consumed_byte_cnt, next_node)) = self.left.focus_node.node_get_child(key) {
+                key_start += consumed_byte_cnt;
+                self.left.ancestors.push((self.left.focus_node.clone(), self.left.focus_iter_token, key_start));
+                self.left.focus_node = next_node.as_tagged();
+                self.left.focus_iter_token = NODE_ITER_INVALID;
+                if consumed_byte_cnt < key.len() {
+                    key = &key[consumed_byte_cnt..]
+                } else {
+                    return true;
+                };
+            }
+
+            if self.left.path_exists() {
+                true
+            } else {
+                let mut i = 0;
+                while !self.left.is_value() {
+                    self.left.ascend_byte();
+                    i += 1;
+                }
+                self.right.descend_to(&k[k.len()-i..])
+            }
+        } else {
+            self.right.descend_to(k)
+        }
+    }
+    fn descend_to_byte(&mut self, k: u8) -> bool {
+        self.descend_to(&[k])
+    }
+    fn descend_indexed_branch(&mut self, child_idx: usize) -> bool { self.right.descend_indexed_branch(child_idx) }
+    fn descend_first_byte(&mut self) -> bool {
+        if self.right.at_root() {
+            if self.left.is_value() {
+                if self.right.descend_first_byte() {
+                    *self.combined.last_mut().unwrap() = *self.right.path().last().unwrap();
+                    true
+                } else { false }
+            } else {
+                if self.left.descend_first_byte() {
+                    *self.combined.last_mut().unwrap() = *self.left.path().last().unwrap();
+                    true
+                } else { false}
+            }
+        } else {
+            if self.right.descend_first_byte() {
+                *self.combined.last_mut().unwrap() = *self.right.path().last().unwrap();
+                true
+            } else { false }
+        }
+    }
+    fn descend_until(&mut self) -> bool { self.right.descend_until() }
+    fn to_sibling(&mut self, next: bool) -> bool { if next { self.to_next_sibling_byte() } else { self.to_prev_sibling_byte() } }
+    fn to_next_sibling_byte(&mut self) -> bool {
+        if self.right.at_root() {
+            if self.left.to_next_sibling_byte() {
+                assert_eq!(self.combined.len(), self.left.path().len());
+                *self.combined.last_mut().unwrap() = *self.left.path().last().unwrap();
+                true
+            } else { false }
+        } else {
+            if self.right.to_next_sibling_byte() {
+                assert_eq!(self.combined.len(), self.left.path().len() + self.right.path().len());
+                *self.combined.last_mut().unwrap() = *self.right.path().last().unwrap();
+                true
+            } else { false }
+        }
+    }
+    fn to_prev_sibling_byte(&mut self) -> bool { todo!() }
+    fn ascend(&mut self, steps: usize) -> bool { self.right.ascend(steps) }
+    fn ascend_byte(&mut self) -> bool {
+        self.combined.truncate(self.combined.len() - 1);
+        if self.right.at_root() {
+            self.left.ascend_byte()
+        } else {
+            self.right.ascend_byte()
+        }
+    }
+    fn ascend_until(&mut self) -> bool { self.right.ascend_until() }
+    fn ascend_until_branch(&mut self) -> bool { self.right.ascend_until_branch() }
+    fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
+        todo!()
+    }
+    fn make_map(&self) -> Option<BytesTrieMap<Self::V>> { panic!() }
+}
+
+impl<'a, V: Clone + Send + Sync + Unpin> ReadOnlyZipper<'a, V> for crate::zipper::ProductReadZipperUntracked<'a, '_, V> {
+    fn get_value(&self) -> Option<&'a V> { self.right.get_value() }
+}
+
+impl<V: Clone + Send + Sync + Unpin> ZipperValueAccess<V> for crate::zipper::ProductReadZipperUntracked<'_, '_, V> {
+    fn value(&self) -> Option<&V> { self.right.get_value() }
+}
+
+impl<V: Clone + Send + Sync> zipper_priv::ZipperPriv for crate::zipper::ProductReadZipperUntracked<'_, '_, V> {
+    type V = V;
+
+    fn get_focus(&self) -> AbstractNodeRef<Self::V> { self.right.get_focus() }
+    fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>> { self.right.try_borrow_focus() }
+    unsafe fn origin_path_assert_len(&self, len: usize) -> &[u8] { todo!() }
+    fn prepare_buffers(&mut self) { self.right.prepare_buffers() }
+}
+
+impl<'a, V: Clone + Send + Sync + Unpin> ZipperIteration<'a, V> for crate::zipper::ProductReadZipperUntracked<'a, '_, V> {
+    fn to_next_val(&mut self) -> Option<&'a V> {
+        if self.left.at_root() { return None }
+        if !self.left.is_value_internal() {
+            self.left.to_next_val();
+            self.combined.clear();
+            self.combined.extend(self.left.path());
+            self.right.reset();
+        }
+        if self.right.at_root() {
+            let r = self.right.to_next_val();
+            self.combined.extend(self.right.path());
+            return r
+        }
+        match self.right.to_next_val() {
+            None => {
+                match self.left.to_next_val() {
+                    Some(v) => {
+                        self.combined.clear();
+                        self.combined.extend(self.left.path());
+                        self.right.reset();
+                        let r = self.right.to_next_val();
+                        self.combined.extend(self.right.path());
+                        r
+                    }
+                    None => {
+                        None
+                    }
+                }
+            }
+            sv => {
+                self.combined.truncate(self.left.path().len());
+                self.combined.extend(self.right.path());
+                sv
+            }
+        }
+    }
+    fn to_next_step(&mut self) -> bool { self.right.to_next_step() }
+    fn descend_first_k_path(&mut self, k: usize) -> bool { self.right.descend_first_k_path(k) }
+    fn to_next_k_path(&mut self, k: usize) -> bool { self.right.to_next_k_path(k) }
+}
+
+impl<V: Clone + Send + Sync + Unpin> ZipperAbsolutePath for crate::zipper::ProductReadZipperUntracked<'_, '_, V> {
+    fn origin_path(&self) -> Option<&[u8]> { None }
+    fn root_prefix_path(&self) -> Option<&[u8]> { None }
+}
+
+
+//GOAT!!!! UNsound!!!!  I realized I drop the zipper_tracker here...  Which allows the iterator to
+// continue to access the fields after the lock has been released!!!!!   FIX THIS!!!!
+
+// impl <'a, 'path, V: Clone + Send + Sync + Unpin> std::iter::IntoIterator for crate::zipper::ProductReadZipperUntracked<'a, 'path, V> {
+//     type Item = (Vec<u8>, &'a V);
+//     type IntoIter = Box<std::iter::FlatMap<ReadZipperIter<'a, 'path, V>,
+//         std::iter::Map<ReadZipperIter<'a, 'path, V>, (fn((Vec<u8>, &V)) -> (Vec<u8>,&'a V))>,
+//         fn((Vec<u8>, &V)) -> std::iter::Map<ReadZipperIter<'a, 'path, V>, fn((Vec<u8>, &V)) -> (Vec<u8>, &'a V)>>>;
+//
+//     fn into_iter(self) -> Self::IntoIter {
+//         Box::new(self.left.into_iter().flat_map(|(mut p, v)| {
+//             self.right.into_iter().map(|(rp, rv)| {
+//                 p.extend(rp);
+//                 (p, rv)
+//             })
+//         }))
+//     }
+// }
 
 // ***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---
 // ReadZipperUntracked
@@ -2546,6 +2785,90 @@ mod tests {
             sanity_counter += 1;
         }
         assert_eq!(sanity_counter, 1);
+    }
+
+    #[test]
+    fn test_product_node_contains_byte() {
+        let lpaths = [[b'x'], [b'y'], [b'z']];
+        let rpaths = [[b'a'], [b'b']];
+        let l = BytesTrieMap::from_iter(lpaths.iter().map(|x| (x, ())));
+        let r = BytesTrieMap::from_iter(rpaths.iter().map(|x| (x, ())));
+        let mut p = ProductReadZipperUntracked::new(l.read_zipper().z.clone(), r.read_zipper().z.clone());
+
+        let paths: Vec<_> = lpaths.iter().flat_map(|lp| {
+            rpaths.iter().map(|rp| {
+                let mut v = lp.to_vec();
+                v.extend(rp);
+                v
+            })
+        }).collect();
+        let mut i = 0;
+        while let Some(v) = p.to_next_val() {
+            assert_eq!(p.path(), paths[i]);
+            i += 1;
+        }
+        assert_eq!(i, paths.len());
+    }
+
+    #[test]
+    fn test_product_node_contains() {
+        let lpaths = ["abcdefghijklmnopqrstuvwxyz".as_bytes(), "arrow".as_bytes(), "x".as_bytes()];
+        let rpaths = ["ABCDEFGHIJKLMNOPQRSTUVWXYZ".as_bytes(), "a".as_bytes(), "bow".as_bytes()];
+        let l = BytesTrieMap::from_iter(lpaths.iter().map(|x| (x, ())));
+        let r = BytesTrieMap::from_iter(rpaths.iter().map(|x| (x, ())));
+        let mut p = ProductReadZipperUntracked::new(l.read_zipper().z.clone(), r.read_zipper().z.clone());
+
+        let paths: Vec<_> = lpaths.iter().flat_map(|lp| {
+            rpaths.iter().map(|rp| {
+                let mut v = lp.to_vec();
+                v.extend(rp.into_iter());
+                v
+            })
+        }).collect();
+        let mut i = 0;
+        while let Some(v) = p.to_next_val() {
+            assert_eq!(p.path(), paths[i]);
+            i += 1;
+        }
+        assert_eq!(i, paths.len());
+    }
+
+    #[test]
+    fn test_product_node_descend_to() {
+        let lpaths = ["abcdefghijklmnopqrstuvwxyz".as_bytes(), "arrow".as_bytes(), "x".as_bytes()];
+        let rpaths = ["ABCDEFGHIJKLMNOPQRSTUVWXYZ".as_bytes(), "a".as_bytes(), "bow".as_bytes()];
+        let l = BytesTrieMap::from_iter(lpaths.iter().map(|x| (x, ())));
+        let r = BytesTrieMap::from_iter(rpaths.iter().map(|x| (x, ())));
+        let mut p = ProductReadZipperUntracked::new(l.read_zipper().z.clone(), r.read_zipper().z.clone());
+
+        p.descend_to("arr".as_bytes());
+        p.to_next_val();
+        assert_eq!("arrowABCDEFGHIJKLMNOPQRSTUVWXYZ", std::str::from_utf8(p.path()).unwrap());
+        p.reset();
+        p.descend_to("x".as_bytes());
+        p.to_next_val();
+        assert_eq!("xABCDEFGHIJKLMNOPQRSTUVWXYZ", std::str::from_utf8(p.path()).unwrap());
+        p.reset();
+        p.descend_to("arrowb".as_bytes());
+        p.to_next_val();
+        assert_eq!("arrowbow", std::str::from_utf8(p.path()).unwrap());
+    }
+
+    #[test]
+    fn test_product_node_ascend_byte() {
+        let lpaths = ["abcdefghijklmnopqrstuvwxyz".as_bytes(), "arrow".as_bytes(), "x".as_bytes()];
+        let rpaths = ["ABCDEFGHIJKLMNOPQRSTUVWXYZ".as_bytes(), "a".as_bytes(), "bow".as_bytes()];
+        let l = BytesTrieMap::from_iter(lpaths.iter().map(|x| (x, ())));
+        let r = BytesTrieMap::from_iter(rpaths.iter().map(|x| (x, ())));
+        let mut p = ProductReadZipperUntracked::new(l.read_zipper().z.clone(), r.read_zipper().z.clone());
+
+        p.descend_to("arr".as_bytes());
+        p.ascend_byte();
+        assert_eq!(p.path(), "ar".as_bytes());
+        p.ascend_byte();
+        assert_eq!(p.path(), "a".as_bytes());
+        p.to_next_val();
+        assert_eq!("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", std::str::from_utf8(p.path()).unwrap());
     }
 }
 
