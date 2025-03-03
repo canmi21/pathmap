@@ -230,7 +230,7 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
 
     /// Internal method to remove a CoFree from the node
     #[inline]
-    fn remove(&mut self, k: u8) -> Option<Cf> {
+    pub fn remove(&mut self, k: u8) -> Option<Cf> {
         if self.mask.test_bit(k) {
             let ix = self.left(k) as usize;
             let v = self.values.remove(ix);
@@ -274,7 +274,7 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
     }
 
     #[inline]
-    unsafe fn get_unchecked_mut(&mut self, k: u8) -> &mut Cf {
+    pub unsafe fn get_unchecked_mut(&mut self, k: u8) -> &mut Cf {
         let ix = self.left(k) as usize;
         // println!("pos ix {} {} {:b}", pos, ix, self.mask);
         self.values.get_unchecked_mut(ix)

@@ -1,6 +1,6 @@
 use core::cell::UnsafeCell;
-
 use num_traits::{PrimInt, zero};
+use crate::dense_byte_node::{CoFree, DenseByteNode};
 use crate::morphisms::{new_map_from_ana, TrieBuilder};
 use crate::trie_node::*;
 use crate::zipper::*;
@@ -361,6 +361,77 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
         let mut zipper = self.write_zipper();
         zipper.descend_to(k);
         zipper.remove_value()
+    }
+
+    #[cfg(feature = "all_dense_nodes")]
+    pub fn remove_old<K: AsRef<[u8]>>(&mut self, k: K) -> Option<V> {
+        let mut i = 0;
+        let k = k.as_ref();
+        let mut utn = self.root().unwrap().as_ptr().cast_mut() as *mut DenseByteNode<V>;
+        unsafe {
+            loop {
+                if i == k.len() - 1 {
+                    return (*utn).remove(k[i]).and_then(|x| x.val().cloned())
+                } else {
+                    match (*utn).get_unchecked_mut(k[i]).rec() {
+                        None => { return None }
+                        Some(mut cn) => {
+                            utn = cn.as_ptr().cast_mut() as *mut DenseByteNode<V>;
+                            i += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Serialize all paths in under path `k`
+    /// Warning: the size of the individual path serialization can be double exponential in the size of the BytesTrieMap
+    /// Returns the target output, total serialized bytes (uncompressed), and total number of paths
+    fn serialize_paths<K: AsRef<[u8]>, W: std::io::Write>(&self, k: K, target: W) -> std::io::Result<(W, usize, usize)> {
+        use std::io::Write;
+        let mut compressor = flate2::write::GzEncoder::new(target, flate2::Compression::default());
+        let mut rz = self.read_zipper_at_path(k);
+        let mut total_bytes = 0;
+        let mut total_paths = 0;
+        while let Some(_) = rz.to_next_val() {
+            let p = rz.path();
+            let l = p.len();
+            compressor.write((l as u32).to_le_bytes().as_slice())?;
+            total_bytes += 4;
+            compressor.write(p)?;
+            total_bytes += l;
+            total_paths += 1;
+        }
+        Ok((compressor.finish()?, total_bytes, total_paths))
+    }
+
+    /// Deserialize bytes that were serialized by `serialize_paths` under path `k`
+    /// Returns the source input, total deserialized bytes (uncompressed), and total number of path insert attempts
+    fn deserialize_paths<K: AsRef<[u8]>, R: std::io::Read>(&mut self, k: K, source: R, v: V) -> std::io::Result<(R, usize, usize)> {
+        use std::io::Read;
+        let mut decompressor = flate2::read::GzDecoder::new(source);
+        let mut wz = self.write_zipper_at_path(k.as_ref());
+        let mut sizebuf = [0u8; 4];
+        let mut pathbuf: Vec<u8> = vec![];
+        let mut total_bytes = 0;
+        let mut total_paths = 0;
+        while let rds = decompressor.read(&mut sizebuf)? {
+            if rds == 0 { break }
+            if rds != sizebuf.len() {
+                return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "failed to read 4 bytes pathlen"))
+            }
+            total_bytes += 4;
+            let l = u32::from_le_bytes(sizebuf) as usize;
+            pathbuf.resize(l, 0);
+            decompressor.read_exact(&mut pathbuf)?;
+            total_bytes += l;
+            wz.descend_to(&pathbuf);
+            wz.set_value(v.clone());
+            wz.reset();
+            total_paths += 1;
+        }
+        Ok((decompressor.into_inner(), total_bytes, total_paths))
     }
 
     //GOAT-redo this with the WriteZipper::get_value_or_insert, although I may need an alternate function
@@ -770,7 +841,7 @@ mod tests {
         assert_eq!(map.val_count(), 1);
         assert_eq!(map.remove(b"bbbbb"), Some("bbbbb"));
         assert_eq!(map.val_count(), 0);
-        assert!(map.is_empty());
+        assert!(map.val_count() == 0);
     }
 
     #[test]
@@ -1142,6 +1213,38 @@ mod tests {
         assert_eq!(map.get(b"start:0000:goodbye"), Some(&0));
         assert_eq!(map.get(b"start:0003:hello"), Some(&3));
         assert_eq!(map.get(b"start:0003:goodbye"), Some(&3));
+    }
+
+    #[test]
+    fn path_serialize_deserialize_full() {
+        let mut btm = BytesTrieMap::new();
+        let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
+        rs.iter().enumerate().for_each(|(i, r)| { btm.insert(r.as_bytes(), ()); });
+        let mut v = vec![];
+        match btm.serialize_paths(&[], &mut v) {
+            Ok((rv, bw, pw)) => {
+                println!("ser {} {}", bw, pw);
+
+                let mut restored_btm = BytesTrieMap::new();
+                match restored_btm.deserialize_paths(&[], &rv[..], ()) {
+                    Ok((_, bw, pw)) => {
+                        println!("de {} {}", bw, pw);
+
+                        let mut lrz = restored_btm.read_zipper();
+                        while let Some(_) = lrz.to_next_val() {
+                            assert!(btm.contains(lrz.path()));
+                        }
+
+                        let mut rrz = btm.read_zipper();
+                        while let Some(_) = rrz.to_next_val() {
+                            assert!(restored_btm.contains(rrz.path()));
+                        }
+                    }
+                    Err(e) => { println!("de e {}", e) }
+                }
+            }
+            Err(e) => { println!("ser e {}", e) }
+        }
     }
 }
 

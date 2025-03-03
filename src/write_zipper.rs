@@ -2609,4 +2609,20 @@ mod tests {
         drop(rz);
     }
 
+    #[test]
+    fn write_zipper_remove_value() {
+        let keys = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i",
+            "abcdefghijklmnopqrstuvwxyz"];
+        let mut rmap: BytesTrieMap<()> = keys.iter().enumerate().map(|(i, k)| (k, ())).collect();
+
+        let mut i = 0;
+        for _ in 0..11 {
+            for k in keys.iter().cycle().take(100) {
+                if i % 7 == 1 {
+                    rmap.remove(k);
+                }
+                i += 1;
+            }
+        }
+    }
 }
