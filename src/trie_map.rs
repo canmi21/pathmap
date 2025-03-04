@@ -605,23 +605,42 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
             Value(()),
             Collapse((), Box<Trie>),
             Alg(Vec<(u8, Trie)>),
-            Ref(Vec<u8>)
+            Ref(u32)
         }
         use Trie::*;
 
+        impl Trie {
+            pub fn size(&self) -> usize {
+                match self {
+                    Value(_) => { 1 }
+                    Collapse(_, st) => { 1 + st.size() }
+                    Alg(vs) => { 1 + 1 + vs.len() + vs.iter().rfold(0, |t, x| t + x.1.size()) }
+                    Ref(_) => { 5 }
+                }
+            }
+        }
+
         let mut re_use = 0;
+        let mut potential_re_use = 0;
+        let mut id = 0u32;
         let rz = self.read_zipper();
-        let mut hm: std::collections::HashMap<Trie, Vec<u8>> = std::collections::HashMap::new();
+        let mut hm: std::collections::HashMap<Trie, u32> = std::collections::HashMap::new();
         macro_rules! box_or_ref {
-            ($hm:ident, $path:ident, $t:expr) => {{
+            ($hm:ident, $t:expr) => {{
                 let t = $t;
                 match $hm.entry(t.clone()) {
                     std::collections::hash_map::Entry::Occupied(o) => {
-                        re_use += 1;
-                        Some(Box::new(Ref(o.get().clone())))
+                        potential_re_use += 1;
+                        if t.size() > 50 {
+                            re_use += 1;
+                            Some(Box::new(Ref(*o.get())))
+                        } else {
+                            Some(Box::new(t))
+                        }
                     }
                     std::collections::hash_map::Entry::Vacant(v) => {
-                        v.insert($path.to_vec());
+                        v.insert(id);
+                        id += 1;
                         Some(Box::new(t))
                     }
                 }
@@ -631,10 +650,10 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
         let s = crate::cata!(V, Option<Box<Trie>>, rz,
             // |v: &V, path: &[u8]| { box_or_ref!(hm, path, Value(())) },
             |v: &V, path: &[u8]| { Some(Box::new(Value(()))) },
-            |v: &V, w: Option<Box<Trie>>, path: &[u8]| { box_or_ref!(hm, path, Collapse((), w.unwrap())) },
+            |v: &V, w: Option<Box<Trie>>, path: &[u8]| { box_or_ref!(hm, Collapse((), w.unwrap())) },
             |cm: &[u64; 4], ws: &mut [Option<Box<Trie>>], path: &[u8]| {
                 let mut it = crate::utils::ByteMaskIter::new(cm.clone());
-                box_or_ref!(hm, path, Alg(ws.iter_mut().map(|w| (it.next().unwrap(), *std::mem::take(w).unwrap())).collect())) }
+                box_or_ref!(hm, Alg(ws.iter_mut().map(|w| (it.next().unwrap(), *std::mem::take(w).unwrap())).collect())) }
         );
 
         use postcard::to_extend;
@@ -652,7 +671,7 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
         ba.shrink_to_allocated();
 
         // println!("{} {:?}", o.len(), o);
-        println!("re_use {}", re_use);
+        println!("re_use {}, potential re_use {}", re_use, potential_re_use);
         println!("serialized length {}", o.len());
         println!("compressed length {}", compressed.len());
     }
