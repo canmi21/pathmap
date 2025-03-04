@@ -468,7 +468,8 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
         let mut strm: z_stream = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
         let mut ret = unsafe { zng_inflateInit(&mut strm) };
         if ret != Z_OK { return Err(std::io::Error::new(std::io::ErrorKind::Other, "failed to init zlib-ng inflate")) }
-        let mut wz = self.write_zipper_at_path(k.as_ref());
+        let mut submap = BytesTrieMap::new();
+        let mut wz_buf = vec![];
         // if statement in loop that emulates goto for the many to many ibuffer-obuffer relation
         'reading: loop {
             strm.avail_in = source.read(&mut ibuffer)? as _;
@@ -505,16 +506,16 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
                     }
 
                     if pos + l as usize <= end {
-                        wz.descend_to(&obuffer[pos..pos + l as usize]);
-                        wz.set_value(v.clone());
-                        wz.reset();
+                        wz_buf.extend(&obuffer[pos..pos + l as usize]);
+                        submap.insert(&wz_buf[..], v.clone());
+                        wz_buf.clear();
                         total_paths += 1;
                         pos += l as usize;
                         finished_path = true;
                         if pos == end { continue 'decompressing }
                         else { continue 'descending }
                     } else {
-                        wz.descend_to(&obuffer[pos..end]);
+                        wz_buf.extend(&obuffer[pos..end]);
                         finished_path = false;
                         l -= (end-pos) as u32;
                         if strm.avail_in == 0 { continue 'reading }
@@ -523,6 +524,7 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
                 }
             }
         }
+        self.write_zipper_at_path(k.as_ref()).graft_map(submap);
 
         unsafe { inflateEnd(&mut strm) };
 
