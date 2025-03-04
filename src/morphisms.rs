@@ -332,18 +332,231 @@ fn ascend_to_fork<'a, Z, V: 'a, W, MapF, CollapseF, AlgF, JumpF, const JUMPING: 
     cur_w
 }
 
+#[macro_export]
+macro_rules! cata {
+    ($V:ty, $W:ty, $z:expr, $map_f:expr, $collapse_f:expr, $alg_f:expr, $jump_f:expr) => {{
+     use crate::zipper::zipper_priv::ZipperMovingPriv;
+    let mut z = $z;
+    //`stack` holds a "frame" at each forking point above the zipper position.  No frames exist for values
+    let mut stack = Vec::<crate::morphisms::StackFrame<$W>>::with_capacity(12);
+    let mut frame_idx = 0;
+
+    z.reset();
+    z.prepare_buffers();
+
+    //Push a stack frame for the root, and start on the first branch off the root
+    stack.push(crate::morphisms::StackFrame::new(z.child_count(), z.child_mask()));
+    if !z.descend_first_byte() {
+        //Empty trie is a special case
+        let empty_w = $alg_f(&[0; 4], &mut [], z.origin_path().unwrap());
+        if let Some(root_val) = z.value() {
+            $collapse_f(root_val, empty_w, z.origin_path().unwrap())
+        } else {
+            empty_w
+        }
+    } else {
+    'outer: loop {
+        //Descend to the next forking point if we're jumping
+        let mut is_leaf = false;
+        while z.child_count() < 2 {
+            if !z.descend_until() {
+                is_leaf = true;
+                break;
+            }
+        }
+
+        if is_leaf {
+            //Map the value from this leaf
+            let mut cur_w = z.value().map(|v| $map_f(v, z.origin_path().unwrap()));
+
+            //Ascend back to the last fork point
+            // ascend_to_fork::<Z, V, W, MapF, CollapseF, AlgF, JumpF, JUMPING>(&mut z, &mut map_f, &mut collapse_f, &mut alg_f, &mut jump_f, cur_w);
+            loop {
+                let mut old_path_len = z.origin_path().unwrap().len();
+
+                let ascended = z.ascend_until();
+                debug_assert!(ascended);
+
+                let at_fork = z.child_count() > 1;
+                let at_root = z.at_root();
+
+                let new_path_len = z.origin_path().unwrap().len();
+
+                if true {
+                    //We don't call the jump_f with a char that's part of the bitmask to the alg_f, so we
+                    // need to pretend like we're running the `jump_f` one char deeper in the trie than the
+                    // actual zipper focus
+                    if old_path_len > new_path_len+1 {
+                        if let Some(w) = cur_w {
+                            let old_origin_path = unsafe{ z.origin_path_assert_len(old_path_len) };
+                            let jump_path = &old_origin_path[new_path_len+1..];
+                            let origin_path = &old_origin_path[..new_path_len+1];
+                            cur_w = Some($jump_f(jump_path, w, origin_path));
+                        }
+                    }
+                } else {
+                    //This is the default code to call the `alg_f` for each intermediate path step
+                    // NOTE: the reason this is a special case rather than just a default JumpF is because I want
+                    // to be able to re-use the `path_buf`, but that's not possible through the defined interface
+                    while old_path_len > new_path_len {
+                        let byte = unsafe{ z.origin_path_assert_len(old_path_len) }.last().unwrap();
+                        old_path_len -= 1;
+                        if old_path_len > new_path_len || (!at_fork && !at_root) {
+                            if let Some(w) = cur_w {
+                                let mut mask = [0u64; 4];
+                                let word_idx = (byte / 64) as usize;
+                                mask[word_idx] = 1u64 << (byte % 64);
+                                cur_w = Some($alg_f(&mask, &mut[w], & unsafe{ z.origin_path_assert_len(old_path_len) }));
+                            }
+                        }
+                    }
+                }
+
+                if at_root {
+                    break;
+                }
+
+                if !at_fork {
+                    //This unwrap shouldn't panic, because `ascend_until` should only stop at values and forks
+                    let v = z.value().unwrap();
+                    match cur_w {
+                        None => { cur_w = Some($map_f(v, z.origin_path().unwrap())); }
+                        Some(w) => { cur_w = Some($collapse_f(v, w, z.origin_path().unwrap())); }
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            //Merge the result into the stack frame
+            match cur_w {
+                Some(w) => stack[frame_idx].push_val(w),
+                None => stack[frame_idx].push_none(),
+            }
+
+            debug_assert!(stack[frame_idx].child_idx <= z.child_count());
+            while stack[frame_idx].child_idx == z.child_count() {
+
+                //We finished all the children from this branch, so run the aggregate function
+                let stack_frame = &mut stack[frame_idx];
+                let mut w = $alg_f(&stack_frame.child_mask, &mut stack_frame.children, z.origin_path().unwrap());
+                if frame_idx == 0 {
+                    if let Some(root_val) = z.value() {
+                        break 'outer $collapse_f(root_val, w, z.origin_path().unwrap());
+                    } else {
+                        break 'outer w;
+                    }
+                } else {
+                    frame_idx -= 1;
+
+                    //Check to see if we have a value here we need to collapse
+                    if let Some(v) = z.value() {
+                        w = $collapse_f(v, w, z.origin_path().unwrap());
+                    }
+
+                    //Ascend the rest of the way back up to the branch
+                    // w = ascend_to_fork::<Z, V, W, MapF, CollapseF, AlgF, JumpF, JUMPING>(&mut z, &mut map_f, &mut collapse_f, &mut alg_f, &mut jump_f, Some(w)).unwrap();
+                    let mut cur_w = Some(w);
+                    loop {
+                        let mut old_path_len = z.origin_path().unwrap().len();
+
+                        let ascended = z.ascend_until();
+                        debug_assert!(ascended);
+
+                        let at_fork = z.child_count() > 1;
+                        let at_root = z.at_root();
+
+                        let new_path_len = z.origin_path().unwrap().len();
+
+                        if true {
+                            //We don't call the jump_f with a char that's part of the bitmask to the alg_f, so we
+                            // need to pretend like we're running the `jump_f` one char deeper in the trie than the
+                            // actual zipper focus
+                            if old_path_len > new_path_len+1 {
+                                if let Some(w) = cur_w {
+                                    let old_origin_path = unsafe{ z.origin_path_assert_len(old_path_len) };
+                                    let jump_path = &old_origin_path[new_path_len+1..];
+                                    let origin_path = &old_origin_path[..new_path_len+1];
+                                    cur_w = Some($jump_f(jump_path, w, origin_path));
+                                }
+                            }
+                        } else {
+                            //This is the default code to call the `alg_f` for each intermediate path step
+                            // NOTE: the reason this is a special case rather than just a default JumpF is because I want
+                            // to be able to re-use the `path_buf`, but that's not possible through the defined interface
+                            while old_path_len > new_path_len {
+                                let byte = unsafe{ z.origin_path_assert_len(old_path_len) }.last().unwrap();
+                                old_path_len -= 1;
+                                if old_path_len > new_path_len || (!at_fork && !at_root) {
+                                    if let Some(w) = cur_w {
+                                        let mut mask = [0u64; 4];
+                                        let word_idx = (byte / 64) as usize;
+                                        mask[word_idx] = 1u64 << (byte % 64);
+                                        cur_w = Some($alg_f(&mask, &mut[w], & unsafe{ z.origin_path_assert_len(old_path_len) }));
+                                    }
+                                }
+                            }
+                        }
+
+                        if at_root {
+                            break;
+                        }
+
+                        if !at_fork {
+                            //This unwrap shouldn't panic, because `ascend_until` should only stop at values and forks
+                            let v = z.value().unwrap();
+                            match cur_w {
+                                None => { cur_w = Some($map_f(v, z.origin_path().unwrap())); }
+                                Some(w) => { cur_w = Some($collapse_f(v, w, z.origin_path().unwrap())); }
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    w = cur_w.unwrap();
+
+                    //Merge the result into the stack frame
+                    stack[frame_idx].push_val(w);
+                    debug_assert!(stack[frame_idx].child_idx <= z.child_count());
+                }
+            }
+
+            //Position to descend the next child branch
+            let descended = z.descend_indexed_branch(stack[frame_idx].child_idx);
+            debug_assert!(descended);
+        } else {
+            //Push a new stack frame for this branch
+            frame_idx += 1;
+            let child_mask = z.child_mask();
+            let child_cnt = z.child_count();
+            if stack.len() <= frame_idx {
+                stack.push(crate::morphisms::StackFrame::new(child_cnt, child_mask));
+                debug_assert!(stack.len() > frame_idx);
+            } else {
+                stack[frame_idx].reset(child_mask);
+            }
+
+            //Descend the first child branch
+            z.descend_first_byte();
+        }
+    }
+    }
+    }};
+}
+
+
 /// Internal structure to hold temporary info used inside morphism apply methods
-struct StackFrame<W> {
-    child_mask: [u64; 4],
-    mask_word_idx: usize,
-    child_idx: usize,
-    remaining_children_mask: u64,
-    children: Vec<W>,
+pub struct StackFrame<W> {
+    pub child_mask: [u64; 4],
+    pub mask_word_idx: usize,
+    pub child_idx: usize,
+    pub remaining_children_mask: u64,
+    pub children: Vec<W>,
 }
 
 impl<W> StackFrame<W> {
     /// Allocates a new StackFrame
-    fn new(child_count: usize, child_mask: [u64; 4]) -> Self {
+    pub fn new(child_count: usize, child_mask: [u64; 4]) -> Self {
         let mut frame = Self {
             child_mask: <_>::default(),
             child_idx: 0,
@@ -355,7 +568,7 @@ impl<W> StackFrame<W> {
         frame
     }
     /// Resets a StackFrame to the state needed to iterate a new forking point
-    fn reset(&mut self, child_mask: [u64; 4]) {
+    pub fn reset(&mut self, child_mask: [u64; 4]) {
         self.mask_word_idx = 0;
         self.child_idx = 0;
         while child_mask[self.mask_word_idx] == 0 && self.mask_word_idx < 3 {
@@ -365,7 +578,7 @@ impl<W> StackFrame<W> {
         self.child_mask = child_mask;
         self.children.clear();
     }
-    fn push_val(&mut self, w: W) {
+    pub fn push_val(&mut self, w: W) {
         self.children.push(w);
         self.child_idx += 1;
         debug_assert!(self.remaining_children_mask > 0); //If this assert trips, then it means we're trying to push a value for a non-existent child
@@ -373,7 +586,7 @@ impl<W> StackFrame<W> {
         self.remaining_children_mask ^= 1u64 << index;
         self.advance_word_idx();
     }
-    fn push_none(&mut self) {
+    pub fn push_none(&mut self) {
         self.child_idx += 1;
         debug_assert!(self.remaining_children_mask > 0); //If this assert trips, then it means we're trying to push a value for a non-existent child
         let index = self.remaining_children_mask.trailing_zeros();
@@ -381,7 +594,7 @@ impl<W> StackFrame<W> {
         self.child_mask[self.mask_word_idx] ^= 1u64 << index;
         self.advance_word_idx();
     }
-    fn advance_word_idx(&mut self) {
+    pub fn advance_word_idx(&mut self) {
         if self.remaining_children_mask == 0 {
             if self.mask_word_idx < 3 {
                 self.mask_word_idx += 1;

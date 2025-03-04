@@ -1,7 +1,8 @@
 use core::cell::UnsafeCell;
+use libz_ng_sys::Z_MEM_ERROR;
 use num_traits::{PrimInt, zero};
 use crate::dense_byte_node::{CoFree, DenseByteNode};
-use crate::morphisms::{new_map_from_ana, TrieBuilder};
+use crate::morphisms::{Catamorphism, new_map_from_ana, TrieBuilder};
 use crate::trie_node::*;
 use crate::zipper::*;
 use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
@@ -388,51 +389,205 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
     /// Serialize all paths in under path `k`
     /// Warning: the size of the individual path serialization can be double exponential in the size of the BytesTrieMap
     /// Returns the target output, total serialized bytes (uncompressed), and total number of paths
-    fn serialize_paths<K: AsRef<[u8]>, W: std::io::Write>(&self, k: K, target: W) -> std::io::Result<(W, usize, usize)> {
+    pub fn serialize_paths<K: AsRef<[u8]>, W: std::io::Write>(&self, k: K, target: &mut W) -> std::io::Result<(usize, usize, usize)> {
+        unsafe {
+        const CHUNK: usize = 4096;
+        let mut buffer = [0u8; CHUNK];
+        use libz_ng_sys::*;
         use std::io::Write;
-        let mut compressor = flate2::write::GzEncoder::new(target, flate2::Compression::default());
+        let mut strm: z_stream = std::mem::MaybeUninit::zeroed().assume_init();
+        let mut ret = zng_deflateInit(&mut strm, 7);
+        if ret != Z_OK { panic!("init failed") }
+
         let mut rz = self.read_zipper_at_path(k);
-        let mut total_bytes = 0;
         let mut total_paths = 0;
         while let Some(_) = rz.to_next_val() {
             let p = rz.path();
             let l = p.len();
-            compressor.write((l as u32).to_le_bytes().as_slice())?;
-            total_bytes += 4;
-            compressor.write(p)?;
-            total_bytes += l;
+            let mut lin = (l as u32).to_le_bytes();
+            strm.avail_in = 4;
+            strm.next_in = lin.as_mut_ptr();
+
+            loop {
+                strm.avail_out = CHUNK as _;
+                strm.next_out = buffer.as_mut_ptr();
+                ret = deflate(&mut strm, Z_NO_FLUSH);
+                assert_ne!(ret, Z_STREAM_ERROR);
+                let have = CHUNK - strm.avail_out as usize;
+                target.write_all(&mut buffer[..have])?;
+                if strm.avail_out != 0 { break }
+            }
+            assert_eq!(strm.avail_in, 0);
+
+            strm.avail_in = l as _;
+            strm.next_in = p.as_ptr().cast_mut();
+            loop {
+                strm.avail_out = CHUNK as _;
+                strm.next_out = buffer.as_mut_ptr();
+                ret = deflate(&mut strm, Z_NO_FLUSH);
+                assert_ne!(ret, Z_STREAM_ERROR);
+                let have = CHUNK - strm.avail_out as usize;
+                target.write_all(&mut buffer[..have])?;
+                if strm.avail_out != 0 { break }
+            }
+            assert_eq!(strm.avail_in, 0);
+
+
             total_paths += 1;
         }
-        Ok((compressor.finish()?, total_bytes, total_paths))
+        loop {
+            strm.avail_out = CHUNK as _;
+            strm.next_out = buffer.as_mut_ptr();
+            ret = deflate(&mut strm, Z_FINISH);
+            let have = CHUNK - strm.avail_out as usize;
+            target.write_all(&buffer[..have])?;
+            if ret == Z_STREAM_END { break; }
+            assert_eq!(ret, Z_OK);
+        }
+        ret = deflateEnd(&mut strm);
+        assert_eq!(ret, Z_OK);
+
+        Ok((strm.total_out, strm.total_in, total_paths))
+        }
     }
 
     /// Deserialize bytes that were serialized by `serialize_paths` under path `k`
     /// Returns the source input, total deserialized bytes (uncompressed), and total number of path insert attempts
-    fn deserialize_paths<K: AsRef<[u8]>, R: std::io::Read>(&mut self, k: K, source: R, v: V) -> std::io::Result<(R, usize, usize)> {
+    pub fn deserialize_paths<K: AsRef<[u8]>, R: std::io::Read>(&mut self, k: K, mut source: R, v: V) -> std::io::Result<(usize, usize, usize)> {
         use std::io::Read;
-        let mut decompressor = flate2::read::GzDecoder::new(source);
+        use libz_ng_sys::*;
+        const IN: usize = 1024;
+        const OUT: usize = 2048;
+        let mut ibuffer = [0u8; IN];
+        let mut obuffer = [0u8; OUT];
+        let mut l = 0u32;
+        let mut lbuf = [0u8; 4];
+        let mut lbuf_offset = 0;
+        let mut finished_path = true;
+        let mut total_paths = 0usize;
+        let mut strm: z_stream = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
+        let mut ret = unsafe { zng_inflateInit(&mut strm) };
+        if ret != Z_OK { return Err(std::io::Error::new(std::io::ErrorKind::Other, "failed to init zlib-ng inflate")) }
         let mut wz = self.write_zipper_at_path(k.as_ref());
-        let mut sizebuf = [0u8; 4];
-        let mut pathbuf: Vec<u8> = vec![];
+        // if statement in loop that emulates goto for the many to many ibuffer-obuffer relation
+        'reading: loop {
+            strm.avail_in = source.read(&mut ibuffer)? as _;
+            if strm.avail_in == 0 { break; }
+            strm.next_in = &mut ibuffer as _;
+
+            'decompressing: loop {
+                strm.avail_out = OUT as _;
+                strm.next_out = obuffer.as_mut_ptr();
+                let mut pos = 0usize;
+                let mut end = 0usize;
+
+                ret = unsafe { inflate(&mut strm, Z_NO_FLUSH) };
+                if ret == Z_STREAM_ERROR { return Err(std::io::Error::new(std::io::ErrorKind::Other, "Z_STREAM_ERROR")) }
+                if strm.avail_out == OUT as _ {
+                    if ret == Z_STREAM_END { break 'reading }
+                    else { continue 'reading }
+                }
+                end = OUT - strm.avail_out as usize;
+
+                'descending: loop {
+                    if finished_path {
+                        let have = (end - pos).min(4-lbuf_offset);
+                        lbuf[lbuf_offset..lbuf_offset+have].copy_from_slice(&obuffer[pos..pos+have]);
+                        pos += have;
+                        lbuf_offset += have;
+                        if lbuf_offset == 4 {
+                            l = u32::from_le_bytes(lbuf);
+                            lbuf_offset = 0;
+                        } else {
+                            if strm.avail_in == 0 { continue 'reading }
+                            else { continue 'decompressing }
+                        }
+                    }
+
+                    if pos + l as usize <= end {
+                        wz.descend_to(&obuffer[pos..pos + l as usize]);
+                        wz.set_value(v.clone());
+                        wz.reset();
+                        total_paths += 1;
+                        pos += l as usize;
+                        finished_path = true;
+                        if pos == end { continue 'decompressing }
+                        else { continue 'descending }
+                    } else {
+                        wz.descend_to(&obuffer[pos..end]);
+                        finished_path = false;
+                        l -= (end-pos) as u32;
+                        if strm.avail_in == 0 { continue 'reading }
+                        else { continue 'decompressing }
+                    }
+                }
+            }
+        }
+
+        unsafe { inflateEnd(&mut strm) };
+
+        Ok((strm.total_in, strm.total_out, total_paths))
+    }
+
+
+    /*
+    // alternative serialize_paths implementation based on the catamorphism (using flate2)
+    pub fn serialize_paths<K: AsRef<[u8]>, W: std::io::Write>(&self, k: K, target: W) -> std::io::Result<(W, usize, usize)> {
+        use std::io::Write;
+        let mut compressor = flate2::write::ZlibEncoder::new(target, flate2::Compression::default());
+        let mut rz = self.read_zipper_at_path(k);
         let mut total_bytes = 0;
         let mut total_paths = 0;
-        while let rds = decompressor.read(&mut sizebuf)? {
-            if rds == 0 { break }
-            if rds != sizebuf.len() {
-                return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "failed to read 4 bytes pathlen"))
-            }
+        crate::cata!((), (), rz, |_, p: &[u8]| {
+            let l = p.len();
+            compressor.write((l as u32).to_le_bytes().as_slice()).unwrap();
             total_bytes += 4;
-            let l = u32::from_le_bytes(sizebuf) as usize;
-            pathbuf.resize(l, 0);
-            decompressor.read_exact(&mut pathbuf)?;
+            compressor.write(p).unwrap();
             total_bytes += l;
-            wz.descend_to(&pathbuf);
+            total_paths += 1;
+        }, |_, _, p: &[u8]| {
+            let l = p.len();
+            compressor.write((l as u32).to_le_bytes().as_slice()).unwrap();
+            total_bytes += 4;
+            compressor.write(p).unwrap();
+            total_bytes += l;
+            total_paths += 1;
+        }, |_, _: &mut [()], _| (), |_, _, _| ());
+        Ok((compressor.finish()?, total_bytes, total_paths))
+    }
+
+    // alternative non-streaming deserialize_paths implementation
+    pub fn deserialize_paths<K: AsRef<[u8]>, R: std::io::Read>(&mut self, k: K, mut source: R, v: V) -> std::io::Result<(usize, usize)> {
+        unsafe {
+        use std::io::Read;
+        let mut ibuf = vec![];
+        source.read_to_end(&mut ibuf)?;
+        let mut buf = vec![];
+        buf.resize(10*ibuf.len(), 0);
+        println!("ibufl {}", ibuf.len());
+        let mut written = 100*ibuf.len();
+        let mut status = unsafe { libz_ng_sys::uncompress(buf.as_mut_ptr(), &mut written as *mut _ as _, ibuf.as_ptr(), ibuf.len() as _) };
+        buf.resize(written, 0);
+        println!("dstatus {status} written {written}");
+        // assert_eq!(status, libz_ng_sys::Z_OK);
+        let mut wz = self.write_zipper_at_path(k.as_ref());
+        let mut sizebuf = [0u8; 4];
+        let mut total_bytes = 0;
+        let mut total_paths = 0;
+        while total_bytes != buf.len() {
+            sizebuf.copy_from_slice(&buf[total_bytes..total_bytes+4]);
+            let l = u32::from_le_bytes(sizebuf) as usize;
+            total_bytes += 4;
+            wz.descend_to(&buf[total_bytes..total_bytes+l]);
+            total_bytes += l;
             wz.set_value(v.clone());
             wz.reset();
             total_paths += 1;
         }
-        Ok((decompressor.into_inner(), total_bytes, total_paths))
+        Ok((total_bytes, total_paths))
+        }
     }
+    */
 
     //GOAT-redo this with the WriteZipper::get_value_or_insert, although I may need an alternate function
     // that consumes the zipper in order to be allowed to return the correct lifetime
@@ -1216,23 +1371,24 @@ mod tests {
     }
 
     #[test]
-    fn path_serialize_deserialize_full() {
+    fn path_serialize_deserialize() {
         let mut btm = BytesTrieMap::new();
         let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
         rs.iter().enumerate().for_each(|(i, r)| { btm.insert(r.as_bytes(), ()); });
         let mut v = vec![];
         match btm.serialize_paths(&[], &mut v) {
-            Ok((rv, bw, pw)) => {
-                println!("ser {} {}", bw, pw);
+            Ok((c, bw, pw)) => {
+                println!("ser {} {} {}", c, bw, pw);
+                println!("vlen {}", v.len());
 
                 let mut restored_btm = BytesTrieMap::new();
-                match restored_btm.deserialize_paths(&[], &rv[..], ()) {
-                    Ok((_, bw, pw)) => {
-                        println!("de {} {}", bw, pw);
+                match restored_btm.deserialize_paths(&[], v.as_slice(), ()) {
+                    Ok((c, bw, pw)) => {
+                        println!("de {} {} {}", c, bw, pw);
 
                         let mut lrz = restored_btm.read_zipper();
                         while let Some(_) = lrz.to_next_val() {
-                            assert!(btm.contains(lrz.path()));
+                            assert!(btm.contains(lrz.path()), "{}", std::str::from_utf8(lrz.path()).unwrap());
                         }
 
                         let mut rrz = btm.read_zipper();
@@ -1244,6 +1400,46 @@ mod tests {
                 }
             }
             Err(e) => { println!("ser e {}", e) }
+        }
+    }
+
+    #[test]
+    fn path_serialize_deserialize_blow_out_buffer() {
+        for zeros in 0..10 {
+            println!("{zeros} zeros");
+            let mut btm = BytesTrieMap::new();
+            let mut rs = vec![];
+            for i in 0..400 {
+                rs.push(format!("{}{}{}{}", "0".repeat(zeros), i/100, (i/10)%10, i%10))
+            }
+            rs.iter().enumerate().for_each(|(i, r)| { btm.insert(r.as_bytes(), ()); });
+
+            let mut v = vec![];
+            match btm.serialize_paths(&[], &mut v) {
+                Ok((c, bw, pw)) => {
+                    println!("ser {} {} {}", c, bw, pw);
+                    println!("vlen {}", v.len());
+
+                    let mut restored_btm = BytesTrieMap::new();
+                    match restored_btm.deserialize_paths(&[], v.as_slice(), ()) {
+                        Ok((c, bw, pw)) => {
+                            println!("de {} {} {}", c, bw, pw);
+
+                            let mut lrz = restored_btm.read_zipper();
+                            while let Some(_) = lrz.to_next_val() {
+                                assert!(btm.contains(lrz.path()), "{}", std::str::from_utf8(lrz.path()).unwrap());
+                            }
+
+                            let mut rrz = btm.read_zipper();
+                            while let Some(_) = rrz.to_next_val() {
+                                assert!(restored_btm.contains(rrz.path()));
+                            }
+                        }
+                        Err(e) => { println!("de e {}", e) }
+                    }
+                }
+                Err(e) => { println!("ser e {}", e) }
+            }
         }
     }
 }
