@@ -1,4 +1,5 @@
 use core::cell::UnsafeCell;
+use std::os::linux::raw::stat;
 use libz_ng_sys::Z_MEM_ERROR;
 use num_traits::{PrimInt, zero};
 use crate::dense_byte_node::{CoFree, DenseByteNode};
@@ -484,7 +485,7 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
 
                 ret = unsafe { inflate(&mut strm, Z_NO_FLUSH) };
                 if ret == Z_STREAM_ERROR { return Err(std::io::Error::new(std::io::ErrorKind::Other, "Z_STREAM_ERROR")) }
-                if strm.avail_out == OUT as _ {
+                if strm.avail_out as usize == OUT {
                     if ret == Z_STREAM_END { break 'reading }
                     else { continue 'reading }
                 }
@@ -529,6 +530,133 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
         unsafe { inflateEnd(&mut strm) };
 
         Ok((strm.total_in, strm.total_out, total_paths))
+    }
+
+    pub fn serialize_tree<W: std::io::Write>(&self, target: &mut W) {
+        use serde::{Serialize, Deserialize};
+
+        // #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        // enum Trie<U> {
+        //     Value(U),
+        //     Collapse(U, Box<Trie<U>>),
+        //     Alg(Vec<(u8, Trie<U>)>),
+        //     Jump(Vec<u8>, Box<Trie<U>>)
+        // }
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        enum Trie {
+            Value(()),
+            Collapse((), Box<Trie>),
+            Alg(Vec<(u8, Trie)>),
+            Jump(Vec<u8>, Box<Trie>)
+        }
+        use Trie::*;
+
+        let rz = self.read_zipper();
+        // let s = crate::cata!(V, Option<Box<Trie<V>>>, rz,
+        //     |v: &V, _path| { Some(Box::new(Value(v.clone()))) },
+        //     |v: &V, w: Option<Box<Trie<V>>>, _path| { Some(Box::new(Collapse(v.clone(), w.unwrap()))) },
+        //     |cm: &[u64; 4], ws: &mut [Option<Box<Trie<V>>>], _path| {
+        //         let mut it = crate::utils::ByteMaskIter::new(cm.clone());
+        //         Some(Box::new(Alg(ws.iter_mut().map(|w| (it.next().unwrap(), *std::mem::take(w).unwrap())).collect())))},
+        //     |sp: &[u8], w: Option<Box<Trie<V>>>, _path| { Some(Box::new(Jump(sp.to_vec(), w.unwrap()))) }
+        // );
+        let s = crate::cata!(V, Option<Box<Trie>>, rz,
+            |v: &V, _path| { Some(Box::new(Value(()))) },
+            |v: &V, w: Option<Box<Trie>>, _path| { Some(Box::new(Collapse((), w.unwrap()))) },
+            |cm: &[u64; 4], ws: &mut [Option<Box<Trie>>], _path| {
+                let mut it = crate::utils::ByteMaskIter::new(cm.clone());
+                Some(Box::new(Alg(ws.iter_mut().map(|w| (it.next().unwrap(), *std::mem::take(w).unwrap())).collect())))},
+            |sp: &[u8], w: Option<Box<Trie>>, _path| { Some(Box::new(Jump(sp.to_vec(), w.unwrap()))) }
+        );
+
+        // use serde_lexpr::to_string;
+        // println!("{}", to_string(s.unwrap().as_ref()).unwrap())
+        // use serde_json::to_string;
+        // println!("{}", to_string(s.unwrap().as_ref()).unwrap())
+        // use ciborium::into_writer;
+        // let mut o: Vec<u8> = vec![];
+        // into_writer(s.unwrap().as_ref(), &mut o).unwrap();
+        // // println!("{} {:?}", o.len(), o);
+        // println!("serialized length {}", o.len());
+        use postcard::to_extend;
+        let o: Vec<u8> = vec![];
+        let o = to_extend(s.unwrap().as_ref(), o).unwrap();
+        let mut out = usize::MAX;
+
+        use freeze::BumpAllocRef;
+        let ba = BumpAllocRef::new_with_address_space(40);
+
+        let mut status = unsafe { libz_ng_sys::compress(ba.top().as_mut_ptr(), &mut out as *mut _ as _, o.as_ptr(), o.len() as _) };
+        assert!(status == libz_ng_sys::Z_OK);
+        ba.top().set_len(out);
+        let compressed = ba.top().freeze();
+        ba.shrink_to_allocated();
+
+        // println!("{} {:?}", o.len(), o);
+        println!("serialized length {}", o.len());
+        println!("compressed length {}", compressed.len());
+    }
+
+    pub fn serialize_dag<W: std::io::Write>(&self, target: &mut W) {
+        use serde::{Serialize, Deserialize};
+
+        #[derive(Serialize, Deserialize, Debug, PartialEq, Hash, Eq, Clone)]
+        enum Trie {
+            Value(()),
+            Collapse((), Box<Trie>),
+            Alg(Vec<(u8, Trie)>),
+            Jump(Vec<u8>, Box<Trie>),
+            Ref(Vec<u8>)
+        }
+        use Trie::*;
+
+        let mut re_use = 0;
+        let rz = self.read_zipper();
+        let mut hm: std::collections::HashMap<Trie, Vec<u8>> = std::collections::HashMap::new();
+        macro_rules! box_or_ref {
+            ($hm:ident, $path:ident, $t:expr) => {{
+                let t = $t;
+                match $hm.entry(t.clone()) {
+                    std::collections::hash_map::Entry::Occupied(o) => {
+                        re_use += 1;
+                        Some(Box::new(Ref(o.get().clone())))
+                    }
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        v.insert($path.to_vec());
+                        Some(Box::new(t))
+                    }
+                }
+            }}
+        }
+
+        let s = crate::cata!(V, Option<Box<Trie>>, rz,
+            // |v: &V, path: &[u8]| { box_or_ref!(hm, path, Value(())) },
+            |v: &V, path: &[u8]| { Some(Box::new(Value(()))) },
+            |v: &V, w: Option<Box<Trie>>, path: &[u8]| { box_or_ref!(hm, path, Collapse((), w.unwrap())) },
+            |cm: &[u64; 4], ws: &mut [Option<Box<Trie>>], path: &[u8]| {
+                let mut it = crate::utils::ByteMaskIter::new(cm.clone());
+                box_or_ref!(hm, path, Alg(ws.iter_mut().map(|w| (it.next().unwrap(), *std::mem::take(w).unwrap())).collect())) },
+            |sp: &[u8], w: Option<Box<Trie>>, path: &[u8]| {  box_or_ref!(hm, path, Jump(sp.to_vec(), w.unwrap()))  }
+        );
+
+        use postcard::to_extend;
+        let o: Vec<u8> = vec![];
+        let o = to_extend(s.unwrap().as_ref(), o).unwrap();
+        let mut out = usize::MAX;
+
+        use freeze::BumpAllocRef;
+        let ba = BumpAllocRef::new_with_address_space(40);
+
+        let mut status = unsafe { libz_ng_sys::compress(ba.top().as_mut_ptr(), &mut out as *mut _ as _, o.as_ptr(), o.len() as _) };
+        assert!(status == libz_ng_sys::Z_OK);
+        ba.top().set_len(out);
+        let compressed = ba.top().freeze();
+        ba.shrink_to_allocated();
+
+        // println!("{} {:?}", o.len(), o);
+        println!("re_use {}", re_use);
+        println!("serialized length {}", o.len());
+        println!("compressed length {}", compressed.len());
     }
 
 
@@ -1444,6 +1572,17 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn tree_serialize_deserialize() {
+        let mut btm = BytesTrieMap::new();
+        let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
+        rs.iter().enumerate().for_each(|(i, r)| { btm.insert(r.as_bytes(), ()); });
+        let mut v = vec![];
+        // btm.serialize_tree(&mut v);
+        btm.serialize_dag(&mut v);
+    }
+
 }
 
 //GOAT, Consider refactor of zipper traits.  `WriteZipper` -> `PathWriter`.  Zipper is split into the zipper
