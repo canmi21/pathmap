@@ -605,7 +605,6 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
             Value(()),
             Collapse((), Box<Trie>),
             Alg(Vec<(u8, Trie)>),
-            Jump(Vec<u8>, Box<Trie>),
             Ref(Vec<u8>)
         }
         use Trie::*;
@@ -635,8 +634,7 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
             |v: &V, w: Option<Box<Trie>>, path: &[u8]| { box_or_ref!(hm, path, Collapse((), w.unwrap())) },
             |cm: &[u64; 4], ws: &mut [Option<Box<Trie>>], path: &[u8]| {
                 let mut it = crate::utils::ByteMaskIter::new(cm.clone());
-                box_or_ref!(hm, path, Alg(ws.iter_mut().map(|w| (it.next().unwrap(), *std::mem::take(w).unwrap())).collect())) },
-            |sp: &[u8], w: Option<Box<Trie>>, path: &[u8]| {  box_or_ref!(hm, path, Jump(sp.to_vec(), w.unwrap()))  }
+                box_or_ref!(hm, path, Alg(ws.iter_mut().map(|w| (it.next().unwrap(), *std::mem::take(w).unwrap())).collect())) }
         );
 
         use postcard::to_extend;
