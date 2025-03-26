@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+use std::mem;
 use crate::trie_map::BytesTrieMap;
 use crate::trie_node::*;
 use crate::zipper::*;
@@ -330,7 +332,7 @@ impl<V: Clone + Send + Sync + Unpin> ZipperAbsolutePath for ProductZipper<'_, '_
     fn root_prefix_path(&self) -> Option<&[u8]> { self.z.root_prefix_path() }
 }
 
-struct FullZipper {
+pub(crate) struct FullZipper {
     path: Vec<u8>
 }
 
@@ -413,8 +415,40 @@ impl ZipperMoving for FullZipper {
     fn to_prev_sibling_byte(&mut self) -> bool { self.to_sibling(false) }
 }
 
+pub(crate) struct MappedZipper<A, B, RZ, F> {
+    pub rz: RZ,
+    pub f: F,
+    pub pd: PhantomData<(A, B)>
+}
+
+impl <A : TrieValue, B : TrieValue, RZ : ZipperAccess<A>, F : Fn(&A) -> B + Copy> ZipperAccess<B> for MappedZipper<A, B, RZ, F> {
+    type ReadZipperT<'a> = MappedZipper<A, B, RZ::ReadZipperT<'a>, F> where Self: 'a;
+
+    fn value(&self) -> Option<&B> {
+        // this returning a reference is actually quite problematic conceptually for this RZ operator
+        // for now we just leak, a slightly more sensible design is using the cursor-like API where your value only lives between calls
+        self.rz.value().map(|v| &*Box::leak(Box::new((self.f)(v))))
+    }
+
+    fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
+        MappedZipper{ rz: self.rz.fork_read_zipper(), f: self.f, pd: Default::default() }
+    }
+
+    fn make_map(&self) -> Option<BytesTrieMap<Self::V>> {
+        self.rz.make_map().map(|btm| btm.map_values(|a| (self.f)(a)))
+    }
+}
+
+impl<A : TrieValue, B : TrieValue, RZ: ZipperAccess<A>, F: Fn(&A) -> B + Copy> ZipperPriv for MappedZipper<A, B, RZ, F> {
+    type V = B;
+
+    fn get_focus(&self) -> AbstractNodeRef<Self::V> { todo!() }
+    fn try_borrow_focus(&self) -> Option<&dyn TrieNode<Self::V>> { todo!() }
+}
+
+
 // Doesn't seem as lawful as the above, still maybe useful for testing
-struct NullZipper {}
+pub(crate) struct NullZipper {}
 
 impl<V: TrieValue> WriteZipperPriv<V> for NullZipper {
     fn take_focus(&mut self) -> Option<TrieNodeODRc<V>> {

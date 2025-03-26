@@ -5,6 +5,7 @@ use crate::morphisms::{new_map_from_ana, Catamorphism, TrieBuilder};
 use crate::trie_node::*;
 use crate::zipper::*;
 use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
+use crate::TrieValue;
 
 /// A map type that uses byte slices `&[u8]` as keys
 ///
@@ -406,6 +407,30 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
         }
     }
 
+    /// Returns true if this trie contains at least `n` values
+    pub(crate) fn at_least(&self, n: usize) -> bool {
+        // this is not completely sound yet wrt internal values
+        match n {
+            0 => { true }
+            1 => { !self.is_empty() }
+            _ => {
+                let mut rz = self.read_zipper();
+                let cc = rz.child_count();
+                if cc > n { return true; }
+                let mut depth = 1;
+                let mut total = rz.is_value() as usize;
+                loop {
+                    if !rz.descend_first_k_path(depth) { return false }
+                    if rz.is_value() { total += 1; if total == n { return true } }
+                    while rz.to_next_k_path(depth) {
+                        if rz.is_value() { total += 1; if total == n { return true } }
+                    }
+                    depth += 1;
+                }
+            }
+        }
+    }
+
     const INVIS_HASH: u128 = 0b00001110010011001111100111000110011110101111001101110110011100001011010011010011001000100111101000001100011111110100001000000111;
     /// Hash the logical `BytesTrieMap` and all its values with the provided hash function (which can return INVIS_HASH to ignore values).
     pub fn hash<VHash : Fn(&V) -> u128>(&self, vhash: VHash) -> u128 {
@@ -418,6 +443,30 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
             gxhash::gxhash128(state.as_slice(), 0b0100001010101101111110010110100110000010011000100100100111110111i64)
         })
         }
+    }
+
+    /// Returns `true` if each path with value of `self` is equivalent under `equiv` to a path with value in `other` and vice-versa
+    pub(crate) fn reference_equiv<W : TrieValue, Equiv : for <'q> Fn(&'q V, &'q W) -> bool>(&self, other: &BytesTrieMap<W>, equiv: Equiv) -> bool {
+        let mut srz = self.read_zipper();
+        let mut orz = other.read_zipper();
+        srz.find_corresponding(&orz, |v, mw| mw.is_none() || !equiv(v, mw.unwrap())).is_none() &&
+        orz.find_corresponding(&srz, |w, mv| mv.is_none() || !equiv(mv.unwrap(), w)).is_none()
+    }
+
+    /// Returns `true` if each path with value of `self` is included in `other`
+    pub(crate) fn reference_subset(&self, other: &BytesTrieMap<V>) -> bool where V : std::cmp::PartialEq {
+        self.find_corresponding(other, |v, mw| mw.is_none() || v != mw.unwrap()).is_none()
+    }
+
+    /// For each value `V` in `self`, find a corresponding `W` in `other`
+    pub(crate) fn find_corresponding<'a, W : TrieValue, Pred : for <'q> Fn(&'q V, Option<&'q W>) -> bool>(&'a self, other: &'a BytesTrieMap<W>, pred: Pred)
+        -> Option<(&'a V, Option<&'a W>)> where V : 'a, W : 'a {
+        let mut lrz = self.read_zipper();
+        while let Some(v) = lrz.to_next_val() {
+            let mw = other.get(lrz.path());
+            if pred(v, mw) { return Some((v, mw)) }
+        }
+        None
     }
 
     /// Returns a new `BytesTrieMap` containing the union of the paths in `self` and the paths in `other`
@@ -479,6 +528,29 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
         };
 
         Self::new_with_root(subtracted_root_node, subtracted_root_val)
+    }
+
+    /// Returns a new `BytesTrieMap` with the structure from `self` but `f`-mapped values
+    pub fn map_values<W : TrieValue, F : Fn(&V) -> W>(&self, f: F) -> BytesTrieMap<W> {
+        // GOAT placeholder impl., can Copy most of the nodes in the trie
+        let mut target = BytesTrieMap::new();
+        let mut rz = self.read_zipper();
+        while let Some(v) = rz.to_next_val() {
+            target.insert(rz.path(), f(v));
+        }
+        target
+    }
+
+    /// Returns a new `BytesTrieMap` containing `f`-mapped values at the locations of `self`
+    pub fn collect_values<W : TrieValue, F : Fn(&V) -> Option<W>>(&self, f: F) -> BytesTrieMap<W> {
+        let mut target = BytesTrieMap::new();
+        let mut rz = self.read_zipper();
+        while let Some(v) = rz.to_next_val() {
+            if let Some(w) = f(v) {
+                target.insert(rz.path(), w);
+            }
+        }
+        target
     }
 }
 

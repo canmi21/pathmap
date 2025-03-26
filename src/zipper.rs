@@ -25,6 +25,7 @@
 //! - [ascend_until](zipper::ZipperMoving::ascend_until)
 //!
 
+use divan::__private::Arg;
 use maybe_dangling::MaybeDangling;
 
 use crate::trie_node::*;
@@ -326,6 +327,17 @@ pub trait ZipperIteration<'a, V>: ZipperMoving {
     ///
     /// See: [descend_first_k_path](ZipperIteration::descend_first_k_path)
     fn to_next_k_path(&mut self, k: usize) -> bool;
+
+    fn find_corresponding<'a, 'b, W : TrieValue, ZW : ZipperMoving + ZipperAccess<W>, Pred : for <'q> Fn(&'q V, Option<&'q W>) -> bool>(&'a mut self,
+            other: &'b mut ZW, pred: Pred) -> Option<(&'a V, Option<&'b W>)> {
+        while let Some(v) = self.to_next_val() {
+            other.descend_to(self.path());
+            let mw = other.value();
+            if pred(v, mw) { return Some((v, mw)) }
+            other.reset()
+        }
+        None
+    }
 }
 
 /// An interface for a [Zipper] to support accessing the full path buffer used to create the zipper
@@ -1951,6 +1963,7 @@ pub(crate) mod read_zipper_core {
     }
 }
 use read_zipper_core::*;
+use crate::TrieValue;
 
 /// Internal function to walk along a path to the final node reference
 pub(crate) fn node_along_path<'a, 'path, V>(root_node: &'a dyn TrieNode<V>, path: &'path [u8], root_val: Option<&'a V>) -> (&'a dyn TrieNode<V>, &'path [u8], Option<&'a V>) {

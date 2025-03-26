@@ -15,7 +15,7 @@ arrayvec = "0.7.6"
 mutcursor = {version = "0.4"}
 num-traits = "0.2"
 tikv-jemallocator = {version = "0.6.0", optional = true}
-gxhash = {version="3.4.1", git="https://github.com/luketpeterson/gxhash/"} # for dag_serialization
+gxhash = {version="3.5.0" } # for dag_serialization
 libz-ng-sys = "1.1.21" # for any serialzation
 rand_distr = { version = "0.5.1", optional = true }
 rand = { version = "0.9.0", optional = true }
@@ -65,4 +65,8 @@ harness = false
 
 [[bench]]
 name = "oeis"
+harness = false
+
+[[bench]]
+name = "hashing"
 harness = false

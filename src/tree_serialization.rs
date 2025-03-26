@@ -3,6 +3,7 @@ use std::io::Write;
 use std::ptr::slice_from_raw_parts;
 use crate::{zipper, TrieValue};
 use crate::morphisms::{Catamorphism, new_map_from_ana, TrieBuilder, new_map_from_ana_jumping};
+use crate::trie_map::BytesTrieMap;
 use crate::utils::{BitMask, ByteMask};
 use crate::write_zipper::ZipperWriting;
 use crate::zipper::ZipperAbsolutePath;
@@ -56,8 +57,9 @@ pub fn deserialize_fork<V : TrieValue, WZ : ZipperWriting<V> + zipper::ZipperMov
 
 #[cfg(test)]
 mod tests {
-    use crate::tree_serialization::{serialize_fork, deserialize_fork};
+    use crate::tree_serialization::*;
     use crate::trie_map::BytesTrieMap;
+    use crate::zipper::{ZipperAccess, ZipperIteration, ZipperMoving, ZipperReadOnly};
 
     #[test]
     fn tree_serde_2() {
@@ -69,5 +71,58 @@ mod tests {
         let mut recovered = BytesTrieMap::new();
         deserialize_fork(top_node, &mut recovered.write_zipper(), &v[..], |_, p| ()).unwrap();
         assert_eq!(btm.hash(|i| 0), recovered.hash(|i| 0));
+    }
+
+    #[test]
+    fn patterns() {
+        // let mut map = BytesTrieMap::<u64>::new();
+        // map.insert(b"start:0000:hello", 0);
+        // map.insert(b"start:0001:hello", 1);
+        // map.insert(b"start:0002:hello", 2);
+        // map.insert(b"start:0003:hello", 3);
+        // map.insert(b"Foo:0000", 0);
+        // map.insert(b"Foo:0001", 1);
+        // map.insert(b"Bar:0000", 2);
+        // map.insert(b"Bar:0001", 3);
+        // map.insert(b"Foo:x:0000", 0);
+        // map.insert(b"Foo:y:0001", 1);
+        // map.insert(b"Bar:z:0000", 2);
+        // map.insert(b"Bar:w:0001", 3);
+        let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
+        let mut map: BytesTrieMap<u64> = rs.into_iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
+
+        let mut patterns = BytesTrieMap::new();
+
+        let mut rz = map.read_zipper();
+        loop {
+            let mut srz = rz.fork_read_zipper();
+            while let Some(ov) = srz.to_next_val() {
+                let mut pwz = patterns.write_zipper_at_path(srz.path());
+                let mut v = pwz.get_value_or_insert(BytesTrieMap::new());
+                v.insert(rz.path(), *ov);
+            }
+            drop(srz);
+            // patterns_wz.join(&rz.clone().make_map().unwrap().map_values(|ov| BytesTrieMap::from_iter(std::iter::once((path, *ov)))).read_zipper());
+            if !rz.to_next_step() { break }
+        }
+
+        let mut results = vec![];
+        let result_depth = 2;
+        let mut prz = patterns.read_zipper();
+        prz.descend_first_k_path(result_depth);
+        loop {
+            if let Some(sm) = prz.get_value() {
+                if sm.at_least(2) {
+                    results.push((String::from_utf8(prz.path().to_vec()).unwrap(), sm.iter().map(|(p, v)| (String::from_utf8(p).unwrap(), *v)).collect::<Vec<_>>()));
+                    // println!("shared ending {:?} between {:?}", std::str::from_utf8(prz.path()).unwrap(), sm.iter().map(|(p, v)| (String::from_utf8(p).unwrap(), v)).collect::<Vec<_>>());
+                }
+            }
+            if !prz.to_next_k_path(result_depth) { break }
+        }
+        assert_eq!(results, vec![
+            ("on".into(), vec![("cann".into(), 2), ("rubic".into(), 9)]),
+            ("ow".into(), vec![("arr".into(), 0), ("b".into(), 1)]),
+            ("us".into(), vec![("roman".into(), 5), ("romul".into(), 6), ("rubicund".into(), 10)])
+        ])
     }
 }
