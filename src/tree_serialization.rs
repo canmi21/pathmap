@@ -69,8 +69,8 @@ mod tests {
         let mut v = vec![];
         let Ok(top_node) = serialize_fork(btm.read_zipper(), &mut v, |_1, _2, _3| {}) else { unreachable!() };
         let mut recovered = BytesTrieMap::new();
-        deserialize_fork(top_node, &mut recovered.write_zipper(), &v[..], |_, p| ()).unwrap();
-        assert_eq!(btm.hash(|i| 0), recovered.hash(|i| 0));
+        deserialize_fork(top_node, &mut recovered.write_zipper(), &v[..], |_, _p| ()).unwrap();
+        assert_eq!(btm.hash(|_i| 0), recovered.hash(|_i| 0));
     }
 
     #[test]
@@ -89,7 +89,7 @@ mod tests {
         // map.insert(b"Bar:z:0000", 2);
         // map.insert(b"Bar:w:0001", 3);
         let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
-        let mut map: BytesTrieMap<u64> = rs.into_iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
+        let map: BytesTrieMap<u64> = rs.into_iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
 
         let mut patterns = BytesTrieMap::new();
 
@@ -98,7 +98,7 @@ mod tests {
             let mut srz = rz.fork_read_zipper();
             while let Some(ov) = srz.to_next_val() {
                 let mut pwz = patterns.write_zipper_at_path(srz.path());
-                let mut v = pwz.get_value_or_insert(BytesTrieMap::new());
+                let v = pwz.get_value_or_insert(BytesTrieMap::new());
                 v.insert(rz.path(), *ov);
             }
             drop(srz);

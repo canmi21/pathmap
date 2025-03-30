@@ -18,10 +18,20 @@ impl ByteMask {
     pub fn into_inner(self) -> [u64; 4] {
         self.0
     }
+    /// Load a new bytemask from bytes
+    #[inline]
+    pub fn from_bytes(arr: &[u8; 32]) -> Self { unsafe { ByteMask(std::mem::transmute_copy(arr)) } }
+    /// Unwraps the `ByteMask` type to yield the inner byte array
+    #[inline]
+    pub fn as_bytes(self) -> [u8; 32] { unsafe { std::mem::transmute(self.0) } }
     /// Create an iterator over every byte, in ascending order
     #[inline]
     pub fn iter(&self) -> ByteMaskIter {
         self.byte_mask_iter()
+    }
+    #[inline]
+    pub fn xor(&self, other: &ByteMask) -> ByteMask {
+        ByteMask([self.0[0] ^ other.0[0], self.0[1] ^ other.0[1], self.0[2] ^ other.0[2], self.0[3] ^ other.0[3]])
     }
 }
 

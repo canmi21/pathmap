@@ -19,8 +19,8 @@ fn big_logic_hash(bencher: Bencher) {
   assert_eq!(map.val_count(), 91692);
 
   bencher.bench_local(|| {
-    // black_box(map.hash(|_| 0));
-    black_box(map.reference_equiv(map, |x, y| x == y))
+    black_box(map.hash2(|_| 0));
+    // black_box(map.reference_equiv(map, |x, y| x == y))
   });
 
   black_box(map);

@@ -25,7 +25,6 @@
 //! - [ascend_until](zipper::ZipperMoving::ascend_until)
 //!
 
-use divan::__private::Arg;
 use maybe_dangling::MaybeDangling;
 
 use crate::trie_node::*;
@@ -328,11 +327,11 @@ pub trait ZipperIteration<'a, V>: ZipperMoving {
     /// See: [descend_first_k_path](ZipperIteration::descend_first_k_path)
     fn to_next_k_path(&mut self, k: usize) -> bool;
 
-    fn find_corresponding<'a, 'b, W : TrieValue, ZW : ZipperMoving + ZipperAccess<W>, Pred : for <'q> Fn(&'q V, Option<&'q W>) -> bool>(&'a mut self,
-            other: &'b mut ZW, pred: Pred) -> Option<(&'a V, Option<&'b W>)> {
+    fn find_corresponding<'b, W : TrieValue, Z : ZipperReadOnly<'b, W> + ZipperMoving, Pred : Fn(&'a V, Option<&'b W>) -> bool>(&mut self,
+            other: &mut Z, pred: Pred) -> Option<(&'a V, Option<&'b W>)> {
         while let Some(v) = self.to_next_val() {
             other.descend_to(self.path());
-            let mw = other.value();
+            let mw = other.get_value();
             if pred(v, mw) { return Some((v, mw)) }
             other.reset()
         }

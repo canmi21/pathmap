@@ -1,11 +1,12 @@
 use core::cell::UnsafeCell;
 use std::ptr::slice_from_raw_parts;
-use num_traits::{PrimInt, zero};
+use num_traits::{AsPrimitive, PrimInt, zero};
 use crate::morphisms::{new_map_from_ana, Catamorphism, TrieBuilder};
 use crate::trie_node::*;
 use crate::zipper::*;
 use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
 use crate::TrieValue;
+use crate::utils::ByteMask;
 
 /// A map type that uses byte slices `&[u8]` as keys
 ///
@@ -446,17 +447,19 @@ impl<V: Clone + Send + Sync + Unpin> BytesTrieMap<V> {
     }
 
     /// Returns `true` if each path with value of `self` is equivalent under `equiv` to a path with value in `other` and vice-versa
-    pub(crate) fn reference_equiv<W : TrieValue, Equiv : for <'q> Fn(&'q V, &'q W) -> bool>(&self, other: &BytesTrieMap<W>, equiv: Equiv) -> bool {
-        let mut srz = self.read_zipper();
-        let mut orz = other.read_zipper();
-        srz.find_corresponding(&orz, |v, mw| mw.is_none() || !equiv(v, mw.unwrap())).is_none() &&
-        orz.find_corresponding(&srz, |w, mv| mv.is_none() || !equiv(mv.unwrap(), w)).is_none()
+    pub(crate) fn reference_equiv<W : TrieValue, Equiv : Fn(&V, &W) -> bool>(&self, other: &BytesTrieMap<W>, equiv: Equiv) -> bool
+    where
+    {
+        let mut srz: ReadZipperUntracked<V> = self.read_zipper();
+        let mut orz: ReadZipperUntracked<W> = other.read_zipper();
+        srz.find_corresponding(&mut orz, |v, mw| mw.is_none() || !equiv(v, mw.unwrap())).is_none() &&
+        orz.find_corresponding(&mut srz, |w, mv| mv.is_none() || !equiv(mv.unwrap(), w)).is_none()
     }
 
-    /// Returns `true` if each path with value of `self` is included in `other`
+/*    /// Returns `true` if each path with value of `self` is included in `other`
     pub(crate) fn reference_subset(&self, other: &BytesTrieMap<V>) -> bool where V : std::cmp::PartialEq {
         self.find_corresponding(other, |v, mw| mw.is_none() || v != mw.unwrap()).is_none()
-    }
+    }*/
 
     /// For each value `V` in `self`, find a corresponding `W` in `other`
     pub(crate) fn find_corresponding<'a, W : TrieValue, Pred : for <'q> Fn(&'q V, Option<&'q W>) -> bool>(&'a self, other: &'a BytesTrieMap<W>, pred: Pred)
