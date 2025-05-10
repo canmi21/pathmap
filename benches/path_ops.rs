@@ -1,3 +1,6 @@
+#![feature(likely_unlikely)]
+
+use std::hint::{unlikely, likely};
 use divan::{Bencher, Divan};
 use pathmap::utils::find_prefix_overlap;
 use rand::prelude::StdRng;
@@ -21,9 +24,8 @@ fn count_shared_reference<'a, 'b>(p: &'a [u8], q: &'b [u8]) -> usize {
 fn count_shared_bare(a: &[u8], b: &[u8]) -> usize {
     let mut cnt = 0;
     loop {
-        if cnt == a.len() {break}
-        if cnt == b.len() {break}
-        if unsafe{ a.get_unchecked(cnt) != b.get_unchecked(cnt) } {break}
+        if unlikely(cnt == a.len() || cnt == b.len()) {break}
+        if unlikely(unsafe{ a.get_unchecked(cnt) != b.get_unchecked(cnt) }) {break}
         cnt += 1;
     }
     cnt
@@ -149,6 +151,26 @@ fn common_prefix_reference(bencher: Bencher) {
         pairs.iter().for_each(|(l, r)| {
             let l = unsafe { l.as_ref().unwrap() }; let r = unsafe { r.as_ref().unwrap() };
             std::hint::black_box(count_shared_reference(&l[..], &r[..]));
+        });
+    });
+}
+
+#[divan::bench()]
+fn common_prefix_bare(bencher: Bencher) {
+    let pairs = setup();
+
+    pairs.iter().for_each(|(l, r)| {
+        let l = unsafe { l.as_ref().unwrap() }; let r = unsafe { r.as_ref().unwrap() };
+        let cnt = count_shared_bare(l, r);
+        assert_eq!(&l[..cnt], &r[..cnt]);
+        assert!(l.len() <= cnt || r.len() <= cnt || l[cnt] != r[cnt], "{l:?} {r:?} {:?}", cnt);
+    });
+    // println!("all tested reference");
+
+    bencher.bench_local(|| {
+        pairs.iter().for_each(|(l, r)| {
+            let l = unsafe { l.as_ref().unwrap() }; let r = unsafe { r.as_ref().unwrap() };
+            std::hint::black_box(count_shared_bare(&l[..], &r[..]));
         });
     });
 }

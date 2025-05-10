@@ -131,7 +131,8 @@ impl<'trie, V> ZipperCreationPriv<'trie, V> for ZipperHead<'_, 'trie, V> {
 
 impl<V> Drop for ZipperHead<'_, '_, V> {
     fn drop(&mut self) {
-        self.with_inner_core_z(|z| z.focus_stack.advance_if_empty_twostep(|root| root, |root| root.make_mut()))
+        // MAY MAKE BOUND ON V PERVASIVE
+        // self.with_inner_core_z(|z| z.focus_stack.advance_if_empty_twostep(|root| root, |root| root.make_mut()))
     }
 }
 

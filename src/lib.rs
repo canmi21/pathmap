@@ -1,5 +1,7 @@
-
+#![feature(allocator_api)]
+#![feature(iter_collect_into)]
 #![doc = include_str!("../README.md")]
+extern crate core;
 
 #[cfg(feature = "jemalloc")]
 use tikv_jemallocator::Jemalloc;

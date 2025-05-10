@@ -26,7 +26,7 @@ const TEST_ARGS: [(usize, &str); 50] = [
     // (100_000_000, "000"), (100_000_000, "001"), (100_000_000, "002"), (100_000_000, "004"), (100_000_000, "008"), (100_000_000, "016"), (100_000_000, "032"), (100_000_000, "064"), (100_000_000, "128"), (100_000_000, "256"),
 ];
 
-#[divan::bench(sample_size = 1, args = TEST_ARGS)]
+#[divan::bench(sample_size = 10, args = TEST_ARGS)]
 fn parallel_read_zipper_get(bencher: Bencher, (elements, thread_cnt): (usize, &str)) {
     let thread_cnt = usize::from_str_radix(thread_cnt, 10).unwrap();
     let real_thread_cnt = thread_cnt.max(1);
@@ -37,9 +37,8 @@ fn parallel_read_zipper_get(bencher: Bencher, (elements, thread_cnt): (usize, &s
         let path = [n as u8];
         let mut zipper = map.write_zipper_at_path(&path);
         for i in (n * elements_per_thread)..((n+1) * elements_per_thread) {
-            zipper.descend_to(prefix_key(&(i as u64)));
+            zipper.move_to_path(prefix_key(&(i as u64)));
             zipper.set_value(i);
-            zipper.reset();
         }
     }
 
@@ -62,9 +61,8 @@ fn parallel_read_zipper_get(bencher: Bencher, (elements, thread_cnt): (usize, &s
                         Ok(mut zipper) => {
                             //We got the zipper, do the stuff
                             for i in (n * elements_per_thread)..((n+1) * elements_per_thread) {
-                                zipper.descend_to(prefix_key(&(i as u64)));
+                                zipper.move_to_path(prefix_key(&(i as u64)));
                                 assert_eq!(zipper.get_value().unwrap(), &i);
-                                zipper.reset();
                             }
 
                             //Tell the main thread we're done
@@ -99,16 +97,15 @@ fn parallel_read_zipper_get(bencher: Bencher, (elements, thread_cnt): (usize, &s
                 let path = [0];
                 let mut zipper = map.read_zipper_at_path(&path);
                 for i in 0..elements {
-                    zipper.descend_to(prefix_key(&(i as u64)));
+                    zipper.move_to_path(prefix_key(&(i as u64)));
                     assert_eq!(zipper.get_value().unwrap(), &i);
-                    zipper.reset();
                 }
             }
         });
     });
 }
 
-#[divan::bench(sample_size = 1, args = TEST_ARGS)]
+#[divan::bench(sample_size = 10, args = TEST_ARGS)]
 fn parallel_insert(bencher: Bencher, (elements, thread_cnt): (usize, &str)) {
     let thread_cnt = usize::from_str_radix(thread_cnt, 10).unwrap();
     let real_thread_cnt = thread_cnt.max(1);
@@ -136,9 +133,8 @@ fn parallel_insert(bencher: Bencher, (elements, thread_cnt): (usize, &str)) {
                         Ok(mut zipper) => {
                             //We got the zipper, do the stuff
                             for i in (n * elements_per_thread)..((n+1) * elements_per_thread) {
-                                zipper.descend_to(prefix_key(&(i as u64)));
+                                zipper.move_to_path(prefix_key(&(i as u64)));
                                 zipper.set_value(i);
-                                zipper.reset();
                             }
 
                             //Tell the main thread we're done
@@ -172,16 +168,15 @@ fn parallel_insert(bencher: Bencher, (elements, thread_cnt): (usize, &str)) {
                 //No-thread case, to measure overhead of sync vs. 1-thread case
                 let mut zipper = unsafe{ zipper_head.write_zipper_at_exclusive_path_unchecked(&[0]) };
                 for i in 0..elements {
-                    zipper.descend_to(prefix_key(&(i as u64)));
+                    zipper.move_to_path(prefix_key(&(i as u64)));
                     zipper.set_value(i);
-                    zipper.reset();
                 }
             }
         });
     });
 }
 
-#[divan::bench(sample_size = 1, args = TEST_ARGS)]
+#[divan::bench(sample_size = 10, args = TEST_ARGS)]
 fn parallel_copy_known_path(bencher: Bencher, (elements, thread_cnt): (usize, &str)) {
     let thread_cnt = usize::from_str_radix(thread_cnt, 10).unwrap();
     let real_thread_cnt = thread_cnt.max(1);
@@ -221,14 +216,11 @@ fn parallel_copy_known_path(bencher: Bencher, (elements, thread_cnt): (usize, &s
                             //We got the zippers, do the stuff
                             for i in (n * elements_per_thread)..((n+1) * elements_per_thread) {
                                 let buf = i.to_be_bytes();
-                                reader_z.descend_to(&buf);
+                                reader_z.move_to_path(&buf);
                                 let val = reader_z.get_value().unwrap();
 
-                                writer_z.descend_to(&buf);
+                                writer_z.move_to_path(&buf);
                                 writer_z.set_value(*val);
-
-                                reader_z.reset();
-                                writer_z.reset();
                             }
 
                             //Tell the main thread we're done
@@ -269,21 +261,18 @@ fn parallel_copy_known_path(bencher: Bencher, (elements, thread_cnt): (usize, &s
                 let mut writer_z = unsafe{ zipper_head.write_zipper_at_exclusive_path_unchecked(&[b'o', b'u', b't', 0]) };
                 let mut reader_z = unsafe{ zipper_head.read_zipper_at_path_unchecked(&[b'i', b'n', 0]) };
                 for i in 0..elements {
-                    reader_z.descend_to(i.to_be_bytes());
+                    reader_z.move_to_path(i.to_be_bytes());
                     let val = reader_z.get_value().unwrap();
 
-                    writer_z.descend_to(i.to_be_bytes());
+                    writer_z.move_to_path(i.to_be_bytes());
                     writer_z.set_value(*val);
-
-                    reader_z.reset();
-                    writer_z.reset();
                 }
             }
         });
     });
 }
 
-#[divan::bench(sample_size = 1, args = TEST_ARGS)]
+#[divan::bench(sample_size = 10, args = TEST_ARGS)]
 fn parallel_copy_traverse(bencher: Bencher, (elements, thread_cnt): (usize, &str)) {
     let thread_cnt = usize::from_str_radix(thread_cnt, 10).unwrap();
     let real_thread_cnt = thread_cnt.max(1);
@@ -324,9 +313,8 @@ fn parallel_copy_traverse(bencher: Bencher, (elements, thread_cnt): (usize, &str
                         Ok((mut reader_z, mut writer_z)) => {
                             //We got the zippers, do the stuff
                             while let Some(val) = reader_z.to_next_get_value() {
-                                writer_z.descend_to(reader_z.path());
+                                writer_z.move_to_path(reader_z.path());
                                 writer_z.set_value(*val);
-                                writer_z.reset();
 
                                 sanity_counter += 1;
                             }
@@ -372,9 +360,8 @@ fn parallel_copy_traverse(bencher: Bencher, (elements, thread_cnt): (usize, &str
                 let mut writer_z = unsafe{ zipper_head.write_zipper_at_exclusive_path_unchecked(&[b'o', b'u', b't', 0]) };
                 let mut reader_z = unsafe{ zipper_head.read_zipper_at_path_unchecked(&[b'i', b'n', 0]) };
                 while let Some(val) = reader_z.to_next_get_value() {
-                    writer_z.descend_to(reader_z.path());
+                    writer_z.move_to_path(reader_z.path());
                     writer_z.set_value(*val);
-                    writer_z.reset();
                     sanity_counter += 1;
                 }
                 assert_eq!(sanity_counter, elements_per_thread);

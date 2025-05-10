@@ -731,3 +731,40 @@ fn find_prefix_overlap_test() {
         assert_eq!(overlap, test.2);
     }
 }
+
+use std::alloc::{Allocator, AllocError, Layout};
+use std::ptr::{null_mut, NonNull};
+
+/// Heap pages remain until `std::process::exit`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Leak;
+static mut ALLOC: *mut u8 = { null_mut() }; 
+
+unsafe impl Allocator for Leak {
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        unsafe {
+        if ALLOC == null_mut() {
+            use libc::*;
+            ALLOC = { libc::mmap(null_mut(), (1usize << 32)*4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0) as _ };
+            assert_ne!(ALLOC as isize, -1isize);
+            // println!("TrieNodeODRc size {}", size_of::<crate::trie_node::TrieNodeODRc<usize>>());
+            // println!("LineListNode size {}", size_of::<crate::line_list_node::LineListNode<usize>>());
+            // println!("CoFree size {}", size_of::<crate::dense_byte_node::OrdinaryCoFree<std::num::NonZero<usize>>>());
+        }
+            
+        let last = ALLOC as usize;
+        let align = layout.align() as usize;
+        let size = layout.size();
+        let start = (last + (align - 1)) & !(align - 1);
+        ALLOC = (start + size) as *mut u8;
+        Ok(NonNull::slice_from_raw_parts(NonNull::new_unchecked(start as *mut u8), size))
+
+        }
+        // let ptr = std::alloc::Global.allocate(layout)?;
+        // Ok(ptr)
+    }
+
+    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
+        // std::alloc::Global.deallocate(_ptr, _layout)
+    }
+}

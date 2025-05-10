@@ -29,48 +29,52 @@ pub struct LineListNode<V> {
 // one chache line.  But if we put in into an RcBox, (which adds a 16 byte header) we either need 14 bytes
 // to stay within 1 cache line, or 78 to pack into two.
 //WARNING the length bits mean I will overflow if I go above 63
+#[cfg(not(feature = "racy_cow"))]
 const KEY_BYTES_CNT: usize = 14;
+#[cfg(feature = "racy_cow")]
+const KEY_BYTES_CNT: usize = 46;
 
 const SLOT_0_USED_MASK: u16 = 1 << 15;
 const SLOT_1_USED_MASK: u16 = 1 << 14;
 const BOTH_SLOTS_USED_MASK: u16 = SLOT_0_USED_MASK | SLOT_1_USED_MASK;
 
-impl<V> Drop for LineListNode<V> {
-    fn drop(&mut self) {
-        //Discussion: The straightforward recursive implementation hits a stack overflow with, some very
-        // long path lengths.  However we don't want to burden the common case with extra work.  The
-        // pathological paths are almost entirely non-branching.  Therefore, we will invoke a recursive
-        // drop function if the node branches, and an iterative drop if it doesn't
-
-        let slot0_used = self.is_used::<0>();
-        let slot1_used = self.is_used::<1>();
-        let slot0_child = self.is_child_ptr::<0>();
-        let slot1_child = self.is_child_ptr::<1>();
-
-        if  (slot0_used && slot0_child) != (slot1_used && slot1_child)  {
-            //If there is exactly one child, do the non-recursive drop
-            list_node_iterative_drop(self);
-        } else {
-            if slot0_used {
-                if slot0_child {
-                    unsafe{ ManuallyDrop::drop(&mut self.val_or_child0.child) }
-                } else {
-                    unsafe{ ManuallyDrop::drop(&mut self.val_or_child0.val) }
-                }
-            }
-            if slot1_used {
-                if slot1_child {
-                    unsafe{ ManuallyDrop::drop(&mut self.val_or_child1.child) }
-                } else {
-                    unsafe{ ManuallyDrop::drop(&mut self.val_or_child1.val) }
-                }
-            }
-        }
-    }
-}
+// impl<V> Drop for LineListNode<V> {
+//     fn drop(&mut self) {
+//         //Discussion: The straightforward recursive implementation hits a stack overflow with, some very
+//         // long path lengths.  However we don't want to burden the common case with extra work.  The
+//         // pathological paths are almost entirely non-branching.  Therefore, we will invoke a recursive
+//         // drop function if the node branches, and an iterative drop if it doesn't
+// 
+//         let slot0_used = self.is_used::<0>();
+//         let slot1_used = self.is_used::<1>();
+//         let slot0_child = self.is_child_ptr::<0>();
+//         let slot1_child = self.is_child_ptr::<1>();
+// 
+//         if  (slot0_used && slot0_child) != (slot1_used && slot1_child)  {
+//             //If there is exactly one child, do the non-recursive drop
+//             // MAY MAKE V BOUNDS PERVASIVE
+//             list_node_iterative_drop(self);
+//         } else {
+//             if slot0_used {
+//                 if slot0_child {
+//                     unsafe{ ManuallyDrop::drop(&mut self.val_or_child0.child) }
+//                 } else {
+//                     unsafe{ ManuallyDrop::drop(&mut self.val_or_child0.val) }
+//                 }
+//             }
+//             if slot1_used {
+//                 if slot1_child {
+//                     unsafe{ ManuallyDrop::drop(&mut self.val_or_child1.child) }
+//                 } else {
+//                     unsafe{ ManuallyDrop::drop(&mut self.val_or_child1.val) }
+//                 }
+//             }
+//         }
+//     }
+// }
 
 #[inline]
-fn list_node_iterative_drop<V>(node: &mut LineListNode<V>) {
+fn list_node_iterative_drop<V : Clone + Sync + Send>(node: &mut LineListNode<V>) {
     let mut next_node = list_node_take_child_to_drop(node).unwrap();
     loop {
         if next_node.refcount() > 1 {
@@ -1502,7 +1506,7 @@ fn merge_into_list_nodes<V: Clone + Send + Sync + Lattice>(target: &mut LineList
     }
 }
 
-fn follow_path<'a, 'k, V>(mut node: &'a dyn TrieNode<V>, mut key: &'k[u8]) -> Option<(&'k[u8], &'a dyn TrieNode<V>)> {
+fn follow_path<'a, 'k, V : Clone + Sync + Send>(mut node: &'a dyn TrieNode<V>, mut key: &'k[u8]) -> Option<(&'k[u8], &'a dyn TrieNode<V>)> {
     while let Some((consumed_byte_cnt, next_node)) = node.node_get_child(key) {
         let next_node = next_node.borrow();
         if consumed_byte_cnt < key.len() {
@@ -1521,7 +1525,7 @@ fn follow_path<'a, 'k, V>(mut node: &'a dyn TrieNode<V>, mut key: &'k[u8]) -> Op
 
 /// Follows a path from a node, returning `(true, _)` if a value was encountered along the path, returns
 /// `(false, Some)` if the path continues, and `(false, None)` if the path does not descend from the node
-fn follow_path_to_value<'a, 'k, V>(mut node: &'a dyn TrieNode<V>, mut key: &'k[u8]) -> (bool, Option<(&'k[u8], &'a dyn TrieNode<V>)>) {
+fn follow_path_to_value<'a, 'k, V : Clone + Sync + Send>(mut node: &'a dyn TrieNode<V>, mut key: &'k[u8]) -> (bool, Option<(&'k[u8], &'a dyn TrieNode<V>)>) {
     while let Some((consumed_byte_cnt, next_node)) = node.node_get_child(key) {
         if consumed_byte_cnt < key.len() {
             let next_node = next_node.borrow();
@@ -2205,10 +2209,10 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
         //Exact match with a path to a child node means return that node
         let (key0, key1) = self.get_both_keys();
         if self.is_used_child_0() && key0 == key {
-            return AbstractNodeRef::BorrowedRc(unsafe{ self.child_in_slot::<0>() })
+            return AbstractNodeRef::OwnedRc(unsafe{ self.child_in_slot::<0>().clone() })
         }
         if self.is_used_child_1() && key1 == key {
-            return AbstractNodeRef::BorrowedRc(unsafe{ self.child_in_slot::<1>() })
+            return AbstractNodeRef::OwnedRc(unsafe{ self.child_in_slot::<1>().clone() })
         }
         //Otherwise check to see if we need to make a sub-node.  If we do,
         // We know the new node will have only 1 slot filled
@@ -2316,6 +2320,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for LineListNode<V> {
 
     fn join_into_dyn(&mut self, other: TrieNodeODRc<V>) -> (AlgebraicStatus, Result<(), TrieNodeODRc<V>>) where V: Lattice {
         debug_assert!(validate_node(self));
+        // println!("join_into_dyn Pair {:?}", other);
         match other.borrow().as_tagged() {
             TaggedNodeRef::LineListNode(other_list_node) => {
                 merge_into_list_nodes(self, other_list_node)
@@ -2589,7 +2594,7 @@ pub(crate) fn validate_node<V>(_node: &LineListNode<V>) -> bool { true }
 mod tests {
     use super::*;
 
-    fn get_recursive<'a, 'b, V: Clone>(key: &'a [u8], node: &'b dyn TrieNode<V>) -> (&'a [u8], &'b dyn TrieNode<V>, usize) {
+    fn get_recursive<'a, 'b, V: Clone + Send + Sync>(key: &'a [u8], node: &'b dyn TrieNode<V>) -> (&'a [u8], &'b dyn TrieNode<V>, usize) {
         let mut remaining_key = key;
         let mut child_node = node as &dyn TrieNode<V>;
         let mut levels = 0;

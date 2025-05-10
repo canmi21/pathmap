@@ -443,7 +443,10 @@ impl<V> ValOrChild<V> {
 
 pub union ValOrChildUnion<V> {
     pub child: ManuallyDrop<TrieNodeODRc<V>>,
-    pub val: ManuallyDrop<LocalOrHeap<V>>,
+    #[cfg(not(feature = "racy_cow"))]
+    pub val: ManuallyDrop<LocalOrHeap<V, [u8; 16]>>,
+    #[cfg(feature = "racy_cow")]
+    pub val: ManuallyDrop<LocalOrHeap<V, [u8; 8]>>,
     pub _unused: ()
 }
 
@@ -659,8 +662,8 @@ impl<'a, V> core::fmt::Debug for AbstractNodeRef<'a, V> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::None => write!(f, "AbstractNodeRef::None"),
-            Self::BorrowedDyn(_) => write!(f, "AbstractNodeRef::BorrowedDyn"),
-            Self::BorrowedRc(_) => write!(f, "AbstractNodeRef::BorrowedRc"),
+            Self::BorrowedDyn(ptr) => write!(f, "AbstractNodeRef::BorrowedDyn {ptr:?}"),
+            Self::BorrowedRc(ptr) => write!(f, "AbstractNodeRef::BorrowedRc {ptr:?}"),
             Self::BorrowedTiny(_) => write!(f, "AbstractNodeRef::BorrowedTiny"),
             Self::OwnedRc(_) => write!(f, "AbstractNodeRef::OwnedRc"),
         }
@@ -1115,7 +1118,7 @@ pub(crate) fn val_count_below_root<V>(node: &dyn TrieNode<V>) -> usize {
     node.node_val_count(&mut cache)
 }
 
-pub(crate) fn val_count_below_node<V>(node: &TrieNodeODRc<V>, cache: &mut HashMap<*const dyn TrieNode<V>, usize>) -> usize {
+pub(crate) fn val_count_below_node<V : Clone + Sync + Send>(node: &TrieNodeODRc<V>, cache: &mut HashMap<*const dyn TrieNode<V>, usize>) -> usize {
     if node.refcount() > 1 {
         let ptr = node.as_ptr();
         match cache.get(&ptr) {
@@ -1137,7 +1140,7 @@ pub(crate) fn val_count_below_node<V>(node: &TrieNodeODRc<V>, cache: &mut HashMa
 /// a zero-length continuation path.  If `stop_early` is `false`, the returned continuation path may be
 /// zero-length and the returned node will represent as much of the path as is possible.
 #[inline]
-pub(crate) fn node_along_path_mut<'a, 'k, V>(start_node: &'a mut TrieNodeODRc<V>, path: &'k [u8], stop_early: bool) -> (&'k [u8], &'a mut TrieNodeODRc<V>) {
+pub(crate) fn node_along_path_mut<'a, 'k, V : Clone + Sync + Send>(start_node: &'a mut TrieNodeODRc<V>, path: &'k [u8], stop_early: bool) -> (&'k [u8], &'a mut TrieNodeODRc<V>) {
     let mut key = path;
     let mut node = start_node;
 
@@ -1182,7 +1185,7 @@ pub(crate) fn make_cell_node<V: Clone + Send + Sync>(node: &mut TrieNodeODRc<V>)
 //NOTE for future separation into stand-alone crate: The `pub(crate)` visibility inside the `opaque_dyn_rc_trie_node`
 //  module come from the visibility of the trait it is derived on.  In this case, `TrieNode`
 pub(crate) use opaque_dyn_rc_trie_node::TrieNodeODRc;
-#[cfg(not(feature = "racy_refcount"))]
+#[cfg(all(not(feature = "racy_refcount"), not(feature = "racy_cow")))]
 mod opaque_dyn_rc_trie_node {
     use std::sync::Arc;
     use super::TrieNode;
@@ -1270,6 +1273,238 @@ mod opaque_dyn_rc_trie_node {
     }
 }
 
+#[cfg(feature = "racy_cow")]
+pub mod opaque_dyn_rc_trie_node {
+    use std::cell::UnsafeCell;
+    use std::marker::PhantomData;
+    use std::num::NonZeroU8;
+    use super::{TaggedNodeRef, TaggedNodeRefMut, TrieNode};
+    use crate::dense_byte_node::{CellByteNode, DenseByteNode};
+    use crate::line_list_node::LineListNode;
+    use crate::tiny_node::TinyRefNode;
+
+    unsafe impl<V> Send for TrieNodeODRc<V> {}
+    unsafe impl<V> Sync for TrieNodeODRc<V> {}
+
+    pub struct TrieNodeODRc<V>(NonZeroU8, UnsafeCell<[u8; 7]>, PhantomData<V>);
+
+    impl <V> Clone for TrieNodeODRc<V> {
+        fn clone(&self) -> Self {
+            let (tag, ptr, shared) = self.unpack();
+
+            if !shared {
+                unsafe {
+                    // this races with other clones being made, though it doesn't matter who wins
+                    self.toggle_shared();
+                }
+            }
+
+            TrieNodeODRc::pack(tag, ptr, true)
+        }
+    }
+    
+    macro_rules! parts {
+        (*$n:ident) => { unsafe { {
+            let res = match $n.as_tagged() {
+                TaggedNodeRef::TinyRefNode(n) => { (Ref, n as *const _ as u64) }
+                TaggedNodeRef::EmptyNode => { (Empty, 0) }
+                _ => { match $n.as_tagged_mut() {
+                    TaggedNodeRefMut::DenseByteNode(n) => { (Dense, n as *mut _ as u64)  }
+                    TaggedNodeRefMut::LineListNode(n) => { (Pair, n as *mut _ as u64) }
+                    TaggedNodeRefMut::CellByteNode(n) => { (Cell, n as *mut _ as u64) }
+                    TaggedNodeRefMut::Unsupported => { unreachable!() } } } };
+            std::mem::forget($n);
+            res
+        } } };
+        (&$n:expr) => { unsafe { {
+            let (tag, ptr) = $n;
+            match tag {
+                Dense => { (ptr as *const DenseByteNode<_>).as_ref().unwrap() as _ }
+                Pair => { (ptr as *const LineListNode<_>).as_ref().unwrap() as _ }
+                Cell => { (ptr as *const CellByteNode<_>).as_ref().unwrap() as _ }
+                Ref => { (ptr as *const TinyRefNode<_>).as_ref().unwrap() as _ }
+                Empty => { &crate::empty_node::EMPTY_NODE as &dyn TrieNode<_> }
+                _ => { unreachable!() } 
+            }
+        } } };
+        (&mut $n:expr) => { unsafe { {
+            let (tag, ptr) = $n;
+            match tag {
+                Dense => { (ptr as *mut DenseByteNode<_>).as_mut().unwrap() as _ }
+                Pair => { (ptr as *mut LineListNode<_>).as_mut().unwrap() as _ }
+                Cell => { (ptr as *mut CellByteNode<_>).as_mut().unwrap() as _ }
+                Ref => { panic!("mut of ref")  }
+                Empty => { panic!("mut of empty") }
+                _ => { unreachable!() }
+            }
+        } } };
+        (box $n:expr) => { unsafe { {
+            let (tag, ptr) = $n;
+            match tag {
+                Dense => { Box::new_in((ptr as *const DenseByteNode<_>).as_ref().unwrap().clone(), crate::utils::Leak) as Box<dyn TrieNode<_>, crate::utils::Leak> }
+                Pair => { Box::new_in((ptr as *const LineListNode<_>).as_ref().unwrap().clone(), crate::utils::Leak) as Box<dyn TrieNode<_>, crate::utils::Leak> }
+                Cell => { Box::new_in((ptr as *const CellByteNode<_>).as_ref().unwrap().clone(), crate::utils::Leak) as Box<dyn TrieNode<_>, crate::utils::Leak> }
+                Ref => { panic!("mut of ref")  }
+                Empty => { panic!("mut of empty") }
+                _ => { unreachable!() }
+            }
+        } } };
+    }
+
+    mod Tags {
+        pub const Dense: u8 = 1;
+        pub const Pair: u8 = 2;
+        pub const Cell: u8 = 3;
+        pub const Ref: u8 = 4;
+        pub const Empty: u8 = 5;
+    }
+    use Tags::*;
+
+    impl<V> TrieNodeODRc<V> {
+        fn pack(tag: u8, ptr: u64, shared: bool) -> Self {
+            debug_assert!(tag == Empty || ptr != 0);
+            let mut tmp = ptr.to_le_bytes();
+            tmp[0] |= shared as u8;
+            let bs: [u8; 7] = unsafe { tmp[..7].try_into().unwrap_unchecked() };
+            unsafe { TrieNodeODRc(NonZeroU8::new_unchecked(tag), UnsafeCell::new(bs), PhantomData::default()) }
+        }
+
+        fn unpack(&self) -> (u8, u64, bool) {
+            let mut tmp = [0u8; 8];
+            tmp[..7].copy_from_slice(&unsafe { *self.1.get() }[..]);
+            let shared = (tmp[0] & 1) != 0;
+            tmp[0] &= !1;
+            let ptr = u64::from_le_bytes(tmp);
+            let tag = self.0.get();
+            debug_assert!(tag == Empty || ptr != 0, "{:?}", (tag, ptr, shared));
+            (tag, ptr, shared)
+        }
+
+        unsafe fn toggle_shared(&self) {
+            (*self.1.get())[0] ^= 1;
+        }
+
+        unsafe fn update_address(&self, ptr: u64) {
+            let mut tmp = ptr.to_le_bytes();
+            let cell = &mut *self.1.get();
+            let shared = cell[0] & 1;
+            tmp[0] = (tmp[0] & !1) | shared;
+            cell.copy_from_slice(&tmp[..7]);
+        }
+
+        #[inline]
+        pub(crate) fn new<'odb, T>(obj: T) -> Self
+        where T: 'odb + TrieNode<V>,
+              V: 'odb
+        {
+            let inner: &mut dyn TrieNode<V> = Box::leak(Box::new_in(obj, crate::utils::Leak));
+            let (tag, ptr) = parts!(*inner);
+            debug_assert_eq!(TrieNodeODRc::<()>::pack(tag, ptr, false).unpack(), (tag, ptr, false));
+            debug_assert_eq!(TrieNodeODRc::<()>::pack(tag, ptr, true).unpack(), (tag, ptr, true));
+            TrieNodeODRc::pack(tag, ptr, false)
+        }
+        #[inline]
+        pub(crate) fn new_from_rc<'odb>(mut rc: std::rc::Rc<dyn TrieNode<V> + 'odb>) -> Self
+        where V: 'odb
+        {
+            panic!("new_from_rc");
+            // let shared = std::rc::Rc::strong_count(&rc) > 1;
+            // // let mut inner = std::mem::transmute::<_, &mut dyn TrieNode<()>>(unsafe { std::rc::Rc::as_ptr(&rc).cast_mut().as_mut().unwrap_unchecked() });
+            // let inner: &mut dyn TrieNode<V> =
+            //     Box::leak(dyn_clone::clone_box(rc.as_ref()));
+            // let (tag, ptr) = parts!(*inner);
+            // assert!(tag == Empty || ptr != 0);
+            // unsafe { TrieNodeODRc(UnsafeCell::new(pack(tag, ptr, shared)), PhantomData::default()) }
+        }
+        #[inline]
+        pub(crate) fn refcount(&self) -> usize {
+            if self.unpack().2 { 2 } else { 1 }
+        }
+        #[inline]
+        pub(crate) fn as_rc(&self) -> &std::rc::Rc<dyn TrieNode<V>> {
+            panic!()
+        }
+        #[inline]
+        pub(crate) fn borrow(&self) -> &dyn TrieNode<V>
+        where V: Clone + Send + Sync
+        {
+            let (tag, ptr, _) = self.unpack();
+            debug_assert!(tag == Empty || ptr != 0);
+            // lifetime extension on V to avoid + 'static bound
+            unsafe { std::mem::transmute::<&dyn TrieNode<V>, _>(parts!(&(tag, ptr))) }
+        }
+        #[inline]
+        pub(crate) fn as_ptr(&self) -> *const dyn TrieNode<V>
+        where V: Clone + Send + Sync
+        {
+            let (tag, ptr, _) = self.unpack();
+            debug_assert!(tag == Empty || ptr != 0);
+            // lifetime extension on V to avoid + 'static bound
+            unsafe { std::mem::transmute::<&dyn TrieNode<V>, _>(parts!(&(tag, ptr))) }
+        }
+        /// Returns `true` if both internal Rc ptrs point to the same object
+        #[inline]
+        pub fn ptr_eq(&self, other: &Self) -> bool {
+            self.unpack().1 == other.unpack().1
+        }
+        #[inline]
+        pub(crate) fn make_mut(&mut self) -> &mut (dyn TrieNode<V> + 'static)
+        where V : Clone + Sync + Send
+        {
+            let (tag, ptr, shared) = self.unpack();
+            debug_assert_eq!(Self::pack(tag, ptr, shared).unpack(), (tag, ptr, shared));
+
+            if shared && tag != Empty {
+                let alloc = Box::leak(parts!(box (tag, ptr)));
+
+                unsafe {
+                    // in this case, we do have mutable access, but we may still end up racing
+                    self.toggle_shared();
+                    // using atomics, when the above finishes, the below may be done atomically safely (currently races)
+                    self.update_address(alloc as *mut _ as *mut () as u64);
+                }
+                // lifetime extension on V to avoid + 'static bound
+                unsafe { std::mem::transmute::<&mut dyn TrieNode<V>, &mut (dyn TrieNode<V> + 'static)>(alloc) }
+            } else {
+                // lifetime extension on V to avoid + 'static bound
+                // const to mut cast to avoid going through the mut of EmptyNode/TinyRefNode cases 
+                unsafe { std::mem::transmute::<*const dyn TrieNode<V>, &mut (dyn TrieNode<V> + 'static)>(parts!(&(tag, ptr))) }
+            }
+            
+        }
+    }
+
+    impl <V> Drop for TrieNodeODRc<V> {
+        fn drop(&mut self) {
+            // debugging placeholder
+        }
+    }
+
+    impl<V> core::fmt::Debug for TrieNodeODRc<V>
+    where for<'a> &'a dyn TrieNode<V>: core::fmt::Debug
+    {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            core::fmt::Debug::fmt(&self.unpack(), f)
+        }
+    }
+
+    //GOAT, make this impl contingent on a "DefaultT" argument to the macro
+    type DefaultT = super::EmptyNode;
+    impl<V> Default for TrieNodeODRc<V> where DefaultT: Default + TrieNode<V> {
+        fn default() -> Self {
+            Self::new(DefaultT::default())
+        }
+    }
+
+    impl<'odb, V> From<std::rc::Rc<dyn TrieNode<V> + 'odb>> for TrieNodeODRc<V>
+    where V: 'odb
+    {
+        fn from(rc: std::rc::Rc<dyn TrieNode<V> + 'odb>) -> Self {
+            Self::new_from_rc(rc)
+        }
+    }
+}
+
 #[cfg(feature = "racy_refcount")]
 mod opaque_dyn_rc_trie_node {
     use super::TrieNode;
@@ -1340,10 +1575,10 @@ mod opaque_dyn_rc_trie_node {
     }
 
     //GOAT, make this impl contingent on a "DefaultT" argument to the macro
-    type DefaultT<V> = super::EmptyNode<V>;
-    impl<V> Default for TrieNodeODRc<V> where DefaultT<V>: Default + TrieNode<V> {
+    type DefaultT = super::EmptyNode;
+    impl<V> Default for TrieNodeODRc<V> where DefaultT: Default + TrieNode<V> {
         fn default() -> Self {
-            Self::new(DefaultT::<V>::default())
+            Self::new(DefaultT::default())
         }
     }
 
@@ -1358,7 +1593,7 @@ mod opaque_dyn_rc_trie_node {
 
 //NOTE: This resembles the Lattice trait impl, but we want to return option instead of allocating a
 // an empty node to return a reference to
-impl<V: Lattice + Clone> TrieNodeODRc<V> {
+impl<V: Lattice + Clone + Sync + Send> TrieNodeODRc<V> {
     #[inline]
     pub fn pjoin(&self, other: &Self) -> AlgebraicResult<Self> {
         if self.ptr_eq(other) {
@@ -1378,6 +1613,7 @@ impl<V: Lattice + Clone> TrieNodeODRc<V> {
     }
     #[inline]
     pub fn join_into(&mut self, node: TrieNodeODRc<V>) -> AlgebraicStatus {
+        // println!("join_into {:?}", self);
         let (status, result) = self.make_mut().join_into_dyn(node);
         match result {
             Ok(()) => {},
@@ -1398,7 +1634,7 @@ impl<V: Lattice + Clone> TrieNodeODRc<V> {
 }
 
 //See above, pseudo-impl for [DistributiveLattice] trait
-impl<V: DistributiveLattice + Clone> TrieNodeODRc<V> {
+impl<V: DistributiveLattice + Clone + Sync + Send> TrieNodeODRc<V> {
     pub fn psubtract(&self, other: &Self) -> AlgebraicResult<Self> {
         if self.ptr_eq(other) {
             AlgebraicResult::None
@@ -1408,13 +1644,13 @@ impl<V: DistributiveLattice + Clone> TrieNodeODRc<V> {
     }
 }
 
-impl <V: Clone> Quantale for TrieNodeODRc<V> {
+impl <V: Clone + Sync + Send> Quantale for TrieNodeODRc<V> {
     fn prestrict(&self, other: &Self) -> AlgebraicResult<Self> where Self: Sized {
         self.borrow().prestrict_dyn(other.borrow())
     }
 }
 
-impl<V: Lattice + Clone> Lattice for Option<TrieNodeODRc<V>> {
+impl<V: Lattice + Clone + Sync + Send> Lattice for Option<TrieNodeODRc<V>> {
     fn pjoin(&self, other: &Self) -> AlgebraicResult<Self> {
         match self {
             None => match other {
@@ -1457,7 +1693,7 @@ impl<V: Lattice + Clone> Lattice for Option<TrieNodeODRc<V>> {
     }
 }
 
-impl<V: Lattice + Clone> LatticeRef for Option<&TrieNodeODRc<V>> {
+impl<V: Lattice + Clone + Sync + Send> LatticeRef for Option<&TrieNodeODRc<V>> {
     type T = Option<TrieNodeODRc<V>>;
     fn pjoin(&self, other: &Self) -> AlgebraicResult<Self::T> {
         match self {
@@ -1484,7 +1720,7 @@ impl<V: Lattice + Clone> LatticeRef for Option<&TrieNodeODRc<V>> {
     }
 }
 
-impl<V: DistributiveLattice + Clone> DistributiveLattice for Option<TrieNodeODRc<V>> {
+impl<V: DistributiveLattice + Clone + Sync + Send> DistributiveLattice for Option<TrieNodeODRc<V>> {
     fn psubtract(&self, other: &Self) -> AlgebraicResult<Self> {
         match self {
             None => { AlgebraicResult::None }
@@ -1498,7 +1734,7 @@ impl<V: DistributiveLattice + Clone> DistributiveLattice for Option<TrieNodeODRc
     }
 }
 
-impl<V: DistributiveLattice + Clone> DistributiveLatticeRef for Option<&TrieNodeODRc<V>> {
+impl<V: DistributiveLattice + Clone + Sync + Send> DistributiveLatticeRef for Option<&TrieNodeODRc<V>> {
     type T = Option<TrieNodeODRc<V>>;
     fn psubtract(&self, other: &Self) -> AlgebraicResult<Self::T> {
         match self {

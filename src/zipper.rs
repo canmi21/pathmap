@@ -27,7 +27,7 @@
 
 use maybe_dangling::MaybeDangling;
 
-use crate::utils::ByteMask;
+use crate::utils::{find_prefix_overlap, ByteMask};
 use crate::trie_node::*;
 use crate::trie_map::BytesTrieMap;
 
@@ -131,6 +131,26 @@ pub trait ZipperMoving: Zipper + ZipperMovingPriv {
     /// Returns `true` if the zipper points to an existing path within the tree, otherwise `false`.  The
     /// zipper's location will be updated, regardless of whether or not the path exists within the tree.
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool;
+
+    /// Moves the zipper to a specific location
+    ///
+    /// Returns the number of bytes shared between the old and new location and whether the new location exists in the trie
+    fn move_to_path<K: AsRef<[u8]>>(&mut self, k: K) -> (usize, bool) {
+        // reference implementation would be:
+        // self.reset(); (find_prefix_overlap(k.as_ref(), self.path()), self.descend_to(k.as_ref()))
+        let k = k.as_ref();
+        let p = self.path();
+        let overlap = find_prefix_overlap(k, p);
+        let to_ascend = p.len() - overlap;
+        // if to_ascend > k.len() {  // can be fine-tuned for performance, the behavior of the two branches is equivalent
+        if overlap == 0 {  // can be fine-tuned for performance, the behavior of the two branches is equivalent
+            self.reset();
+            (overlap, self.descend_to(k))
+        } else {
+            self.ascend(to_ascend);
+            (overlap, self.descend_to(&k[overlap..]))
+        }
+    }
 
     /// Moves the zipper deeper into the trie, following the path specified by `k`, relative to the current
     /// zipper focus.  Descent stops at the point where the path does not exist
@@ -2213,7 +2233,7 @@ pub(crate) mod read_zipper_core {
 use read_zipper_core::*;
 
 /// Internal function to walk along a path to the final node reference
-pub(crate) fn node_along_path<'a, 'path, V>(root_node: &'a dyn TrieNode<V>, path: &'path [u8], root_val: Option<&'a V>) -> (&'a dyn TrieNode<V>, &'path [u8], Option<&'a V>) {
+pub(crate) fn node_along_path<'a, 'path, V : Clone + Sync + Send>(root_node: &'a dyn TrieNode<V>, path: &'path [u8], root_val: Option<&'a V>) -> (&'a dyn TrieNode<V>, &'path [u8], Option<&'a V>) {
     let mut key = path;
     let mut node = root_node;
     let mut val = root_val;

@@ -1,6 +1,6 @@
 
 use core::fmt::{Debug, Formatter};
-use core::ptr;
+use core::{ptr, slice};
 use std::collections::HashMap;
 
 use crate::ring::*;
@@ -52,7 +52,7 @@ pub type CellByteNode<V> = ByteNode<CellCoFree<V>>;
 #[derive(Clone)]
 pub struct ByteNode<Cf> {
     pub mask: ByteMask,
-    values: Vec<Cf>,
+    values: Vec<Cf, crate::utils::Leak>,
 }
 
 impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> Default for ByteNode<Cf> {
@@ -61,7 +61,7 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> Default for ByteNode<Cf> {
     }
 }
 
-impl<V, Cf: CoFree<V=V>> Debug for ByteNode<Cf> {
+impl<V : Clone + Sync + Send, Cf: CoFree<V=V>> Debug for ByteNode<Cf> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         //Recursively printing a whole tree will get pretty unwieldy.  Should do something
         // like serialization for inspection using standard tools.
@@ -74,24 +74,26 @@ impl<V, Cf: CoFree<V=V>> Debug for ByteNode<Cf> {
     }
 }
 
-impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
+impl<V : Clone + Sync + Send, Cf: CoFree<V=V>> ByteNode<Cf> {
     #[inline]
     pub fn new() -> Self {
         Self {
             mask: ByteMask::EMPTY,
-            values: <_>::default()
+            values: Vec::new_in(crate::utils::Leak)
+            // values: Vec::with_capacity_in(256, crate::utils::Leak)
         }
     }
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             mask: ByteMask::EMPTY,
-            values: Vec::with_capacity(capacity),
+            values: Vec::with_capacity_in(capacity, crate::utils::Leak),
+            // values: Vec::with_capacity_in(256, crate::utils::Leak),
         }
     }
     #[inline]
     pub fn reserve_capacity(&mut self, additional: usize) {
-        self.values.reserve(additional)
+        // self.values.reserve(additional)
     }
 
     /// Adds a new child at the specified key byte.  Replaces and returns an existing branch.
@@ -119,6 +121,7 @@ impl<V, Cf: CoFree<V=V>> ByteNode<Cf> {
             let cf = unsafe { self.values.get_unchecked_mut(ix) };
             match cf.rec_mut() {
                 Some(existing_node) => {
+                    // println!("join_child_into {:?} {:?}", existing_node, node);
                     existing_node.join_into(node)
                 },
                 None => {
@@ -434,14 +437,16 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> ByteNode<Cf> where Self: TrieNodeD
     /// Merges the entries in the ListNode into the ByteNode
     pub fn merge_from_list_node(&mut self, list_node: &LineListNode<V>) -> AlgebraicStatus where V: Clone + Lattice {
         self.reserve_capacity(2);
+        // println!("merge_from_list_node {:?}", self.values.iter().map(|cf| cf.rec()).collect::<Vec<_>>());
 
         let slot0_status = if list_node.is_used::<0>() {
             let key = unsafe{ list_node.key_unchecked::<0>() };
             let payload = list_node.clone_payload::<0>().unwrap();
             if key.len() > 1 {
-                let mut child_node = LineListNode::<V>::new();
-                unsafe{ child_node.set_payload_owned::<0>(&key[1..], payload); }
-                self.join_child_into(key[0], TrieNodeODRc::new(child_node))
+                let mut child_node = TrieNodeODRc::new(LineListNode::<V>::new());
+                // println!("lln0 {:?}", child_node);
+                unsafe{ (child_node.as_ptr() as *const LineListNode<V>).cast_mut().as_mut().unwrap().set_payload_owned::<0>(&key[1..], payload); }
+                self.join_child_into(key[0], child_node)
             } else {
                 self.join_payload_into(key[0], payload)
             }
@@ -453,9 +458,10 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> ByteNode<Cf> where Self: TrieNodeD
             let key = unsafe{ list_node.key_unchecked::<1>() };
             let payload = list_node.clone_payload::<1>().unwrap();
             if key.len() > 1 {
-                let mut child_node = LineListNode::<V>::new();
-                unsafe{ child_node.set_payload_owned::<0>(&key[1..], payload); }
-                self.join_child_into(key[0], TrieNodeODRc::new(child_node))
+                let mut child_node = TrieNodeODRc::new(LineListNode::<V>::new());
+                // println!("lln1 {:?}", child_node);
+                unsafe{ (child_node.as_ptr() as *const LineListNode<V>).cast_mut().as_mut().unwrap().set_payload_owned::<0>(&key[1..], payload); }
+                self.join_child_into(key[0], child_node)
             } else {
                 self.join_payload_into(key[0], payload)
             }
@@ -1121,7 +1127,7 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> TrieNode<V> for ByteNode<Cf>
                 self.pjoin(other_dense_node).map(|new_node| TrieNodeODRc::new(new_node))
             },
             TaggedNodeRef::LineListNode(other_list_node) => {
-                let mut new_node = self.clone();
+                let mut new_node = unsafe { std::ptr::read(self) };
                 let status = new_node.merge_from_list_node(other_list_node);
                 AlgebraicResult::from_status(status, || TrieNodeODRc::new(new_node))
             },
@@ -1145,6 +1151,7 @@ impl<V: Clone + Send + Sync, Cf: CoFree<V=V>> TrieNode<V> for ByteNode<Cf>
     }
 
     fn join_into_dyn(&mut self, mut other: TrieNodeODRc<V>) -> (AlgebraicStatus, Result<(), TrieNodeODRc<V>>) where V: Lattice {
+        // println!("join_into_dyn Byte {:?}", other);
         let other_node = other.make_mut().as_tagged_mut();
         let status = match other_node {
             TaggedNodeRefMut::DenseByteNode(other_dense_node) => {
@@ -1297,7 +1304,8 @@ impl<V: Clone + Send + Sync> TrieNodeDowncast<V> for ByteNode<OrdinaryCoFree<V>>
         let mut replacement_node = CellByteNode::<V>::with_capacity(self.values.len());
         debug_assert_eq!(replacement_node.mask, [0u64; 4]);
         core::mem::swap(&mut replacement_node.mask, &mut self.mask);
-        let mut values = vec![];
+        let mut values = Vec::new_in(crate::utils::Leak);
+        // let mut values = Vec::with_capacity_in(256, crate::utils::Leak);
         core::mem::swap(&mut values, &mut self.values);
         for cf in values.into_iter() {
             replacement_node.values.push(cf.into())
@@ -1447,6 +1455,7 @@ impl<V: Clone + Send + Sync> CoFree for OrdinaryCoFree<V> {
 
 use core::cell::UnsafeCell;
 use core::pin::Pin;
+use std::mem::MaybeUninit;
 
 #[derive(Debug)]
 pub struct CellCoFree<V>(Pin<Box<CellCoFreeInsides<V>>>);
@@ -1725,7 +1734,7 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
     }
 }
 
-impl<V: Clone + DistributiveLattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> HeteroDistributiveLattice<OtherCf> for Cf {
+impl<V: Clone + Sync + Send + DistributiveLattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> HeteroDistributiveLattice<OtherCf> for Cf {
     fn psubtract(&self, other: &OtherCf) -> AlgebraicResult<Self> where Self: Sized {
         let rec = self.rec().psubtract(&other.rec());
         let val = self.val().psubtract(&other.val());
@@ -1733,7 +1742,7 @@ impl<V: Clone + DistributiveLattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> Hete
     }
 }
 
-impl<V: Clone, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> HeteroQuantale<OtherCf> for Cf {
+impl<V: Clone + Sync + Send, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> HeteroQuantale<OtherCf> for Cf {
     fn prestrict(&self, other: &OtherCf) -> AlgebraicResult<Self> {
         debug_assert!(self.has_rec() || self.has_val());
         if other.has_val() { AlgebraicResult::Identity(SELF_IDENT) } // assumes self can never be CoFree{None, None}
@@ -1847,7 +1856,8 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
         let jmc = [jm.0[0].count_ones(), jm.0[1].count_ones(), jm.0[2].count_ones(), jm.0[3].count_ones()];
 
         let len = (jmc[0] + jmc[1] + jmc[2] + jmc[3]) as usize;
-        let mut v: Vec<Cf> = Vec::with_capacity(len);
+        let mut v: Vec<Cf, crate::utils::Leak> = Vec::with_capacity_in(len, crate::utils::Leak);
+        // let mut v: Vec<Cf, crate::utils::Leak> = Vec::with_capacity_in(256, crate::utils::Leak);
         let new_v = v.spare_capacity_mut();
 
         let mut l = 0;
@@ -1921,7 +1931,7 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
                 if is_counter_identity { mask |= COUNTER_IDENT; }
                 AlgebraicResult::Identity(mask)
             } else {
-                AlgebraicResult::Element(Self{ mask: jm, values: <_>::from(v) })
+                AlgebraicResult::Element(Self{ mask: jm, values: v })
             }
         }
     }
@@ -1935,7 +1945,8 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
         let jmc = [jm.0[0].count_ones(), jm.0[1].count_ones(), jm.0[2].count_ones(), jm.0[3].count_ones()];
 
         let l = (jmc[0] + jmc[1] + jmc[2] + jmc[3]) as usize;
-        let mut v = Vec::with_capacity(l);
+        let mut v = Vec::with_capacity_in(l, crate::utils::Leak);
+        // let mut v = Vec::with_capacity_in(256, crate::utils::Leak);
         let new_v = v.spare_capacity_mut();
 
         let mut l = 0;
@@ -1978,7 +1989,7 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
         unsafe { other.values.set_len(0) }
         unsafe { v.set_len(c) }
         self.mask = jm;
-        self.values = <_>::from(v);
+        self.values = v;
 
         if c == 0 {
             AlgebraicStatus::None
@@ -2002,7 +2013,8 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
         let mmc = [mm.0[0].count_ones(), mm.0[1].count_ones(), mm.0[2].count_ones(), mm.0[3].count_ones()];
 
         let len = (mmc[0] + mmc[1] + mmc[2] + mmc[3]) as usize;
-        let mut v = Vec::with_capacity(len);
+        let mut v = Vec::with_capacity_in(len, crate::utils::Leak);
+        // let mut v = Vec::with_capacity_in(256, crate::utils::Leak);
         let new_v = v.spare_capacity_mut();
 
         let mut l = 0;
@@ -2069,7 +2081,7 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
                 if is_counter_identity { mask |= COUNTER_IDENT; }
                 AlgebraicResult::Identity(mask)
             } else {
-                AlgebraicResult::Element(Self{ mask: mm, values: <_>::from(v) })
+                AlgebraicResult::Element(Self{ mask: mm, values: v })
             }
         }
     }
@@ -2083,7 +2095,8 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
         let jmc = [jm.0[0].count_ones(), jm.0[1].count_ones(), jm.0[2].count_ones(), jm.0[3].count_ones()];
 
         let len = (jmc[0] + jmc[1] + jmc[2] + jmc[3]) as usize;
-        let mut v = Vec::with_capacity(len);
+        let mut v = Vec::with_capacity_in(len, crate::utils::Leak);
+        // let mut v = Vec::with_capacity_in(256, crate::utils::Leak);
         let new_v = v.spare_capacity_mut();
 
         let mut c = 0;
@@ -2105,10 +2118,12 @@ impl<V: Clone + Send + Sync + Lattice, Cf: CoFree<V=V>, OtherCf: CoFree<V=V>> He
         }
 
         unsafe{ v.set_len(c); }
-        return Self{ mask: jm, values: <_>::from(v) };
+        return Self{ mask: jm, values: v };
     }
     fn convert(other: ByteNode<OtherCf>) -> Self {
-        let values = other.values.into_iter().map(|other_cf| Cf::convert(other_cf)).collect();
+        let mut values = Vec::with_capacity_in(other.values.len(), crate::utils::Leak);
+        // let mut values = Vec::with_capacity_in(256, crate::utils::Leak);
+        other.values.into_iter().map(|other_cf| Cf::convert(other_cf)).collect_into(&mut values);
         Self {
             mask: other.mask,
             values
@@ -2168,7 +2183,7 @@ impl<V: DistributiveLattice + Clone + Send + Sync, Cf: CoFree<V=V>> ByteNode<Cf>
 
 //NOTE: This *looks* like an impl of Quantale, but it isn't, so we can have `self` and
 // `other` be differently parameterized types
-impl<V:Clone, Cf: CoFree<V=V>> ByteNode<Cf> {
+impl<V:Clone + Sync + Send, Cf: CoFree<V=V>> ByteNode<Cf> {
     fn prestrict<OtherCf: CoFree<V=V>>(&self, other: &ByteNode<OtherCf>) -> AlgebraicResult<Self> where Self: Sized {
         let mut is_identity = true;
 
@@ -2181,7 +2196,8 @@ impl<V:Clone, Cf: CoFree<V=V>> ByteNode<Cf> {
         let mmc = [mm.0[0].count_ones(), mm.0[1].count_ones(), mm.0[2].count_ones(), mm.0[3].count_ones()];
 
         let len = (mmc[0] + mmc[1] + mmc[2] + mmc[3]) as usize;
-        let mut v = Vec::with_capacity(len);
+        let mut v = Vec::with_capacity_in(len, crate::utils::Leak);
+        // let mut v = Vec::with_capacity_in(256, crate::utils::Leak);
         let new_v = v.spare_capacity_mut();
 
         let mut l = 0;
@@ -2235,7 +2251,7 @@ impl<V:Clone, Cf: CoFree<V=V>> ByteNode<Cf> {
             if is_identity {
                 AlgebraicResult::Identity(SELF_IDENT)
             } else {
-                AlgebraicResult::Element(Self{ mask: mm, values: <_>::from(v) })
+                AlgebraicResult::Element(Self{ mask: mm, values: v })
             }
         }
     }

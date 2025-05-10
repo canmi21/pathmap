@@ -20,11 +20,11 @@ pub struct BridgeNode<V> {
 
 const KEY_BYTES_CNT: usize = 31;
 
-impl<V> Drop for BridgeNode<V> {
-    fn drop(&mut self) {
-        self.drop_payload()
-    }
-}
+// impl<V> Drop for BridgeNode<V> {
+//     fn drop(&mut self) {
+//         self.drop_payload()
+//     }
+// }
 
 impl<V: Clone> Clone for BridgeNode<V> {
     fn clone(&self) -> Self {

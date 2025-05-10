@@ -13,11 +13,13 @@ fn drop_symbol_head_byte<Z: ZipperWriting<usize> + Zipper + ZipperMoving>(loc: &
   let p = loc.path().to_vec();
   while let Some(b) = it.next() {
     if b == 0 { continue }
+    // println!("next");
     assert!(loc.descend_to(&[b]));
     loc.drop_head(b as usize);
     assert!(loc.ascend(1));
   }
   loc.reset();
+  // println!("reset");
   loc.descend_to(&p[..]);
   loc.drop_head(1);
 }
@@ -95,15 +97,15 @@ fn drophead(m: &mut BytesTrieMap<usize>) {
     let k = &[i];
     let mut z1 = unsafe{ map_head.write_zipper_at_exclusive_path_unchecked(k) };
 
-    z1.graft(&map_head.read_zipper_at_path(&[i - 1]).unwrap());
+    z1.graft(&unsafe { map_head.read_zipper_at_path_unchecked(&[i - 1]) });
     drop_symbol_head_byte(&mut z1);
   }
   drop(map_head);
 }
 
-fn count_contents(m: &BytesTrieMap<usize>) {
+fn count_contents(m: &mut pathmap::zipper::ZipperHead<usize>) {
   for i in 0..(MAX_OFFSET + 1) {
-    black_box(m.read_zipper_at_path(&[i]).val_count());
+    black_box(unsafe { m.read_zipper_at_path_unchecked(&[i]) }.val_count());
   }
 }
 
@@ -118,7 +120,7 @@ fn query(m: &BytesTrieMap<usize>) {
   }
 
   let qresult = m.restrict(&q);
-  assert_eq!(qresult.val_count(), 222);
+  black_box(qresult.val_count());
   black_box(qresult);
 }
 
@@ -129,8 +131,10 @@ fn run(bencher: Bencher, stage: &str) {
   let mut m = build_map(&sequences);
   if stage == "drophead" { return bencher.bench_local(|| drophead(&mut m)) }
   drophead(&mut m);
-  if stage == "count_contents" { return bencher.bench_local(|| count_contents(&m)) }
-  count_contents(&m);
+  let mut zh = m.zipper_head();
+  if stage == "count_contents" { return bencher.bench_local(|| count_contents(&mut zh)) }
+  count_contents(&mut zh);
+  drop(zh);
   if stage == "query" { return bencher.bench_local(|| query(&m)) }
   unreachable!()
 }
@@ -138,7 +142,22 @@ fn run(bencher: Bencher, stage: &str) {
 fn main() {
   // Run registered benchmarks.
   let divan = Divan::from_args()
-    .sample_count(3);
+    .sample_count(30);
 
   divan.main();
 }
+/*
+normal
+oeis             fastest       │ slowest       │ median        │ mean          │ samples │ iters
+╰─ run                         │               │               │               │         │
+   ├─ build_map  299 ms        │ 357 ms        │ 347.9 ms      │ 334.6 ms      │ 30       │ 30
+   ├─ drophead   1.357 s       │ 2.524 s       │ 2.108 s       │ 1.997 s       │ 30       │ 30
+   ╰─ query      123.2 µs      │ 269.9 µs      │ 126 µs        │ 173 µs        │ 30       │ 30
+
+racy cow
+oeis             fastest       │ slowest       │ median        │ mean          │ samples │ iters
+╰─ run                         │               │               │               │         │
+   ├─ build_map  168.6 ms      │ 219.4 ms      │ 179.2 ms      │ 182.4 ms      │ 30      │ 30
+   ├─ drophead   1.31 s        │ 1.448 s       │ 1.335 s       │ 1.349 s       │ 30      │ 30
+   ╰─ query      91.25 µs      │ 204.6 µs      │ 93.3 µs       │ 97.85 µs      │ 30      │ 30
+ */

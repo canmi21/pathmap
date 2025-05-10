@@ -477,4 +477,50 @@ mod tests {
       (*k, ((c as f64)/(samples as f64)).round() as usize)).collect();
     assert_eq!(&expected[..], &achieved[..]);
   }
+  
+  #[test]
+  fn zipper_basic_0() {
+    const ntries: usize = 100;
+    const npaths: usize = 100;
+    const ndescends: usize = 100;
+    let rng = StdRng::from_seed([0; 32]);
+    let rng_ = StdRng::from_seed([!0; 32]);
+    let path_fuzzer = Filtered{ d: Sentinel { mbd: Mapped{ d: Categorical { elements: "abcd\0".as_bytes().to_vec(),
+      ed: Uniform::try_from(0..5).unwrap() }, f: |x| if x == b'\0' { None } else { Some(x) }, pd: PhantomData::default()} }, p: |x| !x.is_empty(), pd: PhantomData::default() };
+    let trie_fuzzer = UniformTrie { size: npaths, pd: path_fuzzer.clone(), vd: Degenerate{ element: () }, ph: PhantomData::default() };
+
+    // ACTION := DESCEND_TO p | ASCEND i
+    // { RZ.descend_to(p); RZ.ascend(p.len()) } =:= {}  
+    // { RZ.descend_to(p1); RZ.descend_to(p2) } =:= { RZ.descend_to(p1.concat(p2)) } 
+    // { RZ.ascend(i); RZ.ascend(j) } =:= { RZ.ascend(i+j) } 
+    // { RZ = TRIE.read_zipper(); RZ.ascend(k) } =:= { RZ = TRIE.read_zipper(); } 
+    // { RZ = TRIE.read_zipper(); ACT(RZ); RZ.reset() } =:= { RZ = TRIE.read_zipper(); } 
+    // { RZ = TRIE.read_zipper(); ACT(RZ); RZ.reset() } =:= { RZ = TRIE.read_zipper(); } 
+    // { RZ.reset(); RZ.descend_to(p) } =:= { RZ.move_to(p); } 
+
+    trie_fuzzer.sample_iter(rng.clone()).take(ntries).for_each(|mut trie| {
+      // println!("let mut btm = BytesTrieMap::from_iter({:?}.iter().map(|(p, v)| (p.as_bytes(), v)));", trie.iter().map(|(p, v)| (String::from_utf8(p).unwrap(), v)).collect::<Vec<_>>());
+      let mut rz = trie.read_zipper();
+      path_fuzzer.clone().sample_iter(rng.clone()).take(ndescends).for_each(|path| {
+        rz.descend_to(&path[..]);
+        assert_eq!(rz.get_value(), trie.get(&path[..]));
+        path_fuzzer.clone().sample_iter(rng_.clone()).take(ndescends).for_each(|path| {
+          rz.descend_to(&path[..]);
+          rz.ascend(path.len());
+        });
+        assert_eq!(rz.path(), &path[..]);
+        assert_eq!(rz.get_value(), trie.get(&path[..]));
+        path_fuzzer.clone().sample_iter(rng_.clone()).take(ndescends).for_each(|path| {
+          println!("prev {:?}", rz.path());
+          rz.move_to_path(&path[..]);
+          assert_eq!(rz.path(), &path[..]);
+          assert_eq!(rz.get_value(), trie.get(&path[..]));
+        });
+        rz.reset();
+
+      });
+      drop(rz);
+      black_box(trie);
+    })
+  }
 }

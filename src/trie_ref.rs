@@ -17,7 +17,7 @@ pub struct TrieRef<'a, V> {
     val_or_key: ValRefOrKey<'a, V>
 }
 
-impl<V> Default for TrieRef<'_, V> {
+impl<V : Clone + Sync + Send> Default for TrieRef<'_, V> {
     fn default() -> Self {
         Self::new_invalid()
     }
@@ -55,7 +55,7 @@ impl<V> Clone for TrieRef<'_, V> {
 }
 impl<V> Copy for TrieRef<'_, V> {}
 
-impl<'a, V> TrieRef<'a, V> {
+impl<'a, V : Clone + Sync + Send> TrieRef<'a, V> {
     pub(crate) fn new_invalid() -> Self {
         Self { focus_node: TaggedNodeRef::EmptyNode, val_or_key: ValRefOrKey { val_ref: (BAD_SENTINEL, None) } }
     }
@@ -255,7 +255,7 @@ impl<V: Clone + Send + Sync + Unpin> ZipperConcretePriv for TrieRef<'_, V> {
 }
 
 /// Internal function to implement [ZipperReadOnly::trie_ref_at_path] for all the types that need it
-pub(crate) fn trie_ref_at_path<'a, 'paths, V>(mut node: &'a dyn TrieNode<V>, root_val: Option<&'a V>, node_key: &'paths [u8], mut path: &'paths [u8]) -> TrieRef<'a, V> {
+pub(crate) fn trie_ref_at_path<'a, 'paths, V : Clone + Sync + Send>(mut node: &'a dyn TrieNode<V>, root_val: Option<&'a V>, node_key: &'paths [u8], mut path: &'paths [u8]) -> TrieRef<'a, V> {
 
     // A temporary buffer on the stack, if we need to assemble a combined key from both the `node_key` and `path`
     let mut temp_key_buf: [MaybeUninit<u8>; MAX_NODE_KEY_BYTES] = [MaybeUninit::uninit(); MAX_NODE_KEY_BYTES];
