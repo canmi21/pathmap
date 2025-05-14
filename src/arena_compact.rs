@@ -230,7 +230,7 @@ pub fn push_varint_u64(dst: &mut impl Write, int: u64)
 }
 
 /*
-older varints
+// older varints
 /// Read `u64` in variable-length encoding (VLE) from a slice.
 ///
 /// This function implements varint decoding, where numbers are encoded using
@@ -405,6 +405,122 @@ fn read_node(data: &[u8], node_id: NodeId) -> (Node, usize) {
     }
 }
 
+const USE_COUNTERS: bool = cfg!(feature="act_counters");
+
+#[derive(Default, Clone)]
+pub struct Counters {
+    nodes: usize,
+    nodes_size: usize,
+    children: usize,
+    child_mask_size: usize,
+    lines: usize,
+    lines_size: usize,
+    values: usize,
+    values_size: usize,
+    offsets: usize,
+    offsets_size: usize,
+    line_data: usize,
+    line_data_size: usize,
+    line_data_reuse: usize,
+    line_data_reuse_size: usize,
+}
+
+const SI_PREFIX: &[u8] = b"KMGTPE";
+
+struct SiCount(usize);
+
+impl std::fmt::Display for SiCount {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let mut value = self.0 as f64;
+        if value < 1000.0 {
+            return write!(fmt, "{value:3.0}");
+        }
+        let mut idx = 0;
+        while value > 995.0 && idx < SI_PREFIX.len() {
+            idx += 1;
+            value = value / 1000.0;
+        }
+        write!(fmt, "{value:3.2}{}", SI_PREFIX[idx - 1] as char)
+    }
+}
+
+impl std::fmt::Debug for Counters {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let total_size = self.nodes_size + self.lines_size
+            + self.line_data_size + 16 + 8;
+        write!(fmt,
+"Total file size: {total}B
+Offsets: {offsets_size}B / {offsets} ({offsets_avg:1.3})
+Contents:
+    Line data: {line_data_size}B / {line_data} ({line_data_avg:1.3}) (saved by reuse={reuse})
+    Line nodes: {lines_size}B / {lines} ({lines_avg:1.3})
+    Branch nodes: {nodes_size}B / {nodes} ({nodes_avg:1.3})
+        Children: average={children_avg:1.3}, mask size={mask_avg:1.3}",
+            total=SiCount(total_size),
+            offsets_size=SiCount(self.offsets_size),
+            offsets=SiCount(self.offsets),
+            offsets_avg=self.offsets_size as f64 / self.offsets as f64,
+            line_data_size=SiCount(self.line_data_size),
+            line_data=SiCount(self.line_data),
+            line_data_avg=self.line_data_size as f64 / self.line_data as f64,
+            reuse=SiCount(self.line_data_reuse_size),
+            lines_size=SiCount(self.lines_size),
+            lines=SiCount(self.lines),
+            lines_avg=self.lines_size as f64 / self.lines as f64,
+            nodes_size=SiCount(self.nodes_size),
+            nodes=SiCount(self.nodes),
+            nodes_avg=self.nodes_size as f64 / self.nodes as f64,
+            children_avg=self.children as f64 / self.nodes as f64,
+            mask_avg=self.child_mask_size as f64 / self.nodes as f64,
+        )
+    }
+}
+
+impl Counters {
+    #[inline(always)]
+    fn add_line(&mut self, size: usize) {
+        if !USE_COUNTERS { return; }
+        self.lines += 1;
+        self.lines_size += size;
+    }
+    #[inline(always)]
+    fn add_line_data(&mut self, size: usize) {
+        if !USE_COUNTERS { return; }
+        self.line_data += 1;
+        self.line_data_size += size;
+    }
+    #[inline(always)]
+    fn add_line_data_reuse(&mut self, size: usize) {
+        if !USE_COUNTERS { return; }
+        self.line_data_reuse += 1;
+        self.line_data_reuse_size += size;
+    }
+    #[inline(always)]
+    fn add_node(&mut self, size: usize) {
+        if !USE_COUNTERS { return; }
+        self.nodes += 1;
+        self.nodes_size += size;
+    }
+    #[inline(always)]
+    fn add_offset(&mut self, size: usize) {
+        if !USE_COUNTERS { return; }
+        self.offsets += 1;
+        self.offsets_size += size;
+    }
+    #[inline(always)]
+    fn add_value(&mut self, size: usize) {
+        if !USE_COUNTERS { return; }
+        self.values += 1;
+        self.values_size += size;
+    }
+    #[inline(always)]
+    fn add_children(&mut self, children: usize, size: usize) {
+        if !USE_COUNTERS { return; }
+        self.children += children;
+        self.child_mask_size += size;
+    }
+}
+
 /// Represents a trie stored in compact format.
 ///
 /// See module-level documentation for the file format details.
@@ -431,57 +547,72 @@ pub struct ArenaCompactTree<Storage> {
     hasher: GxHasher,
     /// Number of stored lines
     lines: usize,
+    /// Counters to debug storage usage
+    counters: Counters,
 }
 
 impl<Storage> ArenaCompactTree<Storage> {
-    fn write_line(dst: &mut impl Write, line: &NodeLine, node_id: NodeId)
-        -> Result<(), std::io::Error>
-    {
+    fn write_line(
+        dst: &mut impl Write, line: &NodeLine, node_id: NodeId,
+        counters: &mut Counters,
+    ) -> Result<(), std::io::Error> {
         const ARC_HEAD: u8 = 0x80;
         let value_flag = if line.value.is_some() { VALUE_FLAG } else { 0 };
         let child_flag = if line.child.is_some() { 1 } else { 0 };
         let head = ARC_HEAD | value_flag | child_flag;
         dst.write_all(&[head]).unwrap();
         if let Some(value) = line.value {
-            push_varint_u64(dst, value)?;
+            let size = push_varint_u64(dst, value)?;
+            counters.add_value(size);
         }
         if let Some(child) = line.child {
             let offset = node_id.0.checked_sub(child.0)
                 .expect("Children are expected to be written first");
-            push_varint_u64(dst, offset as u64)?;
+            let size = push_varint_u64(dst, offset as u64)?;
+            counters.add_offset(size);
         }
         let offset = node_id.0.checked_sub(line.path.0)
             .expect("Children are expected to be written first");
-        push_varint_u64(dst, offset as u64)?;
+        let size = push_varint_u64(dst, offset as u64)?;
+        counters.add_offset(size);
         Ok(())
     }
 
-    fn write_node(dst: &mut impl Write, node: &NodeBranch, node_id: NodeId)
-        -> Result<(), std::io::Error>
-    {
+    fn write_node(
+        dst: &mut impl Write, node: &NodeBranch, node_id: NodeId,
+        counters: &mut Counters,
+    ) -> Result<(), std::io::Error> {
         let nchildren = node.bytemask.count_bits();
         let value_flag = if node.value.is_some() { VALUE_FLAG } else { 0 };
         let head = nchildren.min(32) as u8 | value_flag;
         dst.write_all(&[head]).unwrap();
         if let Some(value) = node.value {
-            push_varint_u64(dst, value)?;
+            let size = push_varint_u64(dst, value)?;
+            counters.add_value(size);
         }
         if let Some(first_child) = node.first_child {
             let offset = node_id.0.checked_sub(first_child.0)
                 .expect("Children are expected to be written first");
             assert!(nchildren > 0, "child count == 0 and first_child is Some");
-            push_varint_u64(dst, offset as u64)?;
+            let size = push_varint_u64(dst, offset as u64)?;
+            counters.add_offset(size);
         }
         if nchildren >= 32 {
+            counters.add_children(nchildren as usize, 32);
             for word in node.bytemask.0 {
                 dst.write_all(&word.to_le_bytes())?;
             }
         } else {
+            counters.add_children(nchildren as usize, nchildren as usize);
             for byte in node.bytemask.iter() {
                 dst.write_all(&[byte])?;
             }
         }
         Ok(())
+    }
+
+    pub fn counters(&self) -> &Counters {
+        &self.counters
     }
 }
 
@@ -606,8 +737,9 @@ where Storage: Write
     {
         let node_id = NodeId(self.position);
         let mut cursor = std::io::Cursor::new([0; MAX_BRANCH_NODE_SIZE]);
-        Self::write_node(&mut cursor, node, node_id)?;
+        Self::write_node(&mut cursor, node, node_id, &mut self.counters)?;
         let len = cursor.position();
+        self.counters.add_node(len as usize);
         self.storage.write_all(&cursor.get_ref()[..len as usize])?;
         self.position += len;
         Ok(node_id)
@@ -618,8 +750,9 @@ where Storage: Write
     {
         let node_id = NodeId(self.position);
         let mut cursor = std::io::Cursor::new([0; MAX_LINE_NODE_SIZE]);
-        Self::write_line(&mut cursor, line, node_id)?;
+        Self::write_line(&mut cursor, line, node_id, &mut self.counters)?;
         let len = cursor.position();
+        self.counters.add_line(len as usize);
         self.storage.write_all(&cursor.get_ref()[..len as usize])?;
         self.position += len;
         Ok(node_id)
@@ -670,6 +803,7 @@ impl ArenaCompactTree<Vec<u8>> {
             line_map: HashMap::new(),
             hasher: Default::default(),
             lines: 0,
+            counters: Counters::default(),
         }
     }
 
@@ -720,15 +854,17 @@ impl ArenaCompactTree<Vec<u8>> {
         if REUSE_ARCS {
             // caching lines
             if let Some(prev) = self.find_line_reuse(line) {
+                self.counters.add_line_data_reuse(line.len());
                 return prev;
             }
             let mut hasher = self.hasher.clone();
             hasher.write(line);
             self.line_map.insert(hasher.finish(), line_id);
         }
-        push_varint_u64(&mut self.storage, line.len() as u64)
+        let lenlen = push_varint_u64(&mut self.storage, line.len() as u64)
             .expect("writing to vec should never fail.");
         self.storage.extend_from_slice(line);
+        self.counters.add_line_data(lenlen + line.len());
         self.position = self.storage.len() as u64;
         self.lines += 1;
         line_id
@@ -771,6 +907,7 @@ impl ArenaCompactTree<Mmap> {
             line_map: Default::default(),
             lines: Default::default(),
             hasher: Default::default(),
+            counters: Counters::default(),
         })
     }
 
@@ -814,6 +951,7 @@ impl ArenaCompactTree<Mmap> {
             line_map: Default::default(),
             lines: Default::default(),
             hasher: Default::default(),
+            counters: Counters::default(),
         })
     }
 }
@@ -956,6 +1094,7 @@ impl ArenaCompactTree<FileDumper> {
             line_map: HashMap::new(),
             hasher: GxHasher::default(),
             lines: 0,
+            counters: Counters::default(),
         };
         Ok(act)
     }
@@ -978,17 +1117,20 @@ impl ArenaCompactTree<FileDumper> {
         if let Some(&(start, len, prev)) = self.storage.line_map.get(&hash) {
             let buf = &self.storage.line_buf[start..start+len];
             if buf == path {
+                self.counters.add_line_data_reuse(path.len());
                 return Ok(prev);
             }
         }
         let line_id = LineId(self.position);
         let line_start = self.storage.line_buf.len();
         self.storage.line_buf.extend_from_slice(path);
-        self.position += push_varint_u64(
+        let lenlen = push_varint_u64(
             &mut self.storage, path.len() as u64
         )? as u64;
+        self.position += lenlen;
         self.storage.write_all(path)?;
         self.position += path.len() as u64;
+        self.counters.add_line_data(lenlen as usize + path.len());
         self.storage.line_map.insert(hash, (line_start, path.len(), line_id));
         Ok(line_id)
     }

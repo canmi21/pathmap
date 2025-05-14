@@ -32,6 +32,7 @@ fuzzer = ["dep:rand", "dep:rand_distr"]  # Used for creating random paths, tries
 counters = [] # Enable features to inspect performance properties of tries.  Mainly useful when tuning performance of the PathMap internals.
 graft_root_vals = [] # Enables an experimental change in behavior that causes `graft`, `graft_map`, `make_map`, `take_map`, and `join_map` to treat the value at the focus as part of the operation
 arena_compact = ["dep:memmap2"]
+act_counters = ["arena_compact"]
 
 [dev-dependencies]
 paste = "1.0"

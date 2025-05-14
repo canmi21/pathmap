@@ -10,7 +10,7 @@ use std::time::Instant;
 
 fn arena_create() -> Result<(), std::io::Error> {
     // println!("in-memory dump");
-    let sym_path = "../../../data/big.sym";
+    let sym_path = "../../../data/edges67458171.sym";
     let symtab = symbol_dump::SymbolMmap::new(sym_path).expect("can't open paths");
     let items = || symtab.iter();
     // let items = ["ace", "acf", "adg", "adh", "bjk"];
@@ -25,6 +25,8 @@ fn arena_create() -> Result<(), std::io::Error> {
     let start = Instant::now();
     let tree = ArenaCompactTree::from_zipper(btm.read_zipper(), |_v| 0);
     println!("built act in {:.2?}", start.elapsed());
+    println!("counters {:?}", tree.counters());
+    println!("len {:.2?}", tree.get_data().len());
     // pathmap::alloc_tracking::read().print();
     // pathmap::alloc_tracking::reset();
 
@@ -63,6 +65,8 @@ fn arena_dump() -> Result<(), std::io::Error> {
     let tree = ArenaCompactTree::dump_from_zipper(
         btm.read_zipper(), |_v| 0, tree_path)?;
     println!("built act in {:.2?}", start.elapsed());
+    println!("counters {:?}", tree.counters());
+    println!("len {:.2?}", tree.get_data().len());
     // pathmap::alloc_tracking::read().print();
     // pathmap::alloc_tracking::reset();
 
