@@ -80,7 +80,7 @@ use crate::{
     morphisms::Catamorphism,
     utils::{BitMask, ByteMask, find_prefix_overlap},
     zipper::{
-        Zipper, ZipperValues, ZipperAbsolutePath, ZipperIteration,
+        Zipper, ZipperValues, ZipperForking, ZipperAbsolutePath, ZipperIteration,
         ZipperMoving, ZipperMovingPriv, ZipperReadOnlyValues,
         ZipperConcretePriv, ZipperConcrete,
     },
@@ -128,8 +128,109 @@ const U64_SIZE: usize = core::mem::size_of::<u64>();
 
 /// File magic signature
 pub const MAGIC_LENGTH: usize = 8;
-pub const COMPACT_TREE_MAGIC: [u8; MAGIC_LENGTH] = *b"ACTree01";
+// Changes:
+// ACTree01 -> ACTree02: Relative offsets
+// ACTree02 -> ACTree03: Branchless varint
+pub const COMPACT_TREE_MAGIC: [u8; MAGIC_LENGTH] = *b"ACTree03";
 
+const VARINT_LEN_BIAS: u8 = u8::MAX - 8;
+/// Decodes a variable-length encoded `u64` integer from a byte slice.
+///
+/// If the first byte is up to `VARINT_LEN_BIAS` (247), it represents the value directly.
+/// Otherwise, the first byte (`VARINT_LEN_BIAS + nbytes`) indicates the number of following
+/// bytes (`nbytes`) that contain the integer in little-endian order.
+///
+/// # Arguments
+/// * `data` - A byte slice containing the encoded varint.
+///
+/// # Returns
+/// A tuple containing:
+/// * The decoded `u64` value.
+/// * The number of bytes consumed from the input slice.
+///
+/// # Examples
+/// ```
+/// use pathmap::arena_compact::read_varint_u64;
+///
+/// // Single byte encoding (100)
+/// let data = [100];
+/// let (value, len) = read_varint_u64(&data);
+/// assert_eq!(value, 100);
+/// assert_eq!(len, 1);
+///
+/// // Multi-byte encoding (1000)
+/// let data = [249, 232, 3];
+/// let (value, len) = read_varint_u64(&data);
+/// assert_eq!(value, 1000);
+/// assert_eq!(len, 3);
+///
+/// // Maximum u64 value
+/// let data = [255, 255, 255, 255, 255, 255, 255, 255, 255];
+/// let (value, len) = read_varint_u64(&data);
+/// assert_eq!(value, u64::MAX);
+/// assert_eq!(len, 9);
+/// ```
+pub fn read_varint_u64(data: &[u8]) -> (u64, usize) {
+    let first = data[0];
+    if first <= VARINT_LEN_BIAS {
+        return (first as u64, 1);
+    }
+    let len = (first - VARINT_LEN_BIAS) as usize;
+    let rest = unsafe {
+        data.as_ptr().add(1)
+            .cast::<u64>().read_unaligned()
+    };
+    let zeros = (64 - len * 8) as u32;
+    let value = (rest << zeros) >> zeros;
+    (value, len + 1)
+}
+
+/// Encodes a `u64` integer into a variable-length format and writes it to a `Writer`.
+///
+/// The encoding uses a single byte for values up to `VARINT_LEN_BIAS` (247). For larger values,
+/// it writes a header byte (`VARINT_LEN_BIAS + nbytes`) followed by the `nbytes` least significant
+/// bytes of the integer in little-endian order. The maximum encoding size is 9 bytes.
+///
+/// # Arguments
+/// * `dst` - A mutable reference to a type implementing `Write`, such as `Vec<u8>` or `BufWriter`.
+/// * `int` - The unsigned 64-bit integer to encode.
+///
+/// # Examples
+/// ```
+/// use std::io::Write;
+/// use pathmap::arena_compact::push_varint_u64;
+///
+/// // Single byte encoding for small value (100)
+/// let mut buf = Vec::new();
+/// push_varint_u64(&mut buf, 100).unwrap();
+/// assert_eq!(buf, [100]);
+///
+/// // Multi-byte encoding for larger value (1000)
+/// let mut buf = Vec::new();
+/// push_varint_u64(&mut buf, 1000).unwrap();
+/// assert_eq!(buf, [249, 232, 3]);
+///
+/// // Maximum u64 value (2^64 - 1)
+/// let mut buf = Vec::new();
+/// push_varint_u64(&mut buf, u64::MAX).unwrap();
+/// assert_eq!(buf, [255, 255, 255, 255, 255, 255, 255, 255, 255]);
+/// ```
+pub fn push_varint_u64(dst: &mut impl Write, int: u64)
+    -> Result<usize, std::io::Error>
+{
+    if int <= VARINT_LEN_BIAS as u64 {
+        dst.write_all(&[int as u8])?;
+        return Ok(1)
+    }
+    let nbytes = (8 - int.leading_zeros() / 8) as usize;
+    let arr = int.to_le_bytes();
+    dst.write_all(&[VARINT_LEN_BIAS + nbytes as u8])?;
+    dst.write_all(&arr[..nbytes])?;
+    Ok(nbytes + 1)
+}
+
+/*
+older varints
 /// Read `u64` in variable-length encoding (VLE) from a slice.
 ///
 /// This function implements varint decoding, where numbers are encoded using
@@ -237,6 +338,7 @@ pub fn push_varint_u64(dst: &mut impl Write, mut int: u64)
     dst.write_all(&buf)?;
     Ok(MAX_VARINT_SIZE)
 }
+*/
 
 /// Read a node from the start of a given slice
 ///
@@ -249,7 +351,7 @@ pub fn push_varint_u64(dst: &mut impl Write, mut int: u64)
 /// assert_eq!(node.child_count(), 0);
 /// assert_eq!(length, 1);
 /// ```
-fn read_node(data: &[u8]) -> (Node, usize) {
+fn read_node(data: &[u8], node_id: NodeId) -> (Node, usize) {
     let head = data[0];
     let mut pos = 1;
     if head & LINE_FLAG == 0 {
@@ -267,7 +369,7 @@ fn read_node(data: &[u8]) -> (Node, usize) {
         if nchildren > 0 {
             let (first_child, off) = read_varint_u64(&data[pos..]);
             pos += off;
-            node.first_child = Some(NodeId(first_child));
+            node.first_child = Some(NodeId(node_id.0 - first_child));
         }
         let children_bytes = &data[pos..pos + nchildren];
         pos += nchildren;
@@ -294,11 +396,11 @@ fn read_node(data: &[u8]) -> (Node, usize) {
         if has_child {
             let (child, off) = read_varint_u64(&data[pos..]);
             pos += off;
-            line.child = Some(NodeId(child));
+            line.child = Some(NodeId(node_id.0 - child));
         }
         let (line_id, off) = read_varint_u64(&data[pos..]);
         pos += off;
-        line.path = LineId(line_id);
+        line.path = LineId(node_id.0 - line_id);
         (Node::Line(line), pos)
     }
 }
@@ -332,7 +434,7 @@ pub struct ArenaCompactTree<Storage> {
 }
 
 impl<Storage> ArenaCompactTree<Storage> {
-    fn write_line(dst: &mut impl Write, line: &NodeLine)
+    fn write_line(dst: &mut impl Write, line: &NodeLine, node_id: NodeId)
         -> Result<(), std::io::Error>
     {
         const ARC_HEAD: u8 = 0x80;
@@ -344,13 +446,19 @@ impl<Storage> ArenaCompactTree<Storage> {
             push_varint_u64(dst, value)?;
         }
         if let Some(child) = line.child {
-            push_varint_u64(dst, child.0 as u64)?;
+            let offset = node_id.0.checked_sub(child.0)
+                .expect("Children are expected to be written first");
+            push_varint_u64(dst, offset as u64)?;
         }
-        push_varint_u64(dst, line.path.0 as u64)?;
+        let offset = node_id.0.checked_sub(line.path.0)
+            .expect("Children are expected to be written first");
+        push_varint_u64(dst, offset as u64)?;
         Ok(())
     }
 
-    fn write_node(dst: &mut impl Write, node: &NodeBranch) -> Result<(), std::io::Error> {
+    fn write_node(dst: &mut impl Write, node: &NodeBranch, node_id: NodeId)
+        -> Result<(), std::io::Error>
+    {
         let nchildren = node.bytemask.count_bits();
         let value_flag = if node.value.is_some() { VALUE_FLAG } else { 0 };
         let head = nchildren.min(32) as u8 | value_flag;
@@ -359,8 +467,10 @@ impl<Storage> ArenaCompactTree<Storage> {
             push_varint_u64(dst, value)?;
         }
         if let Some(first_child) = node.first_child {
+            let offset = node_id.0.checked_sub(first_child.0)
+                .expect("Children are expected to be written first");
             assert!(nchildren > 0, "child count == 0 and first_child is Some");
-            push_varint_u64(dst, first_child.0 as u64)?;
+            push_varint_u64(dst, offset as u64)?;
         }
         if nchildren >= 32 {
             for word in node.bytemask.0 {
@@ -400,7 +510,7 @@ where Storage: AsRef<[u8]>
     /// The next child id is potentially invalid.
     fn get_node(&self, node_id: NodeId) -> (Node, NodeId) {
         let data = &self.storage.as_ref()[node_id.0 as usize..];
-        let (node, off) = read_node(data);
+        let (node, off) = read_node(data, node_id);
         let next = NodeId(node_id.0 + off as u64);
         (node, next)
     }
@@ -494,25 +604,25 @@ where Storage: Write
     fn push_node(&mut self, node: &NodeBranch)
         -> Result<NodeId, std::io::Error>
     {
-        let node_id = self.position;
+        let node_id = NodeId(self.position);
         let mut cursor = std::io::Cursor::new([0; MAX_BRANCH_NODE_SIZE]);
-        Self::write_node(&mut cursor, node)?;
+        Self::write_node(&mut cursor, node, node_id)?;
         let len = cursor.position();
         self.storage.write_all(&cursor.get_ref()[..len as usize])?;
         self.position += len;
-        Ok(NodeId(node_id))
+        Ok(node_id)
     }
 
     fn push_line(&mut self, line: &NodeLine)
         -> Result<NodeId, std::io::Error>
     {
-        let node_id = self.position;
+        let node_id = NodeId(self.position);
         let mut cursor = std::io::Cursor::new([0; MAX_LINE_NODE_SIZE]);
-        Self::write_line(&mut cursor, line)?;
+        Self::write_line(&mut cursor, line, node_id)?;
         let len = cursor.position();
         self.storage.write_all(&cursor.get_ref()[..len as usize])?;
         self.position += len;
-        Ok(NodeId(node_id))
+        Ok(node_id)
     }
 
     fn push(&mut self, node: &Node) -> Result<NodeId, std::io::Error> {
@@ -1336,11 +1446,15 @@ where Storage: AsRef<[u8]>
 impl<'tree, Storage> ZipperValues<ValueSlice> for ACTZipper<'tree, Storage>
 where Storage: AsRef<[u8]>
 {
-    type ReadZipperT<'t> = ACTZipper<'t, Storage> where Self: 't;
     fn value(&self) -> Option<&ValueSlice> {
         self.get_value_slice()
     }
+}
 
+impl<'tree, Storage> ZipperForking<ValueSlice> for ACTZipper<'tree, Storage>
+where Storage: AsRef<[u8]>
+{
+    type ReadZipperT<'t> = ACTZipper<'t, Storage> where Self: 't;
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
         self.clone().with_root_here()
     }

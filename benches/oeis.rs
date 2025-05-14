@@ -147,17 +147,34 @@ fn main() {
   divan.main();
 }
 /*
+RESULTS ON BadBad with sample_count(30); (I think)
+
 normal
 oeis             fastest       │ slowest       │ median        │ mean          │ samples │ iters
 ╰─ run                         │               │               │               │         │
-   ├─ build_map  299 ms        │ 357 ms        │ 347.9 ms      │ 334.6 ms      │ 30       │ 30
-   ├─ drophead   1.357 s       │ 2.524 s       │ 2.108 s       │ 1.997 s       │ 30       │ 30
-   ╰─ query      123.2 µs      │ 269.9 µs      │ 126 µs        │ 173 µs        │ 30       │ 30
+   ├─ build_map  299 ms        │ 357 ms        │ 347.9 ms      │ 334.6 ms      │ 30      │ 30
+   ├─ drophead   1.357 s       │ 2.524 s       │ 2.108 s       │ 1.997 s       │ 30      │ 30
+   ╰─ query      123.2 µs      │ 269.9 µs      │ 126 µs        │ 173 µs        │ 30      │ 30
 
-racy cow
+racy cow (commit 982a8fd)
 oeis             fastest       │ slowest       │ median        │ mean          │ samples │ iters
 ╰─ run                         │               │               │               │         │
    ├─ build_map  168.6 ms      │ 219.4 ms      │ 179.2 ms      │ 182.4 ms      │ 30      │ 30
    ├─ drophead   1.31 s        │ 1.448 s       │ 1.335 s       │ 1.349 s       │ 30      │ 30
    ╰─ query      91.25 µs      │ 204.6 µs      │ 93.3 µs       │ 97.85 µs      │ 30      │ 30
- */
+*/
+
+/*
+RESULTS ON M4 MacBook Air with sample_count(30);
+I have noticed quite a lot of sensitivity to `sample_count` with more samples hurting drop_head
+time.  This is probably due to `drop_head` iterations causing useful cache contents from
+`build_map` to be evicted.
+
+normal
+oeis             fastest       │ slowest       │ median        │ mean          │ samples │ iters
+╰─ run                         │               │               │               │         │
+   ├─ build_map  184.2 ms      │ 217.4 ms      │ 188.3 ms      │ 190.6 ms      │ 30      │ 30
+   ├─ drophead   1.272 s       │ 2.233 s       │ 1.789 s       │ 1.762 s       │ 30      │ 30
+   ╰─ query      59.41 µs      │ 140.7 µs      │ 63.7 µs       │ 66.83 µs      │ 30      │ 30
+
+*/

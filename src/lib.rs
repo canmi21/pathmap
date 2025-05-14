@@ -1,5 +1,8 @@
+#![cfg_attr(feature = "nightly", allow(internal_features), feature(core_intrinsics))]
+#![cfg_attr(feature = "nightly", feature(portable_simd))]
 #![feature(allocator_api)]
 #![feature(iter_collect_into)]
+
 #![doc = include_str!("../README.md")]
 extern crate core;
 

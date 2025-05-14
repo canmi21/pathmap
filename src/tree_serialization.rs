@@ -5,7 +5,6 @@ use crate::{zipper, TrieValue};
 use crate::morphisms::{Catamorphism, new_map_from_ana, TrieBuilder, new_map_from_ana_jumping};
 use crate::utils::{BitMask, ByteMask};
 use crate::write_zipper::ZipperWriting;
-use crate::zipper::ZipperAbsolutePath;
 
 /// WIP
 pub fn serialize_fork<V : TrieValue, RZ : Catamorphism<V>, F: FnMut(usize, &[u8], &V) -> ()>(mut rz: RZ, target: &mut Vec<u8>, mut fv: F) -> std::io::Result<(usize)> {

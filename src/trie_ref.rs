@@ -141,10 +141,13 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for TrieRef<'_, V> {
 }
 
 impl<V: Clone + Send + Sync + Unpin> ZipperValues<V> for TrieRef<'_, V> {
-    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn value(&self) -> Option<&V> {
         self.get_value()
     }
+}
+
+impl<V: Clone + Send + Sync + Unpin> ZipperForking<V> for TrieRef<'_, V> {
+    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
         let core_z = read_zipper_core::ReadZipperCore::new_with_node_and_path_internal(self.focus_node.clone(), self.node_key(), 0, self.get_value());
         Self::ReadZipperT::new_forked_with_inner_zipper(core_z)

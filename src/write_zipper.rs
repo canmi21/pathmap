@@ -238,8 +238,11 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for WriteZipperTracked<'_, '_, V>{
 }
 
 impl<V: Clone + Send + Sync + Unpin> ZipperValues<V> for WriteZipperTracked<'_, '_, V>{
-    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn value(&self) -> Option<&V> { self.z.get_value() }
+}
+
+impl<V: Clone + Send + Sync + Unpin> ZipperForking<V> for WriteZipperTracked<'_, '_, V>{
+    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
         let new_root_val = self.value();
         let rz_core = read_zipper_core::ReadZipperCore::new_with_node_and_path(self.z.focus_stack.top().unwrap(), &self.z.key.node_key(), None, new_root_val);
@@ -373,8 +376,11 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for WriteZipperUntracked<'_, '_, V> 
 }
 
 impl<V: Clone + Send + Sync + Unpin> ZipperValues<V> for WriteZipperUntracked<'_, '_, V> {
-    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn value(&self) -> Option<&V> { self.z.get_value() }
+}
+
+impl<V: Clone + Send + Sync + Unpin> ZipperForking<V> for WriteZipperUntracked<'_, '_, V> {
+    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
         let new_root_val = self.value();
         let rz_core = read_zipper_core::ReadZipperCore::new_with_node_and_path(self.z.focus_stack.top().unwrap(), &self.z.key.node_key(), None, new_root_val);
@@ -532,8 +538,11 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for WriteZipperOwned<V> {
 }
 
 impl<V: Clone + Send + Sync + Unpin> ZipperValues<V> for WriteZipperOwned<V> {
-    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn value(&self) -> Option<&V> { self.z.get_value() }
+}
+
+impl<V: Clone + Send + Sync + Unpin> ZipperForking<V> for WriteZipperOwned<V> {
+    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
         let new_root_val = self.value();
         let rz_core = read_zipper_core::ReadZipperCore::new_with_node_and_path(self.z.focus_stack.top().unwrap(), &self.z.key.node_key(), None, new_root_val);
@@ -751,16 +760,8 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for WriteZipperCore<'_, '_, V> {
     }
 }
 
-impl<V: Clone + Send + Sync + Unpin> ZipperValues<V> for WriteZipperCore<'_, '_, V> {
-    type ReadZipperT<'a> = () where Self: 'a;
-    fn value(&self) -> Option<&V> { self.get_value() }
-    fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
-        unreachable!() //Don't fork the WriteZipperCore, fork the WriteZipperTracker or WriteZipperUntracked
-    }
-}
-
-impl<V: Clone + Send + Sync + Unpin> ZipperSubtries<V> for WriteZipperCore<'_, '_, V> {
-    fn make_map(&self) -> Option<BytesTrieMap<Self::V>> {
+impl<V: Clone + Send + Sync + Unpin> WriteZipperCore<'_, '_, V> {
+    fn make_map(&self) -> Option<BytesTrieMap<V>> {
         #[cfg(not(feature = "graft_root_vals"))]
         let root_val = None;
         #[cfg(feature = "graft_root_vals")]

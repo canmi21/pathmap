@@ -249,12 +249,8 @@ impl<V: Clone + Send + Sync + Unpin> ZipperMoving for ProductZipper<'_, '_, V> {
 }
 
 impl<V: Clone + Send + Sync + Unpin> ZipperValues<V> for ProductZipper<'_, '_, V> {
-    type ReadZipperT<'a> = () where Self: 'a;
     fn value(&self) -> Option<&V> {
         self.get_value()
-    }
-    fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
-        unimplemented!(); //This is theoretically doable, but hasn't been done yet
     }
 }
 

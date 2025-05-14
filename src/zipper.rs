@@ -27,7 +27,7 @@
 
 use maybe_dangling::MaybeDangling;
 
-use crate::utils::{find_prefix_overlap, ByteMask};
+use crate::utils::{ByteMask, find_prefix_overlap};
 use crate::trie_node::*;
 use crate::trie_map::BytesTrieMap;
 
@@ -59,14 +59,17 @@ pub trait Zipper {
 
 /// Methods for zippers with a known value type
 pub trait ZipperValues<V> {
-    /// The read-zipper type returned from [fork_read_zipper](Zipper::fork_read_zipper)
-    type ReadZipperT<'a> where Self: 'a;
-
     /// Returns a refernce to the value at the zipper's focus, or `None` if there is no value
     ///
-    /// If you have a zipper type that implements [ZipperReadOnly] then [ZipperReadOnly::get_value]
+    /// If you have a zipper type that implements [ZipperReadOnlyValues] then [ZipperReadOnlyValues::get_value]
     /// will provide a longer-lived reference to the value.
     fn value(&self) -> Option<&V>;
+}
+
+/// Method to fork a read zipper from the parent zipper
+pub trait ZipperForking<V> {
+    /// The read-zipper type returned from [fork_read_zipper](ZipperForking::fork_read_zipper)
+    type ReadZipperT<'a>: ZipperAbsolutePath + ZipperIteration + ZipperValues<V> where Self: 'a;
 
     /// Returns a new read-only Zipper, with the new zipper's root being at the zipper's current focus
     ///
@@ -126,31 +129,28 @@ pub trait ZipperMoving: Zipper + ZipperMovingPriv {
     //GOAT! This doesn't belong here.  Should be a function that uses a non-side-effect catamorphism
     fn val_count(&self) -> usize;
 
+    /// Moves the zipper's focus to a specific location specified by `path`, relative to the zipper's root
+    ///
+    /// Returns the number of bytes shared between the old and new location and whether the new location exists in the trie
+    fn move_to_path<K: AsRef<[u8]>>(&mut self, path: K) -> (usize, bool) {
+        let path = path.as_ref();
+        let p = self.path();
+        let overlap = find_prefix_overlap(path, p);
+        let to_ascend = p.len() - overlap;
+        if overlap == 0 {  // This heuristic can be fine-tuned for performance; the behavior of the two branches is equivalent
+            self.reset();
+            (overlap, self.descend_to(path))
+        } else {
+            self.ascend(to_ascend);
+            (overlap, self.descend_to(&path[overlap..]))
+        }
+    }
+
     /// Moves the zipper deeper into the trie, to the `key` specified relative to the current zipper focus
     ///
     /// Returns `true` if the zipper points to an existing path within the tree, otherwise `false`.  The
     /// zipper's location will be updated, regardless of whether or not the path exists within the tree.
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool;
-
-    /// Moves the zipper to a specific location
-    ///
-    /// Returns the number of bytes shared between the old and new location and whether the new location exists in the trie
-    fn move_to_path<K: AsRef<[u8]>>(&mut self, k: K) -> (usize, bool) {
-        // reference implementation would be:
-        // self.reset(); (find_prefix_overlap(k.as_ref(), self.path()), self.descend_to(k.as_ref()))
-        let k = k.as_ref();
-        let p = self.path();
-        let overlap = find_prefix_overlap(k, p);
-        let to_ascend = p.len() - overlap;
-        // if to_ascend > k.len() {  // can be fine-tuned for performance, the behavior of the two branches is equivalent
-        if overlap == 0 {  // can be fine-tuned for performance, the behavior of the two branches is equivalent
-            self.reset();
-            (overlap, self.descend_to(k))
-        } else {
-            self.ascend(to_ascend);
-            (overlap, self.descend_to(&k[overlap..]))
-        }
-    }
 
     /// Moves the zipper deeper into the trie, following the path specified by `k`, relative to the current
     /// zipper focus.  Descent stops at the point where the path does not exist
@@ -559,8 +559,11 @@ impl<Z> ZipperIteration for &mut Z where Z: ZipperIteration {
 }
 
 impl<V, Z> ZipperValues<V> for &mut Z where Z: ZipperValues<V> {
-    type ReadZipperT<'a> = Z::ReadZipperT<'a> where Self: 'a;
     fn value(&self) -> Option<&V> { (**self).value() }
+}
+
+impl<V, Z> ZipperForking<V> for &mut Z where Z: ZipperForking<V> {
+    type ReadZipperT<'a> = Z::ReadZipperT<'a> where Self: 'a;
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> { (**self).fork_read_zipper() }
 }
 
@@ -630,8 +633,11 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for ReadZipperTracked<'_, '_, V>{
 }
 
 impl<V: Clone + Send + Sync + Unpin> ZipperValues<V> for ReadZipperTracked<'_, '_, V>{
-    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn value(&self) -> Option<&V> { self.z.get_value() }
+}
+
+impl<V: Clone + Send + Sync + Unpin> ZipperForking<V> for ReadZipperTracked<'_, '_, V>{
+    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
         let forked_zipper = self.z.fork_read_zipper();
         Self::ReadZipperT::new_forked_with_inner_zipper(forked_zipper)
@@ -778,8 +784,11 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for ReadZipperUntracked<'_, '_, V> {
 }
 
 impl<V: Clone + Send + Sync + Unpin> ZipperValues<V> for ReadZipperUntracked<'_, '_, V> {
-    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn value(&self) -> Option<&V> { self.z.get_value() }
+}
+
+impl<V: Clone + Send + Sync + Unpin> ZipperForking<V> for ReadZipperUntracked<'_, '_, V> {
+    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
         let forked_zipper = self.z.fork_read_zipper();
         Self::ReadZipperT::new_forked_with_inner_zipper(forked_zipper)
@@ -975,8 +984,11 @@ impl<V: Clone + Send + Sync + Unpin> Zipper for ReadZipperOwned<V> {
 }
 
 impl<V: Clone + Send + Sync + Unpin> ZipperValues<V> for ReadZipperOwned<V> {
-    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn value(&self) -> Option<&V> { self.z.get_value() }
+}
+
+impl<V: Clone + Send + Sync + Unpin> ZipperForking<V> for ReadZipperOwned<V> {
+    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V> where Self: 'a;
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
         let forked_zipper = self.z.fork_read_zipper();
         Self::ReadZipperT::new_forked_with_inner_zipper(forked_zipper)
@@ -1140,8 +1152,11 @@ pub(crate) mod read_zipper_core {
     }
 
     impl<V: Clone + Send + Sync + Unpin> ZipperValues<V> for ReadZipperCore<'_, '_, V> {
-        type ReadZipperT<'a> = ReadZipperCore<'a, 'a, V> where Self: 'a;
         fn value(&self) -> Option<&V> { self.get_value() }
+    }
+
+    impl<V: Clone + Send + Sync + Unpin> ZipperForking<V> for ReadZipperCore<'_, '_, V> {
+        type ReadZipperT<'a> = ReadZipperCore<'a, 'a, V> where Self: 'a;
         fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
             let new_root_val = self.get_value();
             let new_root_path = self.origin_path();

@@ -1184,8 +1184,9 @@ pub(crate) fn make_cell_node<V: Clone + Send + Sync>(node: &mut TrieNodeODRc<V>)
 //TODO: Make a Macro to generate OpaqueDynBoxes and ODRc (OpaqueDynRc) and an Arc version
 //NOTE for future separation into stand-alone crate: The `pub(crate)` visibility inside the `opaque_dyn_rc_trie_node`
 //  module come from the visibility of the trait it is derived on.  In this case, `TrieNode`
+//Credit to QuineDot for his ideas on this pattern here: https://users.rust-lang.org/t/inferred-lifetime-for-dyn-trait/112116/7
 pub(crate) use opaque_dyn_rc_trie_node::TrieNodeODRc;
-#[cfg(all(not(feature = "racy_refcount"), not(feature = "racy_cow")))]
+#[cfg(not(feature = "racy_cow"))]
 mod opaque_dyn_rc_trie_node {
     use std::sync::Arc;
     use super::TrieNode;
@@ -1302,7 +1303,7 @@ pub mod opaque_dyn_rc_trie_node {
             TrieNodeODRc::pack(tag, ptr, true)
         }
     }
-    
+
     macro_rules! parts {
         (*$n:ident) => { unsafe { {
             let res = match $n.as_tagged() {
@@ -1470,7 +1471,6 @@ pub mod opaque_dyn_rc_trie_node {
                 // const to mut cast to avoid going through the mut of EmptyNode/TinyRefNode cases 
                 unsafe { std::mem::transmute::<*const dyn TrieNode<V>, &mut (dyn TrieNode<V> + 'static)>(parts!(&(tag, ptr))) }
             }
-            
         }
     }
 
@@ -1498,92 +1498,6 @@ pub mod opaque_dyn_rc_trie_node {
 
     impl<'odb, V> From<std::rc::Rc<dyn TrieNode<V> + 'odb>> for TrieNodeODRc<V>
     where V: 'odb
-    {
-        fn from(rc: std::rc::Rc<dyn TrieNode<V> + 'odb>) -> Self {
-            Self::new_from_rc(rc)
-        }
-    }
-}
-
-#[cfg(feature = "racy_refcount")]
-mod opaque_dyn_rc_trie_node {
-    use super::TrieNode;
-
-    #[derive(Clone)]
-    #[repr(transparent)]
-    pub struct TrieNodeODRc<V>(std::rc::Rc<dyn TrieNode<V> + 'static>);
-
-    unsafe impl<V: Clone + Send + Sync> Send for TrieNodeODRc<V> {}
-    unsafe impl<V: Clone + Send + Sync> Sync for TrieNodeODRc<V> {}
-
-    impl<V> TrieNodeODRc<V> {
-        #[inline]
-        pub(crate) fn new<'odb, T>(obj: T) -> Self
-            where T: 'odb + TrieNode<V>,
-            V: 'odb
-        {
-            let inner: std::rc::Rc<dyn TrieNode<V>> = std::rc::Rc::new(obj);
-            //SAFETY NOTE: The key to making this abstraction safe is the bound on this method,
-            // such that it's impossible to create this wrapper around a concrete type unless the
-            // same lifetime can bound both the trait's type parameter and the type itself
-            unsafe { Self(core::mem::transmute(inner)) }
-        }
-        #[inline]
-        pub(crate) fn new_from_rc<'odb>(rc: std::rc::Rc<dyn TrieNode<V> + 'odb>) -> Self
-            where V: 'odb
-        {
-            let inner = rc as std::rc::Rc<dyn TrieNode<V>>;
-            //SAFETY NOTE: The key to making this abstraction safe is the bound on this method,
-            // such that it's impossible to create this wrapper around a concrete type unless the
-            // same lifetime can bound both the trait's type parameter and the type itself
-            unsafe { Self(core::mem::transmute(inner)) }
-        }
-        #[inline]
-        pub(crate) fn refcount(&self) -> usize {
-            std::rc::Rc::strong_count(&self.0)
-        }
-        #[inline]
-        pub(crate) fn as_rc(&self) -> &std::rc::Rc<dyn TrieNode<V>> {
-            &self.0
-        }
-        #[inline]
-        pub(crate) fn borrow(&self) -> &dyn TrieNode<V> {
-            &*self.0
-        }
-        #[inline]
-        pub(crate) fn as_ptr(&self) -> *const dyn TrieNode<V> {
-            std::rc::Rc::as_ptr(&self.0)
-        }
-        /// Returns `true` if both internal Rc ptrs point to the same object
-        #[inline]
-        pub fn ptr_eq(&self, other: &Self) -> bool {
-            std::rc::Rc::ptr_eq(self.as_rc(), other.as_rc())
-        }
-        //GOAT, make this contingent on a dyn_clone compile-time feature
-        #[inline]
-        pub(crate) fn make_mut(&mut self) -> &mut (dyn TrieNode<V> + 'static) {
-            dyn_clone::rc_make_mut(&mut self.0) as &mut dyn TrieNode<V>
-        }
-    }
-
-    impl<V> core::fmt::Debug for TrieNodeODRc<V>
-        where for<'a> &'a dyn TrieNode<V>: core::fmt::Debug
-    {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            core::fmt::Debug::fmt(&self.0, f)
-        }
-    }
-
-    //GOAT, make this impl contingent on a "DefaultT" argument to the macro
-    type DefaultT = super::EmptyNode;
-    impl<V> Default for TrieNodeODRc<V> where DefaultT: Default + TrieNode<V> {
-        fn default() -> Self {
-            Self::new(DefaultT::default())
-        }
-    }
-
-    impl<'odb, V> From<std::rc::Rc<dyn TrieNode<V> + 'odb>> for TrieNodeODRc<V>
-        where V: 'odb
     {
         fn from(rc: std::rc::Rc<dyn TrieNode<V> + 'odb>) -> Self {
             Self::new_from_rc(rc)

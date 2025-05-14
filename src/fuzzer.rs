@@ -477,7 +477,6 @@ mod tests {
       (*k, ((c as f64)/(samples as f64)).round() as usize)).collect();
     assert_eq!(&expected[..], &achieved[..]);
   }
-  
   #[test]
   fn zipper_basic_0() {
     const ntries: usize = 100;

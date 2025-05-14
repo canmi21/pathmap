@@ -26,7 +26,6 @@ libc = "0.2.172"
 default = ["graft_root_vals"]
 jemalloc = ["dep:tikv-jemallocator"] # Enables [jemalloc](https://jemalloc.net/) as the default allocator.  This dramatically improves scaling for write-heavy workloads and is generally recommended.  The only reason it is not the default is to avoid interference with the host application allocator.
 zipper_tracking = [] #Exports the zipper_tracking module publicly
-racy_refcount = [] # Uses ordinary memory access instead of atomics for refcounts.  This is for establishing perf bounds; but may result in data corruption.  This is a debug-only setting and is only sound in single-threaded applications, but even in single-threaded clients the benefits are negligible.
 racy_cow = [] # Buggy. This is for establishing perf bounds; but may result in data corruption.
 all_dense_nodes = [] # Exclusively use the DenseByteNode type, which generally performs worse but is useful for compatibility and perf comparisons.
 bridge_nodes = [] # Enable the experimental BridgeNode type.  Incompatible with `all_dense_nodes`
@@ -34,6 +33,7 @@ fuzzer = ["dep:rand", "dep:rand_distr"]  # Used for creating random paths, tries
 counters = [] # Enable features to inspect performance properties of tries.  Mainly useful when tuning performance of the PathMap internals.
 graft_root_vals = [] # Enables an experimental change in behavior that causes `graft`, `graft_map`, `make_map`, `take_map`, and `join_map` to treat the value at the focus as part of the operation
 arena_compact = ["dep:memmap2"]
+nightly = [] # Uses features in the nightly tool chain for better performance
 
 [dev-dependencies]
 paste = "1.0"

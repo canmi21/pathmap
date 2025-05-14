@@ -150,3 +150,195 @@ My fear of circular references was referring to circularity at the node-block le
     * 100% agreed.  The `counters` feature provides a bit of that.  It's pretty ad-hoc and gets dusted off for each experiment when we want to run it.  But I'm definitely open to creating more tools and a better framework for the tools we want.
 4) instead of having refcounting, we could have a GC of some sort.
   * Yes.  This is an option we shouldn't discount.
+
+# Specific Format Proposals
+
+## Pointer Structure
+
+The new TrieNodeODRc would be a 64-bit type.  In that we want to encode the following:
+
+* type_tag: 4 bits.  The code path to use to interpret the node.
+* block_addr: 44 bits (could be made smaller if necessary, by imposing restrictions on the computer / operating system architecture).  The pointer to any valid 4K node block in the user address space can be reconstructed from this field. See https://github.com/irrustible/ointers/blob/main/src/lib.rs for details and code pertaining to this.
+* node_id: 7 bits.  An id of a node, used to interpret the node's location within a block.  Usually corresponds to a node block chunk index.
+* spare: 9 bits.  Currently unused, by may permit tries that span multiple computers in the future.
+
+```
+       ┌07     ┌0F     ┌17     ┌1F     ┌27     ┌2F     ┌37     ┌3F
+----------------------------------------------------------------
+
+Precise layout TBD
+```
+
+## NodeBlock Format
+
+A NodeBlock would be a 4KB aligned block of memory.  It would contain the following:
+
+* ref_counts_table:  96 x 4-Bytes = 384 Bytes.  A ref-count for each node (each chunk) in the block.  4 Bytes seems like the right size for a refcount.  That would provide a saturating (race-proof with relaxed access) counter up to 2 billion.  An extreme minority of nodes will have >2B referencers so saturation will almost never happen.  Therefore, 8 Bytes is overkill; on the other hand 2 Bytes = only 32K before saturation occurs, which could be quite common.
+
+* payload_meta_table: 16 Bytes.  Stores 1 occupied bit per slot in the `payloads_table`.
+
+  GOAT OUTDATED.  IGNORE THIS PARAGRAPH.  IT's BETTER IF NODES STORE THE KEY-OR-VAL info inside the individual chunk formats * payload_meta_table: 32 Bytes.  Stores 2 bits per slot in the `payloads_table`.  1 bit for whether the slot is occupied, and 1 bit for whether it is a value or an external link.  We *could* increase the `payloads_table` capacity by an additional value by skipping the "value or link" bitmask, and instead couning links from 0 up, and values from MAX down, and then only storing the (8-bit) index where values switch to links.  However this increases the expsense of finding an empty slot and determining whether a given payload_ref is a value or a link.
+
+  GOAT OUTDATED. IGNORE THIS PARAGRAPH.  THE REFCOUNTS CAN DOUBLE AS OCCUPIED MARKER. * chunks_meta_table: 16 Bytes.  Stores 1 occupied bit per slot in the `chunks_table`.
+
+* payloads_table: 126 * 8-Bytes = 1008 Bytes.  Stores external links inter-mixed with values.  External links are full 64-bit TrieNodeODRc pointers.  Values are either the value type stored natively, if `V` is `Sized < 64 bits` or another TBD indirection to a key-value store or external allocation.
+
+* chunks_table: 84 * 32-Bytes = 2688 Bytes.  Blocks of memory representing the nodes themselves.  Layout depends on the respective Chunk Format.
+
+### Discussion
+
+A NodeBlock is full when it runs out of either chunks or payloads.
+
+The ratio of chunks-to-payloads can be changed depending on what we find when encoding the data.
+
+We may determine there is a locality benefit to interleaving payload table entries and chunks within a block.  Specifically in the case where we are traversing "through" a block, e.g. in a descend operation.  We might only want to load a single chunk from a block, and if the payload(s) referenced by that chunk were in the same cache line then it would limit the number of fetches.
+
+Deallocating node blocks may best be done with a GC algorithm, because, while we can prove nodes will not create circular references, we cannot prove the same thing about node blocks.  If we do go with the GC route, we may want to move the `child_or_value` flags from the individual chunks to a central location in the node block, in order to know which payload entries represent links to other blocks that need to be marked for GC.
+
+# PayloadRef
+
+A `PayloadRef` is an 8-bit type used within a Chunk Format, that either refers to another chunk within the same node block (local link) or a slot within the `payloads_table` (external link or value).
+
+A `PayloadRef` can have several sentinel values.  These specific values were chosen to avoid interference with valid mappings onto indices in the other tables.  If those tables change size, we can tweak these sentinels.
+
+- `ZERO_SIZED_VALUE = 0x7F`  Means "zero-size value exists here", and saves the need to actually fetch anything from the `payloads_table`.
+
+- `NULL = 0xFF`  Means no "payload or value exists here".  Can be useful to encode information within a ChunkFormat.
+
+## ByteUnsaturated Chunk Format
+
+The `ByteUnsaturated` format represents a location in the trie, with up to 24 descending children, preceded by up to 4 straight prefix path bytes.
+
+The prefix path bytes address a common pattern observed in the data where large fan-outs are often preceeded by reasonably straight paths.  For example this happens because a given encoding might construct paths to represent `key = value`, and a common `key` might have many different `values` branching from a constant prefix formed from `key`.  Or, for example `tag` data, such as arity markers, will manifest as low-variance prefixes.
+
+The `ByteUnsaturated` format spans 2 32-Byte contiguous chunks, with the `child_mask` field occupying the entire second chunk.
+
+Fields:
+
+* header: 24-element bitfield + 3 bits of length + flags = 4 Bytes.  The 24 element bitfield indicates whether a each payload in `payloads` is a value or a link.  The 3 bits of length indicate the used length of `prefix_path`. The remaining bits are flags which contains: `has_root_val`, `saturated_ff_val_or_child`, and 3 remaining `unused`.
+
+* prefix_path: `[u8; 4]`, 4 Bytes.  Provides a short prefix path between the node's root and the multi-branching location.
+
+* payloads: `[PayloadRef; 24]`, 24 Bytes.  References to all child links or values contained within the node.  If the node contains a root value (`has_root_val == 1`), it will be stored in `payloads_table[23]`
+
+* child_mask: `ByteMask`, 32 Bytes.  Contains the bitfield that will be returned by `child_mask`
+
+### Discussion
+
+QUESTION: We can trade a few prefix path bytes for payload table slots or vice versa, depending on what the data tells us.
+
+## ByteSaturatedHead Chunk Format
+
+The `ByteSaturatedHead` format is needed to represent a fully saturated byte node.  One issue with a straightforward format in the same spirit as the others, however, is that a single saturated location (i.e. a location at which all or most children are occupied) will exceed the capacity of the `NodeBlock`'s `payloads_table` entries.  Therefore the chunk format needs to store the full 64-bit values or `TrieNodeODRc` links.  Also, to avoid the nasty requirement to copy and reformat large amounts of data in order to add or remove children in the middle of a heavily saturated node, a single logical node can be broken up across multiple chunk formats.
+
+A `ByteSaturatedHead` chunk begins life as a `ByteUnsaturated` chunk, and has all the same fields.  However, when it needs to be upgraded to a `ByteSaturatedHead`, the payloads are migrated from the `NodeBlock` into new `ByteSaturatedBody` nodes, and the `payloads` field in this `ByteSaturatedHead` node is updated to reference the new `ByteSaturatedBody` chunks.
+
+Allocation can be skipped for `ByteSaturatedBody` chunks that have no set values.  Given the fact that encoding algorithms often cluster values together (i.e. integers, printable ascii, etc.) it has been observed to be common to have large runs of unused children even for nodes that have 60+ children.
+
+Mapping from a set bit in the `child_mask` to a location of a child node or value is acomplished with the following algorithm:
+```rust
+if (byte & 0xF) != 0xF {
+  let body_node = get_node_from_payload_ref(self.payloads[byte >> 4]);
+  let (body_node, idx) = (body_node, byte & 0xF);
+  body_node.payloads[idx]
+} else {
+  let idx = self.payloads[byte >> 4];
+  if idx != 0xF {
+    let body_node = get_node_from_payload_ref(self.payloads[16]);
+    body_node.payloads[idx]
+  } else {
+    let is_child = self.header.get_bit(saturated_ff_val_or_child);
+    get_child_or_value_from_payload_ref(self.payloads[17], is_child);
+  }
+}
+```
+
+## ByteSaturatedBody Chunk Format
+
+A `ByteSaturatedBody` spans 4 continguous chunks and can represent 15 child nodes.  A `ByteSaturatedBody` is **always** part of one and only one `ByteSaturatedHead`, and therfore its `refcount` must be 1.  Otherwise it indicates a bug.
+
+A `ByteSaturatedBody` contains the following fields:
+
+* payloads: `[ValOrChild; 15]` = 120 Bytes.  Links to 15 full values or full `TrieNodeODRc` nodes.
+
+* metadata: 15-element bitfield = 2 Bytes.  Stores a bit indicating whether each payload is a value or a child.
+
+* usused: 6 Bytes.  Could contain an `active` bitfield, used for debug asserts.  Otherwise unused, for now.
+
+### Discussion
+
+An alternative implementation is to break a `ByteSaturatedBody` into 4 non-contiguous 32-Byte section chunks, and use the usused bytes in section 0 to specify the location of sections 1..3.  This is equally dense, but trades the requirement to find contiguous 4-byte chunks for extra indirection.
+
+`ByteSaturatedBody` chunks are the only place aside from a `NodeBlock`'s `payloads_table` where references to another node can be stored.  This means a GC on node blocks needs to be aware of them in order to function, which probably means we need to make a not block aware of all the chunks slots that represent `ByteSaturatedBody` chunks.  Maybe this could be done with a sentinel value in the associated `ref_counts`.
+
+## StraightPath Chunk Format
+
+The `StraightPath` format is the most efficient way to represent a long uninterrupted path.  It packs 30 key bytes into a single 32 Byte chunk with the following fields.
+
+* header: 1 Byte.  Bits [0..5] == `path_len`, Bit 5 == `end_val_or_child`, Bit 6 == `has_root_val` (only needed once the changes described in [A.0001_map_root_values.md] are implemented.), Bit 7 == `unused`.
+
+* end_payload: `PayloadRef`, 1 Byte.  The payload at the end of the path.
+
+* path_bytes: `[u8; 30]`.  The segment of the key.  If the `has_root_val` flag is set, then `path_bytes[29]` is reinterpreted as the root value.
+
+## LOUDS Chunk Format
+
+The `LOUDSChunkFormat` format represents a subtree with up to 8 payloads, with up to 18 total path bytes, arranged throughout the tree.  A crate to interpret the LOUDS bit strings can be found here: https://crates.io/crates/louds-rs.  I don't know how efficient that crate is, but it's probably a good starting point.
+
+The format consists of the following fields packed into a single 32 Byte chunk.
+
+* path_bytes: `[u8; 19]`, 19 Bytes.  A 1-1 mapping with nodes encoded in the `louds_bit_string`
+
+* endpoint_metadata: An 8-element bitfield = 1 Byte.  Each bit in this bitfield indicates whether the associated endpoint is a value or a link.
+
+  GOAT OUTDATED.  IGNORE THIS PARAGRAPH endpoint_metadata: 8 2-bit tags = 2 Bytes.  Each tag encodes one of the following meanings: `[val, link, both, root]`, from which a mapping between an end-point in the LOUDS structure and an index in endpoints_table can be derived.  A `val` or `link` tag means 1 idx in `endpoints_table` is occupied; a `both` tag means 2 are occupied.  Therefore, the mapping function needs to take the whole `endpoint_metadata` `u16` into account, however this can be done cheaply with some bitwise arithmatic and a LUT.
+
+* louds_bit_string: `[u8; 4]`, 4 Bytes.  A LOUDS bit string representing the structure of the subtrie.
+
+The final bit of the final byte of the `louds_bit_string` field is reserved to indicate whether the node contains a root value, once the changes described in [A.0001_map_root_values.md] are implemented.  If the node does contain a root value, then the PayloadRef pointing to the root value will be stored at `endpoints_table[7]`.
+
+* endpoints_table: `[PayloadRef; 8]`, 8 Bytes.  Stores the PayloadRefs for the values or links associated with each endpoint in the LOUDS tree.
+
+  GOAT OUTDATED.  IGNORE THIS PART.  If `endpoint_metadata[0] == root`, then `endpoints_table[0]` will be a value associated with the root (zero-length path), once the changes described in [A.0001_map_root_values.md] are implemented.
+
+### Discussion
+
+QUESTION: The format described above does not allow values to be expressed along the path, only at path endpoints, with the root being a special case.  However, we could modify the LOUDS format to encode values as virtual children that don't get their own path bytes.  The limited experimentation I have done make me thing this is more complicated, but perhaps I am wrong.
+
+QUESTION: Do we want to sacrifice a little bit of capacity for some pre-computed information that would speed up access without parsing the whole `louds_bit_string`?
+
+QUESTION: Should we encode the existance of a root value in the `louds_bit_string`, rather than the `endpoint_metadata`?  It takes zero space in the `endpoint_metadata`.
+
+QUESTION: Do we need the length (in bits) of the `louds_bit_string`?  It looks like we can infer it from the last endpoint node having no children.  But perhaps there is an optimization to knowing the length.
+
+QUESTION: We could represent the bit_string in a depth-first encoding, rather than LOUDS' breadth-first.  This will make traversal more efficient at the cost of making computing a child mask more expensive.  My feeling is that LOUDS' breadth-first encoding probably wins.  But we'd need to try some experiments.
+
+### Examples of the LOUDS Chunk Format
+
+Example 1: Pair
+```
+(h)
+ |-----+
+(e)   (o)
+ |     |
+(l)   (w)
+ |     |
+(l)   (d)
+ |     |
+(o)   (y)
+
+path_bytes: [h, e, o, l, w, l, d, o, y]
+endpoint_metadata: [link, val, ...]
+endpoints_table: [Link_o, Val_y, ...]
+louds_bit_string: `1,0 | 1,1,0 | 1,0 | 1,0 | 1,0 | 1,0 | 1,0 | 1,0 | 0 | 0`
+```
+
+## Pair Chunk Format
+
+Probably unneeded, as it only allows for a handful more path bytes above the LOUDS format.  A dedicated pair format could support a path length up to 29 bytes in total, while the LOUDS format is limited to 19 path bytes.  But a pair format probably doesn't have much reason to be, between the flexibility of the LOUDS format, and the simplicity of the StraightPath format.
+
+## Star Chunk Format
+
+A format appropriate for zero-sized V types, able to express dangling paths or paths terminating in values with only 2 bits-per-path.
+
+GOAT TODO...  We should probably measure whether a Star node would ever get used.  In addition to identifying other node formats we could design to address frequently observed patterns.
