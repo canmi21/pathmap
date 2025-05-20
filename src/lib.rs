@@ -33,6 +33,8 @@ pub mod experimental;
 #[cfg(feature = "arena_compact")]
 pub mod arena_compact;
 
+pub mod ptr_upgrade;
+
 /// Track outstanding zippers to be sure they don't conflict
 #[cfg(feature = "zipper_tracking")]
 pub mod zipper_tracking;
