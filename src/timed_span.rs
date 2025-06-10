@@ -335,12 +335,14 @@ impl ::fastrace::collector::Reporter for MyReporter {
         for span in spans {
             if span.trace_id != trace_id {
                 trace_id = span.trace_id;
+                for _ii in 0..stack.len() { eprint!(")"); }
                 stack.clear();
                 // eprintln!("new trace {}", trace_id.0);
             } else {
                 while let Some(top) = stack.last() {
                     if top.1 == span.parent_id { break; }
                     stack.pop();
+                    eprint!(")");
                 }
                 assert!(!stack.is_empty());
             }
@@ -349,13 +351,16 @@ impl ::fastrace::collector::Reporter for MyReporter {
             let fname = &name[colon..];
             stack.push((fname, span.span_id));
             // assert!(stack.len() < 3, "{:?}", stack);
-
-            eprint!("{}", stack[0].0);
-            for frame in &stack[1..] {
-                eprint!(" -> {}", frame.0);
-            }
-            // eprintln!(",{}", span.duration_ns);
             eprintln!();
+            eprint!("{:width$}({}", "", fname, width=stack.len()-1);
+            // eprint!("{}", stack[0].0);
+            // for frame in &stack[1..] {
+            //     eprint!(" -> {}", frame.0);
+            // }
+            // eprintln!(",{}", span.duration_ns);
+            // eprintln!();
         }
+        for _ii in 0..stack.len() { eprint!(")"); }
+        eprintln!();
     }
 }
