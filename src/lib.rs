@@ -52,6 +52,7 @@ pub mod fuzzer;
 #[cfg(feature = "counters")]
 pub mod counters;
 
+#[cfg(feature = "counters")]
 pub mod timed_span;
 
 pub mod serialization;

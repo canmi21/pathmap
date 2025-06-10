@@ -4,5 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-pathmap = { path="../..", features=["arena_compact", "act_counters"] }
+pathmap = { path="../..", features=["arena_compact", "act_counters", "counters"] }
 memmap2 = { version="0.9.5" }
+fastrace = "*"

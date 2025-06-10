@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-macro_rules! entries {
+macro_rules! make_this_enum_useful {
     (
         pub enum $name:ident {
             $($entry:ident $(= $value:expr)?),*
@@ -22,11 +22,10 @@ macro_rules! entries {
                 }
             }
         }
-
     }
 }
 
-entries!{
+make_this_enum_useful!{
     pub enum Entries {
         Reset,
         ValueCount,
@@ -86,6 +85,16 @@ pub fn print_counters() {
         if count == 0 && cycles == 0 { continue; }
         let average = cycles as f64 / count as f64;
         println!("{:>20},{},{},{}", entry.to_str(), count, cycles, average);
+    }
+}
+
+#[allow(dead_code)]
+mod null {
+    use std::sync::atomic::AtomicU64;
+    pub struct TimedSpanGuard;
+
+    impl TimedSpanGuard {
+        pub fn new(_counter: &AtomicU64) -> Self { Self }
     }
 }
 
@@ -266,13 +275,23 @@ pub const ENABLED: bool = true;
 
 macro_rules! timed_span {
     ($name:ident, $dst:path) => {
-        let _guard = if $crate::timed_span::ENABLED {
-            let index = $crate::timed_span::Entries::$name as usize;
-            let counter = &$dst[index];
-            counter.count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            Some($crate::timed_span::TimedSpanGuard::new(&counter.cycles))
-        } else {
-            None
+        // let _guard = if $crate::timed_span::ENABLED {
+        //     let index = $crate::timed_span::Entries::$name as usize;
+        //     let counter = &$dst[index];
+        //     counter.count.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed);
+        //     Some($crate::timed_span::TimedSpanGuard::new(&counter.cycles))
+        // } else {
+        //     None
+        // };
+        let _trace_guards = {
+            use ::fastrace::{
+                collector::SpanContext,
+                prelude::LocalSpan,
+                Span,
+            };
+            let func = ::fastrace::func_path!();
+            LocalSpan::enter_with_local_parent(func)
+            // ()
         };
     };
     ($name:ident) => {
@@ -296,5 +315,47 @@ mod tests {
             }
         }
         print_counters();
+    }
+}
+
+use std::borrow::Cow;
+fn assert_borrow(cow: &Cow<'static, str>) -> &'static str {
+    match cow {
+        Cow::Borrowed(s) => s,
+        Cow::Owned(_) => panic!("not working with heap-allocated things"),
+    }
+}
+
+pub struct MyReporter;
+impl ::fastrace::collector::Reporter for MyReporter {
+    fn report(&mut self, spans: Vec<::fastrace::collector::SpanRecord>) {
+        use ::fastrace::collector::{TraceId, SpanId};
+        let mut stack = Vec::<(&'static str, SpanId)>::new();
+        let mut trace_id = TraceId(0);
+        for span in spans {
+            if span.trace_id != trace_id {
+                trace_id = span.trace_id;
+                stack.clear();
+                // eprintln!("new trace {}", trace_id.0);
+            } else {
+                while let Some(top) = stack.last() {
+                    if top.1 == span.parent_id { break; }
+                    stack.pop();
+                }
+                assert!(!stack.is_empty());
+            }
+            let name: &'static str = assert_borrow(&span.name);
+            let colon = name.rfind(':').unwrap_or(0);
+            let fname = &name[colon..];
+            stack.push((fname, span.span_id));
+            // assert!(stack.len() < 3, "{:?}", stack);
+
+            eprint!("{}", stack[0].0);
+            for frame in &stack[1..] {
+                eprint!(" -> {}", frame.0);
+            }
+            // eprintln!(",{}", span.duration_ns);
+            eprintln!();
+        }
     }
 }

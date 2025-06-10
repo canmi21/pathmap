@@ -12,7 +12,7 @@ fn arena_create() -> Result<(), std::io::Error> {
     // println!("in-memory dump");
     let sym_path = "../../../data/edges67458171.sym";
     let symtab = symbol_dump::SymbolMmap::new(sym_path).expect("can't open paths");
-    let items = || symtab.iter();
+    let items = || symtab.iter().take(1_000_000);
     // let items = ["ace", "acf", "adg", "adh", "bjk"];
     // let items = || items.iter().copied();
 
@@ -92,8 +92,20 @@ fn arena_dump() -> Result<(), std::io::Error> {
 }
 
 fn main() {
+    use ::fastrace::{
+        collector::{Config, SpanContext},
+        prelude::LocalSpan,
+        Span,
+    };
+    ::fastrace::set_reporter(pathmap::timed_span::MyReporter, Config::default());
+    let func = ::fastrace::func_path!();
+    let root = Span::root(func, SpanContext::random());
+    let guard1 = root.set_local_parent();
+    let guard2 = LocalSpan::enter_with_local_parent("child");
     // pathmap::alloc_tracking::init_tracking();
     arena_create().unwrap();
-    arena_dump().unwrap();
+    drop(guard2); drop(guard1);
+    ::fastrace::flush();
+    // arena_dump().unwrap();
     // println!("{:?}", pathmap::alloc_tracking::read());
 }

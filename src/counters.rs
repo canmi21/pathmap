@@ -96,10 +96,10 @@ impl Counters {
             );
         }
     }
-    pub fn count_ocupancy<V: Clone + Send + Sync>(map: &BytesTrieMap<V>) -> Self {
+    pub fn count_ocupancy<V: Clone + Send + Sync + Unpin>(map: &BytesTrieMap<V>) -> Self {
         let mut counters = Counters::new();
 
-        counters.count_node(map.root().borrow(), 0);
+        counters.count_node(map.root().unwrap().borrow(), 0);
 
         let mut zipper = map.read_zipper();
         while zipper.to_next_step() {
@@ -154,7 +154,7 @@ impl Counters {
             self.list_node_single_byte_keys_by_depth.resize(depth+1, 0);
         }
     }
-    fn increment_common_counters<V: Clone>(&mut self, node: &dyn TrieNode<V>, depth: usize) {
+    fn increment_common_counters<V: Clone + Send + Sync>(&mut self, node: &dyn TrieNode<V>, depth: usize) {
         self.resize_all_historgrams(depth);
         let child_item_count = node.item_count();
         self.total_nodes_by_depth[depth] += 1;
@@ -186,11 +186,11 @@ impl Counters {
     }
 }
 
-pub fn print_traversal<'a, V: 'a + Clone, Z: ZipperIteration<'a, V> + Clone>(zipper: &Z) {
+pub fn print_traversal<Z: ZipperIteration + Clone>(zipper: &Z) {
     let mut zipper = zipper.clone();
 
     println!("{:?}", zipper.path());
-    while let Some(_v) = zipper.to_next_val() {
+    while zipper.to_next_val() {
         println!("{:?}", zipper.path());
     }
 }
