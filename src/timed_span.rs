@@ -271,7 +271,7 @@ mod clock_monotonic {
 }
 
 pub use tsc::TimedSpanGuard;
-pub const ENABLED: bool = true;
+pub const ENABLED: bool = cfg!(feature = "counters");
 
 macro_rules! timed_span {
     ($name:ident, $dst:path) => {
@@ -284,11 +284,7 @@ macro_rules! timed_span {
         //     None
         // };
         let _trace_guards = {
-            use ::fastrace::{
-                collector::SpanContext,
-                prelude::LocalSpan,
-                Span,
-            };
+            use ::fastrace::prelude::LocalSpan;
             let func = ::fastrace::func_path!();
             LocalSpan::enter_with_local_parent(func)
             // ()
@@ -318,11 +314,15 @@ mod tests {
     }
 }
 
-use std::borrow::Cow;
-fn assert_borrow(cow: &Cow<'static, str>) -> &'static str {
-    match cow {
-        Cow::Borrowed(s) => s,
-        Cow::Owned(_) => panic!("not working with heap-allocated things"),
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Transition { None, Descend, Ascend }
+impl<'a> core::convert::From<&'a str> for Transition {
+    fn from(s: &'a str) -> Self {
+        match s {
+            "ascend_byte" => Self::Ascend,
+            "descend_first_byte" | "descend_to_byte" => Self::Descend,
+            _ => Self::None,
+        }
     }
 }
 
@@ -332,27 +332,58 @@ impl ::fastrace::collector::Reporter for MyReporter {
         use ::fastrace::collector::{TraceId, SpanId};
         let mut stack = Vec::<(&'static str, SpanId)>::new();
         let mut trace_id = TraceId(0);
-        for span in spans {
+        macro_rules! pop {
+            ($top:expr) => {
+                eprintln!("{:width$}</{}>", "", $top.0, width=stack.len()-1);
+                stack.pop();
+            }
+        }
+        for span in &spans {
+            let name = span.name.as_ref();
+            let colon = name.rfind(':').map_or(0, |x| x + 1);
+            let mut fname = &name[colon..];
+            let transition = Transition::from(fname);
+
             if span.trace_id != trace_id {
                 trace_id = span.trace_id;
-                for _ii in 0..stack.len() { eprint!(")"); }
-                stack.clear();
+                while let Some(top) = stack.last() {
+                    pop!(top);
+                }
+                // for _ii in 0..stack.len() { eprint!(")"); }
+                // stack.clear();
                 // eprintln!("new trace {}", trace_id.0);
             } else {
                 while let Some(top) = stack.last() {
-                    if top.1 == span.parent_id { break; }
-                    stack.pop();
-                    eprint!(")");
+                    let transition = Transition::from(top.0);
+                    if transition == Transition::Ascend {
+                        pop!(top);
+                        pop!(stack.last().unwrap());
+                        continue;
+                    }
+                    if top.1 == span.parent_id {
+                        break;
+                    }
+                    pop!(top);
                 }
                 assert!(!stack.is_empty());
             }
-            let name: &'static str = assert_borrow(&span.name);
-            let colon = name.rfind(':').unwrap_or(0);
-            let fname = &name[colon..];
+
+            if transition == Transition::Descend {
+                let fname = "s:descend";
+                let parent = stack.last().unwrap().1;
+                eprintln!("{:width$}<{fname}>", "", width=stack.len());
+                stack.push((fname, parent));
+            }
+
+            if let Some(slash) = fname.rfind('/') {
+                let sub = &fname[slash+1..];
+                fname = &fname[..slash];
+                eprintln!("{:width$}<{fname} sub=\"{sub}\">", "", width=stack.len());
+            } else {
+                eprintln!("{:width$}<{fname}>", "", width=stack.len());
+            }
             stack.push((fname, span.span_id));
             // assert!(stack.len() < 3, "{:?}", stack);
-            eprintln!();
-            eprint!("{:width$}({}", "", fname, width=stack.len()-1);
             // eprint!("{}", stack[0].0);
             // for frame in &stack[1..] {
             //     eprint!(" -> {}", frame.0);
@@ -360,7 +391,9 @@ impl ::fastrace::collector::Reporter for MyReporter {
             // eprintln!(",{}", span.duration_ns);
             // eprintln!();
         }
-        for _ii in 0..stack.len() { eprint!(")"); }
+        while let Some(top) = stack.last() {
+            pop!(top);
+        }
         eprintln!();
     }
 }

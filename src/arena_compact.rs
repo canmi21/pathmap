@@ -39,20 +39,14 @@
 //!
 //! - **Branch Node:** (Top bit of the first byte = 0)  
 //!   - Byte 1: `[header: u8]`  
+//!     - Bit #7: Has prefix? (1 = yes, 0 = no)  
 //!     - Bit #6: Has value? (1 = yes, 0 = no)  
 //!     - Bits #0–5: Number of children (max 32).  
+//!   - If prefix exists: `[line_offset: varint64]`  
 //!   - If value exists: `[node_value: varint64]`  
 //!   - If children  > 0: `[first_child: varint64]`  
 //!   - If children < 32: `[child_bytes: u8; num_children]` (ascending order)  
 //!   - If children >=32: `[child_mask: u64; 4]`            (little-endian).
-//!
-//! - **Line Node:** (Top bit of the first byte = 1)  
-//!   - Byte 1: `[header: u8]`  
-//!     - Bit #6: Has value? (1 = yes, 0 = no)  
-//!     - Bits #0–5: Number of children (max 1).  
-//!   - If value exists: `[node_value: varint64]`  
-//!   - If child exists: `[first_child: varint64]`  
-//!   - Always: `[line_offset: varint64]` (points to line data).
 //!
 //! ## Diagram of File Format
 //!
@@ -65,16 +59,13 @@
 //! line data:   [length: varint64][u8; length]
 //!    function: 
 //!
-//! branch node: [header: u8] (header & 0x80 == 0)
+//! branch node: [header: u8]
+//!              [if (header&0x80 != 0) line_offset: varint64         ]
 //!              [if (header&0x40 != 0) node_value : varint64         ]
 //!              [if (header&0x3f != 0) first_child: varint64         ]
 //!              [if (header&0x3f < 32) child_bytes: [u8; header&0x3f]]
 //!              [if (header&0x3f >=32) child_mask : [u64; 4]         ]
 //!
-//! line node:   [header: u8] (header & 0x80 != 0)
-//!              [if (header&0x40 != 0) node_value : varint64]
-//!              [if (header&0x3f != 0) first_child: varint64]
-//!              [                      line_offset: varint64]
 //! ```
 use crate::{
     morphisms::Catamorphism,
@@ -111,13 +102,10 @@ pub struct LineId(u64);
 const INVALID_LINE: LineId = LineId(!0);
 
 /// Maximum node size:
-/// 1 byte header + 9 byte first child + 9 byte value + 32 child mask
-const MAX_BRANCH_NODE_SIZE: usize = 1 + 9 + 9 + 32;
-/// Maximum node size:
-/// 1 byte header + 9 byte first child + 9 byte value + 9 byte path id
-const MAX_LINE_NODE_SIZE: usize = 1 + 9 + 9 + 9;
+/// 1 byte header + 9 byte prefix + 9 byte first child + 9 byte value + 32 child mask
+const MAX_BRANCH_NODE_SIZE: usize = 1 + 9 + 9 + 9 + 32;
 
-/// Top bit indicates that the node is a line node
+/// Bit #7 indicates that this node has a prefix
 const LINE_FLAG: u8 = 0x80;
 /// Bit #6 indicates that this node contains a value
 const VALUE_FLAG: u8 = 0x40;
@@ -132,7 +120,8 @@ pub const MAGIC_LENGTH: usize = 8;
 // Changes:
 // ACTree01 -> ACTree02: Relative offsets
 // ACTree02 -> ACTree03: Branchless varint
-pub const COMPACT_TREE_MAGIC: [u8; MAGIC_LENGTH] = *b"ACTree03";
+// ACTree03 -> ACTree04: Remove line type, move line to node prefix
+pub const COMPACT_TREE_MAGIC: [u8; MAGIC_LENGTH] = *b"ACTree04";
 
 const VARINT_LEN_BIAS: u8 = u8::MAX - 8;
 /// Decodes a variable-length encoded `u64` integer from a byte slice.
@@ -352,58 +341,46 @@ pub fn push_varint_u64(dst: &mut impl Write, mut int: u64)
 /// assert_eq!(node.child_count(), 0);
 /// assert_eq!(length, 1);
 /// ```
-fn read_node(data: &[u8], node_id: NodeId) -> (Node, usize) {
+fn read_node(data: &[u8], node_id: NodeId) -> (NodeBranch, usize) {
     let head = data[0];
     let mut pos = 1;
-    if head & LINE_FLAG == 0 {
-        let mut node = NodeBranch::empty();
-        let has_value = (head & VALUE_FLAG) != 0;
-        node.value = if has_value {
-            let (value, off) = read_varint_u64(&data[pos..]);
-            pos += off;
-            Some(value)
-        } else {
-            None
-        };
-        let nchildren = (head & 0x3f) as usize;
-        assert!(nchildren <= 32, "invalid children count");
-        if nchildren > 0 {
-            let (first_child, off) = read_varint_u64(&data[pos..]);
-            pos += off;
-            node.first_child = Some(NodeId(node_id.0 - first_child));
-        }
-        let children_bytes = &data[pos..pos + nchildren];
-        pos += nchildren;
-        node.bytemask = if nchildren == 32 {
-            #[cfg(not(target_endian = "little"))]
-            compile_error!("big endian not supported");
-            let ptr = children_bytes.as_ptr().cast::<[u64; 4]>();
-            // Safety: we're not reading past the end,
-            // since children_bytes is exact size
-            ByteMask::from(unsafe { ptr.read_unaligned() })
-        } else {
-            ByteMask::from_iter(children_bytes.iter().copied())
-        };
-        (Node::Branch(node), pos)
-    } else {
-        let mut line = NodeLine::empty();
-        let has_value = (head & VALUE_FLAG) != 0;
-        if has_value {
-            let (value, off) = read_varint_u64(&data[pos..]);
-            pos += off;
-            line.value = Some(value);
-        }
-        let has_child = (head & 0x1) != 0;
-        if has_child {
-            let (child, off) = read_varint_u64(&data[pos..]);
-            pos += off;
-            line.child = Some(NodeId(node_id.0 - child));
-        }
-        let (line_id, off) = read_varint_u64(&data[pos..]);
+    let mut node = NodeBranch::empty();
+    let has_prefix = (head & LINE_FLAG) != 0;
+    if has_prefix {
+        let (value, off) = read_varint_u64(&data[pos..]);
         pos += off;
-        line.path = LineId(node_id.0 - line_id);
-        (Node::Line(line), pos)
+        let line_id = node_id.0.checked_sub(value)
+            .expect("invalid line id in ACT: offset out of bounds");
+        node.prefix = Some(LineId(line_id));
     }
+    let has_value = (head & VALUE_FLAG) != 0;
+    if has_value {
+        let (value, off) = read_varint_u64(&data[pos..]);
+        pos += off;
+        node.value = Some(value);
+    }
+    let nchildren = (head & 0x3f) as usize;
+    assert!(nchildren <= 32, "invalid children count");
+    if nchildren > 0 {
+        let (first_child, off) = read_varint_u64(&data[pos..]);
+        pos += off;
+        let node_id = node_id.0.checked_sub(first_child)
+            .expect("invalid child id in ACT: offset out of bounds");
+        node.first_child = Some(NodeId(node_id));
+    }
+    let children_bytes = &data[pos..pos + nchildren];
+    pos += nchildren;
+    node.bytemask = if nchildren == 32 {
+        #[cfg(not(target_endian = "little"))]
+        compile_error!("big endian not supported");
+        let ptr = children_bytes.as_ptr().cast::<[u64; 4]>();
+        // Safety: we're not reading past the end,
+        // since children_bytes is exact size
+        ByteMask::from(unsafe { ptr.read_unaligned() })
+    } else {
+        ByteMask::from_iter(children_bytes.iter().copied())
+    };
+    (node, pos)
 }
 
 const USE_COUNTERS: bool = cfg!(feature="act_counters");
@@ -414,8 +391,6 @@ pub struct Counters {
     nodes_size: usize,
     children: usize,
     child_mask_size: usize,
-    lines: usize,
-    lines_size: usize,
     values: usize,
     values_size: usize,
     offsets: usize,
@@ -447,15 +422,13 @@ impl std::fmt::Display for SiCount {
 
 impl std::fmt::Debug for Counters {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let total_size = self.nodes_size + self.lines_size
-            + self.line_data_size + 16 + 8;
+        let total_size = self.nodes_size + self.line_data_size + 16 + 8;
         write!(fmt,
 "Total file size: {total}B
 Offsets: {offsets_size}B / {offsets} ({offsets_avg:1.3})
 Contents:
     Line data: {line_data_size}B / {line_data} ({line_data_avg:1.3}) (saved by reuse={reuse})
-    Line nodes: {lines_size}B / {lines} ({lines_avg:1.3})
-    Branch nodes: {nodes_size}B / {nodes} ({nodes_avg:1.3})
+    Nodes: {nodes_size}B / {nodes} ({nodes_avg:1.3})
         Children: average={children_avg:1.3}, mask size={mask_avg:1.3}",
             total=SiCount(total_size),
             offsets_size=SiCount(self.offsets_size),
@@ -465,9 +438,6 @@ Contents:
             line_data=SiCount(self.line_data),
             line_data_avg=self.line_data_size as f64 / self.line_data as f64,
             reuse=SiCount(self.line_data_reuse_size),
-            lines_size=SiCount(self.lines_size),
-            lines=SiCount(self.lines),
-            lines_avg=self.lines_size as f64 / self.lines as f64,
             nodes_size=SiCount(self.nodes_size),
             nodes=SiCount(self.nodes),
             nodes_avg=self.nodes_size as f64 / self.nodes as f64,
@@ -478,12 +448,6 @@ Contents:
 }
 
 impl Counters {
-    #[inline(always)]
-    fn add_line(&mut self, size: usize) {
-        if !USE_COUNTERS { return; }
-        self.lines += 1;
-        self.lines_size += size;
-    }
     #[inline(always)]
     fn add_line_data(&mut self, size: usize) {
         if !USE_COUNTERS { return; }
@@ -553,40 +517,21 @@ pub struct ArenaCompactTree<Storage> {
 }
 
 impl<Storage> ArenaCompactTree<Storage> {
-    fn write_line(
-        dst: &mut impl Write, line: &NodeLine, node_id: NodeId,
-        counters: &mut Counters,
-    ) -> Result<(), std::io::Error> {
-        const ARC_HEAD: u8 = 0x80;
-        let value_flag = if line.value.is_some() { VALUE_FLAG } else { 0 };
-        let child_flag = if line.child.is_some() { 1 } else { 0 };
-        let head = ARC_HEAD | value_flag | child_flag;
-        dst.write_all(&[head]).unwrap();
-        if let Some(value) = line.value {
-            let size = push_varint_u64(dst, value)?;
-            counters.add_value(size);
-        }
-        if let Some(child) = line.child {
-            let offset = node_id.0.checked_sub(child.0)
-                .expect("Children are expected to be written first");
-            let size = push_varint_u64(dst, offset as u64)?;
-            counters.add_offset(size);
-        }
-        let offset = node_id.0.checked_sub(line.path.0)
-            .expect("Children are expected to be written first");
-        let size = push_varint_u64(dst, offset as u64)?;
-        counters.add_offset(size);
-        Ok(())
-    }
-
     fn write_node(
         dst: &mut impl Write, node: &NodeBranch, node_id: NodeId,
         counters: &mut Counters,
     ) -> Result<(), std::io::Error> {
         let nchildren = node.bytemask.count_bits();
+        let line_flag = if node.prefix.is_some() { LINE_FLAG } else { 0 };
         let value_flag = if node.value.is_some() { VALUE_FLAG } else { 0 };
-        let head = nchildren.min(32) as u8 | value_flag;
+        let head = line_flag | value_flag | nchildren.min(32) as u8;
         dst.write_all(&[head]).unwrap();
+        if let Some(line) = node.prefix {
+            let offset = node_id.0.checked_sub(line.0)
+                .expect("Children are expected to be written first");
+            let size = push_varint_u64(dst, offset as u64)?;
+            counters.add_offset(size);
+        }
         if let Some(value) = node.value {
             let size = push_varint_u64(dst, value)?;
             counters.add_value(size);
@@ -640,7 +585,7 @@ where Storage: AsRef<[u8]>
     ///
     /// Returns a tuple of the read [Node] and next child [NodeId]
     /// The next child id is potentially invalid.
-    fn get_node(&self, node_id: NodeId) -> (Node, NodeId) {
+    fn get_node(&self, node_id: NodeId) -> (NodeBranch, NodeId) {
         let data = &self.storage.as_ref()[node_id.0 as usize..];
         let (node, off) = read_node(data, node_id);
         let next = NodeId(node_id.0 + off as u64);
@@ -660,7 +605,7 @@ where Storage: AsRef<[u8]>
     /// Read root [Node]
     ///
     /// Returns root [Node], together with root's [NodeId].
-    fn get_root(&self) -> (Node, NodeId) {
+    fn get_root(&self) -> (NodeBranch, NodeId) {
         let root_slice = &self.storage.as_ref()[MAGIC_LENGTH..][..U64_SIZE];
         let root_buf: &[u8; U64_SIZE] = root_slice.try_into()
             .expect("buffer size must be U64_SIZE, we just made it this way");
@@ -689,7 +634,7 @@ where Storage: AsRef<[u8]>
     /// Read `index`'th sibling starting from `node_id`
     ///
     /// Returns [Node] data together with it's [NodeId] and next siblings's [NodeId]
-    fn nth_node(&self, mut node_id: NodeId, index: usize) -> (Node, NodeId, NodeId) {
+    fn nth_node(&self, mut node_id: NodeId, index: usize) -> (NodeBranch, NodeId, NodeId) {
         let (mut node, mut next) = self.get_node(node_id);
         for _ii in 0..index {
             let (nnode, nnext) = self.get_node(next);
@@ -704,28 +649,20 @@ where Storage: AsRef<[u8]>
         let mut path = path.as_ref();
         let mut cur_node = self.get_root().0;
         loop {
-            match cur_node {
-                Node::Line(line) => {
-                    let lpath = self.get_line(line.path);
-                    if !path.starts_with(lpath) {
-                        return None;
-                    }
-                    path = &path[lpath.len()..];
-                    if path.is_empty() && line.value.is_some() {
-                        return line.value;
-                    }
-                    cur_node = self.get_node(line.child?).0;
+            if let Some(line) = cur_node.prefix {
+                let lpath = self.get_line(line);
+                if !path.starts_with(lpath) {
+                    return None;
                 }
-                Node::Branch(node) => {
-                    if path.is_empty() {
-                        return node.value;
-                    }
-                    let first_child = node.first_child?;
-                    let idx = node.bytemask.index_of(path[0]) as usize;
-                    cur_node = self.nth_node(first_child, idx).0;
-                    path = &path[1..];
-                }
+                path = &path[lpath.len()..];
             }
+            if path.is_empty() {
+                return cur_node.value;
+            }
+            let first_child = cur_node.first_child?;
+            let idx = cur_node.bytemask.index_of(path[0]) as usize;
+            cur_node = self.nth_node(first_child, idx).0;
+            path = &path[1..];
         }
     }
 }
@@ -746,29 +683,6 @@ where Storage: Write
         Ok(node_id)
     }
 
-    fn push_line(&mut self, line: &NodeLine)
-        -> Result<NodeId, std::io::Error>
-    {
-        let node_id = NodeId(self.position);
-        let mut cursor = std::io::Cursor::new([0; MAX_LINE_NODE_SIZE]);
-        Self::write_line(&mut cursor, line, node_id, &mut self.counters)?;
-        let len = cursor.position();
-        self.counters.add_line(len as usize);
-        self.storage.write_all(&cursor.get_ref()[..len as usize])?;
-        self.position += len;
-        Ok(node_id)
-    }
-
-    fn push(&mut self, node: &Node) -> Result<NodeId, std::io::Error> {
-        let (node_id, _kind) = match node {
-            Node::Line(line) => (self.push_line(line), "line"),
-            Node::Branch(branch) => (self.push_node(branch), "bra"),
-        };
-        if DO_TRACE { eprintln!("push {node_id:?} node={node:?}"); }
-        // debug_assert_eq!(self.position, self.storage.len() as u64, "failed push {_kind}");
-        node_id
-    }
-
     fn finalize(&mut self) -> Result<(), std::io::Error> {
         // Invariant: There must always be a 9-byte slice at the end
         // This allows [ValueSlice] to always point at correct data,
@@ -777,21 +691,6 @@ where Storage: Write
         self.storage.flush()
     }
 }
-/*
-impl ArenaCompactTree<File> {
-    fn find_line_reuse(&mut self, line: impl AsRef<[u8]>) -> Option<LineId> {
-        use std::io::SeekFrom;
-        use std::io::Seek;
-        let line = line.as_ref();
-        let mut hasher = self.hasher.clone();
-        hasher.write(line);
-        let hash = hasher.finish();
-        let line_id = *self.line_map.get(&hash)?;
-        self.storage.seek(SeekFrom::Start(line_id.0 as u64)).unwrap();
-        (self.get_line(line_id) == line).then_some(line_id)
-    }
-}
-*/
 
 impl ArenaCompactTree<Vec<u8>> {
     fn new() -> Self {
@@ -836,11 +735,11 @@ impl ArenaCompactTree<Vec<u8>> {
         build_arena_tree(zipper, map)
     }
 
-    fn push_v(&mut self, node: &Node) -> NodeId {
-        self.push(node).expect("push to vec doesn't fail")
+    fn push_v(&mut self, node: &NodeBranch) -> NodeId {
+        self.push_node(node).expect("push to vec doesn't fail")
     }
 
-    fn set_root(&mut self, node: &Node) -> NodeId {
+    fn set_root(&mut self, node: &NodeBranch) -> NodeId {
         let node_id = self.push_v(node);
         let root_buf = &mut self.storage[MAGIC_LENGTH..][..U64_SIZE];
         root_buf.copy_from_slice(&node_id.0.to_le_bytes());
@@ -958,21 +857,6 @@ impl ArenaCompactTree<Mmap> {
 }
 
 #[derive(Clone, Debug)]
-pub enum Node {
-    Line(NodeLine),
-    Branch(NodeBranch),
-}
-
-impl Node {
-    pub fn child_count(&self) -> usize {
-        match self {
-            Node::Line(line) => if line.child.is_some() { 1 } else { 0 },
-            Node::Branch(node) => node.bytemask.count_bits(),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
 pub struct NodeLine {
     pub path: LineId,
     // pub footprint: u64,
@@ -993,6 +877,7 @@ impl NodeLine {
 
 #[derive(Debug, Copy, Clone)]
 pub struct NodeBranch {
+    pub prefix: Option<LineId>,
     pub bytemask: ByteMask,
     pub first_child: Option<NodeId>,
     // pub footprint: u64,
@@ -1002,6 +887,7 @@ pub struct NodeBranch {
 impl NodeBranch {
     pub fn empty() -> Self {
         Self {
+            prefix: None,
             bytemask: ByteMask::EMPTY,
             first_child: None,
             // footprint: 0,
@@ -1020,32 +906,23 @@ fn build_arena_tree<V, Z, F>(zipper: Z, map_val: F) -> ArenaCompactTree<Vec<u8>>
 {
     let mut arena = ArenaCompactTree::new();
     let map_val = &map_val;
-    let root = zipper.into_cata_jumping_side_effect::<Node, _>(|bm, children, jump, v, path| {
+    let root = zipper.into_cata_jumping_side_effect::<NodeBranch, _>(|bm, children, jump, v, path| {
         let mut first_child: Option<NodeId> = None;
         for child in children.iter() {
             let id = arena.push_v(child);
             first_child = first_child.or(Some(id));
         }
-        let node = NodeBranch {
+        let prefix = if jump > 0 {
+            Some(arena.add_path(&path[path.len() - jump..]))
+        } else {
+            None
+        };
+        NodeBranch {
             bytemask: ByteMask::from(*bm),
+            prefix,
             first_child,
             value: v.map(map_val),
-        };
-        if jump == 0 {
-            return Node::Branch(node);
         }
-
-        let mut line = NodeLine::empty();
-        line.path = arena.add_path(&path[path.len() - jump..]);
-
-        if !children.is_empty() {
-            first_child = Some(arena.push_v(&Node::Branch(node)));
-        } else {
-            line.value = v.map(map_val);
-        }
-
-        line.child = first_child;
-        Node::Line(line)
     });
     let _root_id = arena.set_root(&root);
     arena.finalize().unwrap();
@@ -1100,8 +977,8 @@ impl ArenaCompactTree<FileDumper> {
         Ok(act)
     }
 
-    fn set_root(&mut self, node: &Node) -> Result<NodeId, std::io::Error> {
-        let node_id = self.push(node)?;
+    fn set_root(&mut self, node: &NodeBranch) -> Result<NodeId, std::io::Error> {
+        let node_id = self.push_node(node)?;
         self.storage.buf_writer.seek(SeekFrom::Start(8))?;
         self.storage.write_all(&node_id.0.to_le_bytes())?;
         self.storage.buf_writer.seek(SeekFrom::Start(self.position))?;
@@ -1149,32 +1026,24 @@ fn dump_arena_tree<V, Z, F, P>(
     // A bit of code duplication compared to build_arena_tree
     let mut arena = ArenaCompactTree::<FileDumper>::open(path)?;
     let map_val = &map_val;
-    let root = zipper.into_cata_jumping_side_effect_fallible::<Node, std::io::Error, _>(|bm, children, jump, v, path| {
+    let root = zipper.into_cata_jumping_side_effect_fallible::<NodeBranch, std::io::Error, _>(|bm, children, jump, v, path| {
         let mut first_child: Option<NodeId> = None;
         for child in children.iter() {
-            let id = arena.push(child)?;
+            let id = arena.push_node(child)?;
             first_child = first_child.or(Some(id));
         }
+        let prefix = if jump > 0 {
+            Some(arena.add_path(&path[path.len() - jump..])?)
+        } else {
+            None
+        };
         let node = NodeBranch {
             bytemask: ByteMask::from(*bm),
+            prefix,
             first_child,
             value: v.map(map_val),
         };
-        if jump == 0 {
-            return Ok(Node::Branch(node));
-        }
-
-        let mut line = NodeLine::empty();
-        line.path = arena.add_path(&path[path.len() - jump..])?;
-
-        if !children.is_empty() {
-            first_child = Some(arena.push(&Node::Branch(node))?);
-        } else {
-            line.value = v.map(map_val);
-        }
-
-        line.child = first_child;
-        Ok(Node::Line(line))
+        Ok(node)
     })?;
 
     let _root_id = arena.set_root(&root)?;
@@ -1207,10 +1076,10 @@ struct StackFrame {
     node_depth: usize,
 }
 impl StackFrame {
-    fn from(node: &Node, node_id: NodeId) -> Self {
+    fn from(node: &NodeBranch, node_id: NodeId) -> Self {
         StackFrame {
             node_id,
-            child_count: node.child_count(),
+            child_count: node.bytemask.count_bits(),
             child_index: 0,
             next_id: None,
             node_depth: 0,
@@ -1222,7 +1091,7 @@ pub struct ACTZipper<'tree, Storage>
 where Storage: AsRef<[u8]>
 {
     tree: &'tree ArenaCompactTree<Storage>,
-    cur_node: Node,
+    cur_node: NodeBranch,
     stack: Vec<StackFrame>,
     path: Vec<u8>,
     origin_depth: usize,
@@ -1307,19 +1176,15 @@ where Storage: AsRef<[u8]>
         if self.invalid > 0 {
             return false;
         }
-        match &self.cur_node {
-            Node::Branch(node) => {
-                node.value.is_some()
-            }
-            Node::Line(line) => {
-                if line.value.is_none() {
-                    false
-                } else {
-                    let last = self.stack.last().unwrap();
-                    let line = self.tree.get_line(line.path);
-                    line.len() == last.node_depth
-                }
-            }
+        if self.cur_node.value.is_none() {
+            return false;
+        }
+        if let Some(line_id) = self.cur_node.prefix {
+            let top_frame = self.stack.last().unwrap();
+            let line = self.tree.get_line(line_id);
+            top_frame.node_depth == line.len()
+        } else {
+            true
         }
     }
 
@@ -1330,20 +1195,14 @@ where Storage: AsRef<[u8]>
         if self.invalid > 0 {
             return 0;
         }
-        match &self.cur_node {
-            Node::Branch(node) => {
-                node.bytemask.count_bits()
-            }
-            Node::Line(path) => {
-                let last = self.stack.last().unwrap();
-                let path = self.tree.get_line(path.path);
-                if last.node_depth < path.len() {
-                    1
-                } else {
-                    0
-                }
+        if let Some(line_id) = self.cur_node.prefix {
+            let top_frame = self.stack.last().unwrap();
+            let line = self.tree.get_line(line_id);
+            if top_frame.node_depth < line.len() {
+                return 1;
             }
         }
+        self.cur_node.bytemask.count_bits()
     }
 
     /// Returns 256-bit mask indicating which children exist from the branch at the zipper's focus
@@ -1353,20 +1212,14 @@ where Storage: AsRef<[u8]>
         if self.invalid > 0 {
             return ByteMask::EMPTY;
         }
-        match &self.cur_node {
-            Node::Branch(node) => {
-                node.bytemask
-            }
-            Node::Line(path) => {
-                let top_frame = self.stack.last().unwrap();
-                let path = self.tree.get_line(path.path);
-                if top_frame.node_depth == path.len() {
-                    ByteMask::EMPTY
-                } else {
-                    ByteMask::from(path[top_frame.node_depth])
-                }
+        if let Some(line_id) = self.cur_node.prefix {
+            let top_frame = self.stack.last().unwrap();
+            let line = self.tree.get_line(line_id);
+            if top_frame.node_depth < line.len() {
+                return ByteMask::from(line[top_frame.node_depth]);
             }
         }
+        self.cur_node.bytemask
     }
 }
 
@@ -1442,6 +1295,7 @@ where Storage: AsRef<[u8]>
         eprintln!("node={:?}, path={:?}, depth={}",
             last_frame.node_id, self.path, last_frame.node_depth);
     }
+
     fn get_value_slice(&self) -> Option<&'tree ValueSlice> {
         if !self.is_value() {
             return None;
@@ -1453,7 +1307,11 @@ where Storage: AsRef<[u8]>
         if head & VALUE_FLAG == 0 {
             return None;
         }
-        let pos = 1;
+        let mut pos = 1;
+        if head & LINE_FLAG != 0 {
+            let (_pre, size) = read_varint_u64(&data[pos..]);
+            pos += size;
+        }
         let slice_ref: &[u8; 9] = data[pos..pos+9].try_into().unwrap();
         Some(ValueSlice::from_ref(slice_ref))
     }
@@ -1480,18 +1338,8 @@ where Storage: AsRef<[u8]>
             if !self.ascend_invalid(None) {
                 return false;
             }
-
-            match &self.cur_node {
-                Node::Line(line) => {
-                    if need_value && line.value.is_some() {
-                        return true;
-                    }
-                }
-                Node::Branch(node) => {
-                    if need_value && node.value.is_some() {
-                        return true;
-                    }
-                }
+            if need_value && self.cur_node.value.is_some() {
+                return true;
             }
         }
         while let Some(top_frame) = self.stack.last_mut() {
@@ -1510,12 +1358,7 @@ where Storage: AsRef<[u8]>
             }
             self.path.truncate(self.path.len() - this_steps);
             // eprintln!("path={:?}", self.path);
-            let brk = match &self.cur_node {
-                Node::Branch(node) => {
-                    (nchildren > 1) || (need_value && node.value.is_some())
-                }
-                _ => false,
-            };
+            let brk = (nchildren > 1) || (need_value && self.cur_node.value.is_some());
             if brk || self.at_root() {
                 break;
             }
@@ -1531,56 +1374,45 @@ where Storage: AsRef<[u8]>
         let mut descended = 0;
         let mut path = path.as_ref();
         'descend: while !path.is_empty() {
-            match &self.cur_node {
-                Node::Line(line) => {
-                    let frame = self.stack.last_mut().unwrap();
-                    let node_path = &self.tree.get_line(line.path);
-                    let rest_path = &node_path[frame.node_depth..];
-                    let common = find_prefix_overlap(path, rest_path);
-                    descended += common;
-                    path = &path[common..];
-                    let into_child = rest_path.len() == common && line.child.is_some();
-                    let line_child_hack = if into_child { 1 } else { 0 };
-                    frame.node_depth += common - line_child_hack;
-                    self.path.extend_from_slice(&rest_path[..common]);
-                    if on_value && descended > 0 && line.value.is_some() {
-                        break 'descend;
-                    }
-                    if common < rest_path.len() {
-                        break 'descend;
-                    }
-                    let Some(node_id) = line.child else { break 'descend };
-                    let (node, _next_id) = self.tree.get_node(node_id);
-                    // no need to update next_id
-                    self.stack.push(StackFrame::from(&node, node_id));
-                    self.cur_node = node;
-                }
-                Node::Branch(node) => {
-                    if on_value && descended > 0 && node.value.is_some() {
-                        break 'descend;
-                    }
-                    if !node.bytemask.test_bit(path[0]) {
-                        break 'descend;
-                    }
-                    let idx = node.bytemask.index_of(path[0]) as usize;
-                    let frame = self.stack.last_mut().unwrap();
-                    let ((node, next_id), node_id) = if frame.next_id.is_some() && frame.child_index + 1 == idx {
-                        // Optimization: if we know the exact next node, descend
-                        (self.tree.get_node(frame.next_id.unwrap()), frame.next_id.unwrap())
-                    } else {
-                        let (node, node_id, next_id) = self.tree
-                            .nth_node(node.first_child.unwrap(), idx);
-                        ((node, next_id), node_id)
-                    };
-                    frame.child_index = idx;
-                    frame.next_id = Some(next_id);
-                    self.stack.push(StackFrame::from(&node, node_id));
-                    self.cur_node = node;
-                    self.path.push(path[0]);
-                    path = &path[1..];
-                    descended += 1;
+            let node = &self.cur_node;
+            if let Some(line_id) = node.prefix {
+                let frame = self.stack.last_mut().unwrap();
+                let node_path = &self.tree.get_line(line_id);
+                let rest_path = &node_path[frame.node_depth..];
+                let common = find_prefix_overlap(path, rest_path);
+                descended += common;
+                path = &path[common..];
+                frame.node_depth += common;
+                self.path.extend_from_slice(&rest_path[..common]);
+                // if the path ended before prefix end, break.
+                if common < rest_path.len() || path.is_empty() {
+                    break 'descend;
                 }
             }
+            // at this point, the focus is after the prefix
+            if on_value && node.value.is_some() {
+                break 'descend;
+            }
+            if !node.bytemask.test_bit(path[0]) {
+                break 'descend;
+            }
+            let idx = node.bytemask.index_of(path[0]) as usize;
+            let frame = self.stack.last_mut().unwrap();
+            let ((node, next_id), node_id) = if frame.next_id.is_some() && frame.child_index + 1 == idx {
+                // Optimization: if we know the exact next node, descend
+                (self.tree.get_node(frame.next_id.unwrap()), frame.next_id.unwrap())
+            } else {
+                let (node, node_id, next_id) = self.tree
+                    .nth_node(node.first_child.unwrap(), idx);
+                ((node, next_id), node_id)
+            };
+            frame.child_index = idx;
+            frame.next_id = Some(next_id);
+            self.stack.push(StackFrame::from(&node, node_id));
+            self.cur_node = node;
+            self.path.push(path[0]);
+            path = &path[1..];
+            descended += 1;
         }
         descended
     }
@@ -1754,39 +1586,38 @@ where Storage: AsRef<[u8]>
         }
         self.trace_pos();
         let mut child_id: Option<NodeId> = None;
-        match &self.cur_node {
-            Node::Line(line) => {
-                let top_frame = self.stack.last_mut().unwrap();
-                let path = self.tree.get_line(line.path);
+        let node = &self.cur_node;
+        let top_frame = self.stack.last_mut().unwrap();
+        'line: {
+            if let Some(line_id) = node.prefix {
+                let path = self.tree.get_line(line_id);
                 let rest_path = &path[top_frame.node_depth..];
-                if idx != 0 || rest_path.is_empty() {
+                if rest_path.is_empty() {
+                    break 'line;
+                }
+                if idx != 0 {
                     return false;
                 }
                 self.path.push(rest_path[0]);
-                if let (true, Some(line_child)) = (rest_path.len() == 1, line.child) {
-                    child_id = Some(line_child);
-                } else {
-                    top_frame.node_depth += 1;
-                    return true;
-                }
-            }
-            Node::Branch(node) => {
-                let top_frame = self.stack.last_mut().unwrap();
-                if idx > top_frame.child_count {
-                    return false;
-                }
-                let byte = node.bytemask.indexed_bit::<true>(idx);
-                if let Some(byte) = byte {
-                    if top_frame.next_id.is_some() && top_frame.child_index + 1 == idx {
-                        child_id = top_frame.next_id;
-                    } else {
-                        let first_child = node.first_child.unwrap();
-                        child_id = Some(self.tree.nth_node(first_child, idx).1);
-                    }
-                    self.path.push(byte);
-                }
+                top_frame.node_depth += 1;
+                return true;
             }
         }
+        if idx >= top_frame.child_count {
+            return false;
+        }
+        let byte = node.bytemask.indexed_bit::<true>(idx);
+        let mut child_id = None;
+        if let Some(byte) = byte {
+            if top_frame.next_id.is_some() && top_frame.child_index + 1 == idx {
+                child_id = top_frame.next_id;
+            } else {
+                let first_child = node.first_child.unwrap();
+                child_id = Some(self.tree.nth_node(first_child, idx).1);
+            }
+            self.path.push(byte);
+        }
+
         if let Some(child_id) = child_id {
             let top_frame = self.stack.last_mut().unwrap();
             let (node, next_id) = self.tree.get_node(child_id);
@@ -1813,46 +1644,42 @@ where Storage: AsRef<[u8]>
         timed_span!(DescendUntil);
         self.trace_pos();
         let mut descended = false;
-        'descend: while self.child_count() == 1 {
-            let child_id;
-            match &self.cur_node {
-                Node::Line(line) => {
-                    let top_frame = self.stack.last_mut().unwrap();
-                    let path = self.tree.get_line(line.path);
-                    let rest_path = &path[top_frame.node_depth..];
-                    let line_child_hack = if line.child.is_some() { 1 } else { 0 };
-                    top_frame.node_depth += rest_path.len() - line_child_hack;
-                    self.path.extend_from_slice(rest_path);
-                    child_id = line.child;
-                    if line.value.is_some() {
-                        descended = true;
-                        break 'descend;
-                    }
-                }
-                Node::Branch(node) => {
-                    let Some(byte) = node.bytemask.iter().next()
-                        else { break 'descend };
-                    self.path.push(byte);
-                    child_id = node.first_child;
-                }
+        'descend: while true {
+            let top_frame = self.stack.last_mut().unwrap();
+            let node = &self.cur_node;
+            if let Some(line_id) = node.prefix {
+                let path = self.tree.get_line(line_id);
+                let rest_path = &path[top_frame.node_depth..];
+                top_frame.node_depth += rest_path.len();
+                self.path.extend_from_slice(rest_path);
+                descended |= !rest_path.is_empty();
             }
+
+            let (1, Some(byte), Some(child_id)) = (
+                node.bytemask.count_bits(),
+                node.bytemask.iter().next(),
+                node.first_child
+            ) else {
+                break 'descend
+            };
+
+            self.path.push(byte);
             descended = true;
-            if let Some(child_id) = child_id {
-                let top_frame = self.stack.last_mut().unwrap();
-                let (node, next_id) = self.tree.get_node(child_id);
-                top_frame.child_index = 0;
-                top_frame.next_id = Some(next_id);
-                let frame = StackFrame::from(&node, child_id);
-                let nchildren = frame.child_count;
-                self.stack.push(frame);
-                self.cur_node = node.clone();
-                if let Node::Branch(node) = node {
-                    if node.value.is_some() || nchildren > 1 {
-                        break 'descend;
-                    }
-                }
+
+            let (node, next_id) = self.tree.get_node(child_id);
+            top_frame.child_index = 0;
+            top_frame.next_id = Some(next_id);
+
+            let frame = StackFrame::from(&node, child_id);
+            let nchildren = frame.child_count;
+            self.stack.push(frame);
+            self.cur_node = node.clone();
+
+            if node.value.is_some() || nchildren > 1 {
+                break 'descend;
             }
         }
+
         descended
     }
 
