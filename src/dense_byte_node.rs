@@ -483,6 +483,7 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> ByteNode<Cf, A>
 
     /// Merges the entries in the ListNode into the ByteNode
     pub fn merge_from_list_node(&mut self, list_node: &LineListNode<V, A>) -> AlgebraicStatus where V: Clone + Lattice {
+        let self_was_empty = self.is_empty();
         self.reserve_capacity(2);
 
         let slot0_status = if list_node.is_used::<0>() {
@@ -496,7 +497,11 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> ByteNode<Cf, A>
                 self.join_payload_into(key[0], payload)
             }
         } else {
-            AlgebraicStatus::None
+            if self_was_empty {
+                AlgebraicStatus::None
+            } else {
+                AlgebraicStatus::Identity
+            }
         };
 
         let slot1_status = if list_node.is_used::<1>() {
@@ -510,7 +515,11 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> ByteNode<Cf, A>
                 self.join_payload_into(key[0], payload)
             }
         } else {
-            AlgebraicStatus::None
+            if self_was_empty {
+                AlgebraicStatus::None
+            } else {
+                AlgebraicStatus::Identity
+            }
         };
 
         //Note: (true, true) makes sense in the context of a join implementation because when the rec_status or

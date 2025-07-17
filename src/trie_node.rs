@@ -640,7 +640,7 @@ fn pmeet_generic_recursive_reset<'trie, const MAX_PAYLOAD_CNT: usize, V, A: Allo
 
 pub enum AbstractNodeRef<'a, V: Clone + Send + Sync, A: Allocator> {
     None,
-    BorrowedDyn(TaggedNodeRef<'a, V, A>),
+    BorrowedDyn(TaggedNodeRef<'a, V, A>), //GOAT eliminate this variant!
     BorrowedRc(&'a TrieNodeODRc<V, A>),
     BorrowedTiny(TinyRefNode<'a, V, A>),
     OwnedRc(TrieNodeODRc<V, A>)
@@ -666,7 +666,13 @@ impl<'a, V: Clone + Send + Sync, A: Allocator> AbstractNodeRef<'a, V, A> {
         match self {
             AbstractNodeRef::None => None,
             AbstractNodeRef::BorrowedDyn(node) => Some(node.clone_self()),
-            AbstractNodeRef::BorrowedRc(rc) => Some(rc.clone()),
+            AbstractNodeRef::BorrowedRc(rc) => {
+                if !rc.as_tagged().node_is_empty() {
+                    Some(rc.clone())
+                } else {
+                    None
+                }
+            },
             AbstractNodeRef::BorrowedTiny(tiny) => tiny.into_full().map(|list_node| TrieNodeODRc::new_in(list_node, tiny.alloc)),
             AbstractNodeRef::OwnedRc(rc) => Some(rc)
         }

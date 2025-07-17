@@ -192,7 +192,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
     pub fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'_, V, A> {
         self.ensure_root();
         let path = path.as_ref();
-        trie_ref_at_path_in(self.root().unwrap().as_tagged(), self.root_val(), &[], path, self.alloc.clone())
+        trie_ref_at_path_in(self.root().unwrap(), self.root_val(), &[], path, self.alloc.clone())
     }
 
     /// Creates a new read-only [Zipper], starting at the root of a `PathMap`
@@ -201,11 +201,11 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         let root_val = unsafe{ &*self.root_val.get() }.as_ref();
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap().as_tagged(), &[], 0, root_val, self.alloc.clone(), None)
+            ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap(), &[], 0, root_val, self.alloc.clone(), None)
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap().as_tagged(), &[], 0, root_val, self.alloc.clone())
+            ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap(), &[], 0, root_val, self.alloc.clone())
         }
     }
 
@@ -220,11 +220,11 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         };
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap().as_tagged(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone(), None)
+            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone(), None)
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap().as_tagged(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone())
+            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone())
         }
     }
 
@@ -238,11 +238,11 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         };
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap().as_tagged(), path, path.len(), 0, root_val, self.alloc.clone(), None)
+            ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap(), path, path.len(), 0, root_val, self.alloc.clone(), None)
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap().as_tagged(), path, path.len(), 0, root_val, self.alloc.clone())
+            ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap(), path, path.len(), 0, root_val, self.alloc.clone())
         }
     }
 

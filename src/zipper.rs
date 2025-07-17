@@ -628,7 +628,7 @@ pub(crate) mod zipper_priv {
         /// in the underlying structure.  This enables the underlying structure to be cut, in
         /// preparation for safely splitting it into multiple independent regions, as when a
         /// [ZipperHead] needs to make a WriteZipper that can be sent to another thread. 
-        fn try_borrow_focus(&self) -> Option<TaggedNodeRef<'_, Self::V, Self::A>>;
+        fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>>;
     }
 
     pub trait ZipperReadOnlyPriv<'a, V: Clone + Send + Sync, A: Allocator> {
@@ -742,7 +742,7 @@ impl<V: Clone + Send + Sync, Z, A: Allocator> ZipperPriv for &mut Z where Z: Zip
     type V = V;
     type A = A;
     fn get_focus(&self) -> AbstractNodeRef<'_, Self::V, Self::A> { (**self).get_focus() }
-    fn try_borrow_focus(&self) -> Option<TaggedNodeRef<'_, Self::V, Self::A>> { (**self).try_borrow_focus() }
+    fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>> { (**self).try_borrow_focus() }
 }
 
 impl<Z> ZipperPathBuffer for &mut Z where Z: ZipperPathBuffer {
@@ -837,7 +837,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipper
 impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyPriv<'a, V, A> for ReadZipperTracked<'a, '_, V, A> {
     fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'a, V, A>, &'z [u8], Option<&'a V>) { self.z.borrow_raw_parts() }
     fn take_core(&mut self) -> Option<ReadZipperCore<'a, 'static, V, A>> {
-        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(TaggedNodeRef::empty_node(), &[], 0, None, self.z.alloc.clone());
+        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(None, &[], 0, None, self.z.alloc.clone());
         core::mem::swap(&mut temp_core, &mut self.z);
         Some(temp_core.make_static_path())
     }
@@ -852,7 +852,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> zipper_priv::ZipperPriv for R
     type V = V;
     type A = A;
     fn get_focus(&self) -> AbstractNodeRef<'_, Self::V, Self::A> { self.z.get_focus() }
-    fn try_borrow_focus(&self) -> Option<TaggedNodeRef<'_, Self::V, Self::A>> { self.z.try_borrow_focus() }
+    fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>> { self.z.try_borrow_focus() }
 }
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperPathBuffer for ReadZipperTracked<'trie, '_, V, A> {
@@ -878,12 +878,12 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ReadZipperTracked<'a, 'path, V, A> {
     /// See [ReadZipperCore::new_with_node_and_path]
-    pub(crate) fn new_with_node_and_path_in(root_node: TaggedNodeRef<'a, V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: ZipperTracker<TrackingRead>) -> Self {
+    pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: ZipperTracker<TrackingRead>) -> Self {
         let core = ReadZipperCore::new_with_node_and_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core, tracker: tracker }
     }
     /// See [ReadZipperCore::new_with_node_and_cloned_path]
-    pub(crate) fn new_with_node_and_cloned_path_in(root_node: TaggedNodeRef<'a, V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: ZipperTracker<TrackingRead>) -> Self {
+    pub(crate) fn new_with_node_and_cloned_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: ZipperTracker<TrackingRead>) -> Self {
         let core = ReadZipperCore::new_with_node_and_cloned_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core, tracker: tracker }
     }
@@ -986,7 +986,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipper
 impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyPriv<'a, V, A> for ReadZipperUntracked<'a, '_, V, A>{
     fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'a, V, A>, &'z [u8], Option<&'a V>) { self.z.borrow_raw_parts() }
     fn take_core(&mut self) -> Option<ReadZipperCore<'a, 'static, V, A>> {
-        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(TaggedNodeRef::empty_node(), &[], 0, None, self.z.alloc.clone());
+        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(None, &[], 0, None, self.z.alloc.clone());
         core::mem::swap(&mut temp_core, &mut self.z);
         Some(temp_core.make_static_path())
     }
@@ -1001,7 +1001,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> zipper_priv::ZipperPriv for R
     type V = V;
     type A = A;
     fn get_focus(&self) -> AbstractNodeRef<'_, Self::V, Self::A> { self.z.get_focus() }
-    fn try_borrow_focus(&self) -> Option<TaggedNodeRef<'_, Self::V, Self::A>> { self.z.try_borrow_focus() }
+    fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>> { self.z.try_borrow_focus() }
 }
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperPathBuffer for ReadZipperUntracked<'trie, '_, V, A> {
@@ -1028,34 +1028,34 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 impl<'a, 'path, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ReadZipperUntracked<'a, 'path, V, A> {
     /// See [ReadZipperCore::new_with_node_and_path]
     #[cfg(debug_assertions)]
-    pub(crate) fn new_with_node_and_path_in(root_node: TaggedNodeRef<'a, V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
+    pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
         let core = ReadZipperCore::new_with_node_and_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core, tracker }
     }
     #[cfg(not(debug_assertions))]
-    pub(crate) fn new_with_node_and_path_in(root_node: TaggedNodeRef<'a, V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
+    pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
         let core = ReadZipperCore::new_with_node_and_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core }
     }
     /// See [ReadZipperCore::new_with_node_and_path_internal]
     #[cfg(debug_assertions)]
-    pub(crate) fn new_with_node_and_path_internal_in(root_node: TaggedNodeRef<'a, V, A>, path: &'path [u8], root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
-        let core = ReadZipperCore::new_with_node_and_path_internal_in(root_node, path, root_key_start, root_val, alloc);
+    pub(crate) fn new_with_node_and_path_internal_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
+        let core = ReadZipperCore::new_with_node_and_path_internal_in(Some(root_node), path, root_key_start, root_val, alloc);
         Self { z: core, tracker }
     }
     #[cfg(not(debug_assertions))]
-    pub(crate) fn new_with_node_and_path_internal_in(root_node: TaggedNodeRef<'a, V, A>, path: &'path [u8], root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
-        let core = ReadZipperCore::new_with_node_and_path_internal_in(root_node, path, root_key_start, root_val, alloc);
+    pub(crate) fn new_with_node_and_path_internal_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
+        let core = ReadZipperCore::new_with_node_and_path_internal_in(Some(root_node), path, root_key_start, root_val, alloc);
         Self { z: core }
     }
     /// See [ReadZipperCore::new_with_node_and_cloned_path]
     #[cfg(debug_assertions)]
-    pub(crate) fn new_with_node_and_cloned_path_in(root_node: TaggedNodeRef<'a, V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
+    pub(crate) fn new_with_node_and_cloned_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
         let core = ReadZipperCore::new_with_node_and_cloned_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core, tracker }
     }
     #[cfg(not(debug_assertions))]
-    pub(crate) fn new_with_node_and_cloned_path_in(root_node: TaggedNodeRef<'a, V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
+    pub(crate) fn new_with_node_and_cloned_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
         let core = ReadZipperCore::new_with_node_and_cloned_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core }
     }
@@ -1126,7 +1126,7 @@ impl<V: 'static + Clone + Send + Sync + Unpin, A: Allocator> ReadZipperOwned<V, 
         let alloc = map.alloc.clone();
         let path = path.as_ref();
         let map = MaybeDangling::new(Box::new(map));
-        let root_ref = unsafe{ &*(*map).root.get() }.as_ref().unwrap().as_tagged();
+        let root_ref = unsafe{ &*(*map).root.get() }.as_ref().unwrap();
         let root_val = Option::as_ref( unsafe{ &*(*map).root_val.get() } );
         let core = ReadZipperCore::new_with_node_and_cloned_path_in(root_ref, path, path.len(), 0, root_val, alloc);
         Self { map, z: Box::new(core) }
@@ -1199,7 +1199,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipper
 impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator> ZipperReadOnlyPriv<'a, V, A> for ReadZipperOwned<V, A> where Self: 'a {
     fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'a, V, A>, &'z [u8], Option<&'a V>) { self.z.borrow_raw_parts() }
     fn take_core(&mut self) -> Option<ReadZipperCore<'a, 'static, V, A>> {
-        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(TaggedNodeRef::empty_node(), &[], 0, None, self.z.alloc.clone());
+        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(None, &[], 0, None, self.z.alloc.clone());
         core::mem::swap(&mut temp_core, &mut self.z);
         Some(temp_core.make_static_path())
     }
@@ -1214,7 +1214,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> zipper_priv::ZipperPriv for R
     type V = V;
     type A = A;
     fn get_focus(&self) -> AbstractNodeRef<'_, Self::V, Self::A> { self.z.get_focus() }
-    fn try_borrow_focus(&self) -> Option<TaggedNodeRef<'_, Self::V, Self::A>> { self.z.try_borrow_focus() }
+    fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>> { self.z.try_borrow_focus() }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperPathBuffer for ReadZipperOwned<V, A> {
@@ -1265,6 +1265,8 @@ pub(crate) mod read_zipper_core {
         root_key_start: usize,
         /// A special-case to access a value at the root node, because that value would be otherwise inaccessible
         root_val: Option<&'a V>,
+        /// A reference to the [TrieNodeODRc] that points at the zipper's root
+        root_node: Option<&'a TrieNodeODRc<V, A>>,
         /// A reference to the focus node
         focus_node: TaggedNodeRef<'a, V, A>,
         /// An iter token corresponding to the location of the `node_key` within the `focus_node`, or NODE_ITER_INVALID
@@ -1283,7 +1285,8 @@ pub(crate) mod read_zipper_core {
             Self {
                 origin_path: self.origin_path.clone(),
                 root_key_start: self.root_key_start,
-                root_val: self.root_val.clone(),
+                root_val: self.root_val,
+                root_node: self.root_node,
                 focus_node: self.focus_node.clone(),
                 focus_iter_token: NODE_ITER_INVALID,
                 prefix_buf: self.prefix_buf.clone(),
@@ -1325,7 +1328,7 @@ pub(crate) mod read_zipper_core {
             let new_root_val = self.get_val();
             let new_root_path = self.origin_path();
             let new_root_key_start = new_root_path.len() - self.node_key().len();
-            Self::ReadZipperT::new_with_node_and_path_internal_in(self.focus_node.clone(), new_root_path, new_root_key_start, new_root_val, self.alloc.clone())
+            Self::ReadZipperT::new_with_node_and_path_internal_in(Some(self.focus_parent()), new_root_path, new_root_key_start, new_root_val, self.alloc.clone())
         }
     }
 
@@ -1693,27 +1696,48 @@ pub(crate) mod read_zipper_core {
         type V = V;
         type A = A;
         fn get_focus(&self) -> AbstractNodeRef<'_, Self::V, Self::A> {
-            //We need to deregularize the zipper here to get at the ODRc that holds the focus
-            let (focus_node, node_key) = if self.prefix_buf.len() == self.node_key_start() && self.ancestors.len() > 0 {
-                let (focus_node, _iter_tok, _prefix_offset) = &self.ancestors.last().unwrap();
-                (focus_node, self.parent_key())
+            let node_key = self.node_key();
+
+            //See if we need to deregularize the zipper here to get at the ODRc that holds the focus
+            let (focus_node, node_key) = if node_key.len() == 0 {
+                match self.ancestors.last() {
+                    Some((focus_node, _iter_tok, _prefix_offset)) => (focus_node, self.parent_key()),
+                    None => {
+                        return AbstractNodeRef::BorrowedRc(self.root_node.as_ref().unwrap())
+                    }
+                }
             } else {
-                (&self.focus_node, self.node_key())
+                (&self.focus_node, node_key)
             };
             focus_node.get_node_at_key(node_key)
         }
-        fn try_borrow_focus(&self) -> Option<TaggedNodeRef<'_, Self::V, Self::A>> {
+        fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>> {
             let node_key = self.node_key();
-            if node_key.len() == 0 {
-                Some(self.focus_node)
-            } else {
-                match self.focus_node.node_get_child(node_key) {
-                    Some((consumed_bytes, child_node)) => {
-                        debug_assert_eq!(consumed_bytes, node_key.len());
-                        Some(child_node.as_tagged())
-                    },
-                    None => None
+            let (focus_node, node_key) = if node_key.len() == 0 {
+                let parent_key = self.parent_key();
+                if parent_key.len() == 0 {
+                    return self.root_node
                 }
+
+                let parent_node = match self.ancestors.last() {
+                    Some((focus_node, _iter_tok, _prefix_offset)) => {
+                        *focus_node
+                    },
+                    None => {
+                        self.root_node.as_ref().unwrap().as_tagged()
+                    }
+                };
+                (parent_node, parent_key)
+            } else {
+                (self.focus_node, node_key)
+            };
+
+            match focus_node.node_get_child(node_key) {
+                Some((consumed_bytes, child_node)) => {
+                    debug_assert_eq!(consumed_bytes, node_key.len());
+                    Some(child_node)
+                },
+                None => None
             }
         }
     }
@@ -1769,7 +1793,7 @@ pub(crate) mod read_zipper_core {
     impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for ReadZipperCore<'a, '_, V, A> {
         fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> {
             let path = path.as_ref();
-            trie_ref_at_path_in(self.focus_node, self.root_val, self.node_key(), path, self.alloc.clone())
+            trie_ref_at_path_in(self.focus_parent(), self.root_val, self.node_key(), path, self.alloc.clone())
         }
     }
 
@@ -1963,23 +1987,28 @@ pub(crate) mod read_zipper_core {
         ///                       |   root_prefix_len
         ///                 root_key_start
         /// ```
-        pub(crate) fn new_with_node_and_path_in(root_node: TaggedNodeRef<'a, V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
+        pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
             let (node, key, val) = node_along_path(root_node, &path[root_key_start..], root_val);
 
             let new_root_key_start = root_prefix_len - key.len();
-            Self::new_with_node_and_path_internal_in(node, path, new_root_key_start, val, alloc)
+            Self::new_with_node_and_path_internal_in(Some(node), path, new_root_key_start, val, alloc)
         }
         /// Creates a new zipper, with a path relative to a node, assuming the path is fully-contained within
         /// the node
         ///
         /// NOTE: This method currently doesn't descend subnodes.  Use [Self::new_with_node_and_path] if you can't
         /// guarantee the path is within the supplied node.
-        pub(crate) fn new_with_node_and_path_internal_in(root_node: TaggedNodeRef<'a, V, A>, path: &'path [u8], root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
+        pub(crate) fn new_with_node_and_path_internal_in(root_node: Option<&'a TrieNodeODRc<V, A>>, path: &'path [u8], root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
+            let focus = match root_node {
+                Some(node) => node.as_tagged(),
+                None => TaggedNodeRef::empty_node(),
+            };
             Self {
                 origin_path: SliceOrLen::from(path),
                 root_key_start,
                 root_val,
-                focus_node: root_node,
+                focus_node: focus,
+                root_node,
                 focus_iter_token: NODE_ITER_INVALID,
                 prefix_buf: vec![],
                 ancestors: vec![],
@@ -1988,7 +2017,7 @@ pub(crate) mod read_zipper_core {
         }
         /// Same as [Self::new_with_node_and_path], but inits the zipper stack ahead of time, allowing a zipper
         /// that isn't bound by `'path`
-        pub(crate) fn new_with_node_and_cloned_path_in(root_node: TaggedNodeRef<'a, V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
+        pub(crate) fn new_with_node_and_cloned_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
             let (node, key, val) = node_along_path(root_node, &path[root_key_start..], root_val);
 
             let new_root_key_start = root_prefix_len - key.len();
@@ -1998,7 +2027,8 @@ pub(crate) mod read_zipper_core {
                 origin_path: SliceOrLen::new_owned(path.len()),
                 root_key_start: new_root_key_start,
                 root_val: val,
-                focus_node: node,
+                root_node: Some(node),
+                focus_node: node.as_tagged(),
                 focus_iter_token: NODE_ITER_INVALID,
                 prefix_buf,
                 ancestors: Vec::with_capacity(EXPECTED_DEPTH),
@@ -2014,6 +2044,7 @@ pub(crate) mod read_zipper_core {
                 origin_path: SliceOrLen::new_owned(self.origin_path.len()),
                 root_key_start: self.root_key_start,
                 root_val: self.root_val,
+                root_node: self.root_node,
                 focus_node: self.focus_node,
                 focus_iter_token: NODE_ITER_INVALID,
                 prefix_buf: self.prefix_buf,
@@ -2068,6 +2099,26 @@ pub(crate) mod read_zipper_core {
             } else {
                 true
             }
+        }
+
+        /// Returns the parent and path from which the top of the focus_stack can be re-acquired
+        fn focus_parent(&self) -> &'a TrieNodeODRc<V, A> {
+            let parent_key = self.parent_key();
+            if parent_key.len() == 0 {
+                return self.root_node.unwrap()
+            }
+
+            let parent_node = match self.ancestors.last() {
+                Some((focus_node, _iter_tok, _prefix_offset)) => {
+                    *focus_node
+                },
+                None => {
+                    self.root_node.as_ref().unwrap().as_tagged()
+                }
+            };
+            let (key_len, node) = parent_node.node_get_child(parent_key).unwrap();
+            debug_assert_eq!(key_len, parent_key.len());
+            node
         }
 
         /// Internal method to implement `descend_to` and similar methods, handling the movement
@@ -2362,9 +2413,9 @@ pub(crate) mod read_zipper_core {
                 } else {
                     self.root_key_start
                 };
-                &self.prefix_buf[key_start..]
+                &self.prefix_buf[key_start..self.node_key_start()]
             } else {
-                unreachable!()
+                &[]
             }
         }
         /// Internal method similar to `self.node_key().len()`, but returns the number of chars that can be
@@ -2404,24 +2455,25 @@ pub(crate) mod read_zipper_core {
 use read_zipper_core::*;
 
 /// Internal function to walk along a path to the final node reference
-pub(crate) fn node_along_path<'a, 'path, V: Clone + Sync + Send, A: Allocator + 'a>(root_node: TaggedNodeRef<'a, V, A>, path: &'path [u8], root_val: Option<&'a V>) -> (TaggedNodeRef<'a, V, A>, &'path [u8], Option<&'a V>) {
+pub(crate) fn node_along_path<'a, 'path, V: Clone + Sync + Send, A: Allocator + 'a>(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_val: Option<&'a V>) -> (&'a TrieNodeODRc<V, A>, &'path [u8], Option<&'a V>) {
     let mut key = path;
     let mut node = root_node;
     let mut val = root_val;
+    let mut tagged_node = node.as_tagged();
 
     //Step until we get to the end of the key or find a leaf node
     if key.len() > 0 {
-        while let Some((consumed_byte_cnt, next_node)) = node.node_get_child(key) {
-            let next_node = next_node.as_tagged();
+        while let Some((consumed_byte_cnt, next_node)) = tagged_node.node_get_child(key) {
             if consumed_byte_cnt < key.len() {
                 node = next_node;
                 key = &key[consumed_byte_cnt..];
             } else {
-                val = node.node_get_val(key);
+                val = tagged_node.node_get_val(key);
                 node = next_node;
                 key = &[];
                 break;
             };
+            tagged_node = node.as_tagged();
         }
     }
 
@@ -3843,14 +3895,14 @@ mod tests {
         rs.iter().for_each(|r| { btm.set_val_at(r.as_bytes(), *r); });
 
         let root_key = b"ro";
-        let mut zipper = ReadZipperCore::new_with_node_and_path_in(btm.root().unwrap().as_tagged(), root_key, root_key.len(), 0, None, global_alloc());
+        let mut zipper = ReadZipperCore::new_with_node_and_path_in(btm.root().unwrap(), root_key, root_key.len(), 0, None, global_alloc());
         assert_eq!(zipper.is_val(), false);
         zipper.descend_to(b"mulus");
         assert_eq!(zipper.is_val(), true);
         assert_eq!(zipper.get_val(), Some(&"romulus"));
 
         let root_key = b"roman";
-        let mut zipper = ReadZipperCore::new_with_node_and_path_in(btm.root().unwrap().as_tagged(), root_key, root_key.len(), 0, None, global_alloc());
+        let mut zipper = ReadZipperCore::new_with_node_and_path_in(btm.root().unwrap(), root_key, root_key.len(), 0, None, global_alloc());
         assert_eq!(zipper.is_val(), true);
         assert_eq!(zipper.get_val(), Some(&"roman"));
         zipper.descend_to(b"e");
@@ -4139,6 +4191,50 @@ mod tests {
             }
         }
         assert_eq!(shared_cnt, 3);
+    }
+
+    /// Tests [`ZipperPriv::get_focus`] and [`ZipperPriv::try_borrow_focus`] internal APIs on [`ReadZipperCore`]
+    #[test]
+    fn read_zipper_focus_nodes() {
+        let mut map = PathMap::<()>::new();
+        map.set_val_at(b"one.val", ());
+        map.set_val_at(b"one.two.val", ());
+        map.set_val_at(b"one.two.three.val", ());
+        map.set_val_at(b"one.two.three.four.val", ());
+
+        //Test descending a read zipper
+        let mut rz = map.read_zipper();
+        rz.descend_to(b"one.");
+
+        //We should be at a node boundary, as long as this part of the path got encoded as a PairNode (or a ByteNode)
+        let node = rz.try_borrow_focus().unwrap();
+        assert_eq!(node.as_tagged().count_branches(&[]), 2);
+        let expected_mask: ByteMask = [b't', b'v'].into_iter().collect();
+        assert_eq!(node.as_tagged().node_branches_mask(&[]), expected_mask);
+        assert!(matches!(rz.get_focus(), AbstractNodeRef::BorrowedRc(_))); //Make sure we get the ODRc
+        drop(rz);
+
+        //Test creating a read zipper at the location, using `read_zipper_at_path`
+        let rz = map.read_zipper_at_borrowed_path(b"one.two.");
+
+        //We should be at a node boundary, as long as this part of the path got encoded as a PairNode (or a ByteNode)
+        let node = rz.try_borrow_focus().unwrap();
+        assert_eq!(node.as_tagged().count_branches(&[]), 2);
+        let expected_mask: ByteMask = [b't', b'v'].into_iter().collect();
+        assert_eq!(node.as_tagged().node_branches_mask(&[]), expected_mask);
+        assert!(matches!(rz.get_focus(), AbstractNodeRef::BorrowedRc(_))); //Make sure we get the ODRc
+        drop(rz);
+
+        //Test creating a read zipper from a ZipperHead
+        let zh = map.zipper_head();
+        let rz = zh.read_zipper_at_borrowed_path(b"one.two.three.").unwrap();
+
+        // We should be at a node boundary, as long as this part of the path got encoded as a PairNode (or a ByteNode)
+        let node = rz.try_borrow_focus().unwrap();
+        assert_eq!(node.as_tagged().count_branches(&[]), 2);
+        let expected_mask: ByteMask = [b'f', b'v'].into_iter().collect();
+        assert_eq!(node.as_tagged().node_branches_mask(&[]), expected_mask);
+        assert!(matches!(rz.get_focus(), AbstractNodeRef::BorrowedRc(_))); //Make sure we get the ODRc
     }
 }
 

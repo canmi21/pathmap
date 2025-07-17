@@ -206,7 +206,7 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             // lifetime.  We need to do this because the ZipperHead internally uses a WriteZipper, which must
             // remain &mut accessible.  Safety is upheld by the fact that the ZipperHead exclusivity runtime
             // logic makes sure conflicting paths aren't permitted, so we should not get aliased &mut borrows
-            let root_node: TaggedNodeRef<'trie, V, A> = unsafe{ core::mem::transmute(root_node) };
+            let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*(v as *const _) } );
             Ok(ReadZipperTracked::new_with_node_and_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), zipper_tracker))
         })
@@ -218,7 +218,7 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             let (root_node, root_val) = z.splitting_borrow_focus();
             //SAFETY: The user is asserting that the paths won't conflict.
             // See identical code in `read_zipper_at_borrowed_path` for more discussion
-            let root_node: TaggedNodeRef<'trie, V, A> = unsafe{ core::mem::transmute(root_node) };
+            let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*(v as *const _) } );
 
             #[cfg(debug_assertions)]
@@ -241,7 +241,7 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
 
             let (root_node, root_val) = z.splitting_borrow_focus();
             //SAFETY: See identical code in `read_zipper_at_borrowed_path` for more discussion
-            let root_node: TaggedNodeRef<'trie, V, A> = unsafe{ core::mem::transmute(root_node) };
+            let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*(v as *const _) } );
 
             Ok(ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), zipper_tracker))
@@ -255,7 +255,7 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             let (root_node, root_val) = z.splitting_borrow_focus();
             //SAFETY: The user is asserting that the paths won't conflict.
             // See identical code in `read_zipper_at_borrowed_path` for more discussion
-            let root_node: TaggedNodeRef<'trie, V, A> = unsafe{ core::mem::transmute(root_node) };
+            let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*(v as *const _) } );
 
             #[cfg(debug_assertions)]
@@ -311,7 +311,7 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             // has already been dismantled... So we are checking here in order to handle that situation gracefully
             if inner_z.focus_stack.top().is_some() {
                 inner_z.move_to_path(origin_path);
-                if inner_z.try_borrow_focus().unwrap().node_is_empty() {
+                if inner_z.try_borrow_focus().unwrap().as_tagged().node_is_empty() {
                     if !inner_z.is_val() && inner_z.child_count() == 0 {
                         inner_z.prune_path();
                     }
