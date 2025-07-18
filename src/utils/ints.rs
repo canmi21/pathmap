@@ -187,11 +187,14 @@ fn int_range_generator_1() {
     let params: Vec<(u16, u16, u16)> = vec![
         (0, 20, 1), //Standard short step-by-one, confined to least-byte
         (500, 530, 1), //Spill across the least-byte boundary
+        #[cfg(not(miri))]
         (240, 770, 1), //Span multiple least-byte ranges
         (2, 219, 9), //A step size that isn't 1
         (175, 751, 25), //A step size that isn't 1, spanning multiple bytes
         (175, 750, 25), //Same as above test, but stop is an even multiple of step so must be excluded
+        #[cfg(not(miri))]
         (371, 65535, 101), //A big range with an awkward step
+        #[cfg(not(miri))]
         (0, 65535, 1), //The whole range of u16 (minus the last one because ranges are exclusive of end)
     ];
 
@@ -216,7 +219,9 @@ fn int_range_generator_2() {
     let params: Vec<(u32, u32, u32)> = vec![
         (0, 20, 1), //Standard short step-by-one, confined to least-byte
         (500, 530, 1), //Spill across the least-byte boundary
+        #[cfg(not(miri))]
         (1000, 100000, 1), //Spill across two byte boundaries
+        #[cfg(not(miri))]
         (0, 1000000, 3), //A friendly step
         (1234567, 4294967295, 227022703), //A very awkward step (9-digit prime)
         // (0, 4294967295, 1), //The full range of u32 (disabled because it takes too long to validate)
@@ -240,6 +245,7 @@ fn int_range_generator_2() {
     }
 }
 
+#[cfg(not(miri))]
 #[test]
 fn int_range_generator_3() {
 
@@ -267,6 +273,7 @@ fn int_range_generator_3() {
     }
 }
 
+#[cfg(not(miri))]
 #[test]
 fn int_range_generator_4() {
     let start = 2u128.pow(58);

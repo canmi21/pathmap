@@ -2385,7 +2385,7 @@ mod tests {
     }
 
     #[test]
-    fn write_zipper_graft_test() {
+    fn write_zipper_graft_test1() {
         let a_keys = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
         let mut a: PathMap<i32> = a_keys.iter().enumerate().map(|(i, k)| (k, i as i32)).collect();
 
@@ -2421,6 +2421,35 @@ mod tests {
         assert_eq!(a.get_val_at(b"root").unwrap(), &1005);
         assert_eq!(a.get_val_at(b"rough").unwrap(), &1006);
         assert_eq!(a.get_val_at(b"round").unwrap(), &1007);
+    }
+
+    /// Tests to make sure graft doesn't create aliasing by accident 
+    #[test]
+    fn write_zipper_graft_test2() {
+        let mut src = PathMap::<()>::new();
+        let mut dst = PathMap::<()>::new();
+        src.set_val_at(b"one:val", ());
+        src.set_val_at(b"one:two:val", ());
+        src.set_val_at(b"one:two:three:val", ());
+
+        let mut wz = dst.write_zipper_at_path(b"one:");
+        let mut rz = src.read_zipper();
+        rz.descend_to(b"one:");
+        wz.graft(&rz);
+        drop(wz);
+
+        assert_eq!(dst.get_val_at(b"one:two:val"), Some(&()));
+        assert_eq!(src.get_val_at(b"one:two:junk"), None);
+
+        let zh = dst.zipper_head();
+        let mut wz = zh.write_zipper_at_exclusive_path(b"one:").unwrap();
+        wz.descend_to(b"two:junk");
+        wz.set_val(());
+        drop(wz);
+        drop(zh);
+
+        assert_eq!(dst.get_val_at(b"one:two:junk"), Some(&()));
+        assert_eq!(src.get_val_at(b"one:two:junk"), None);
     }
 
     #[test]
@@ -3149,7 +3178,7 @@ mod tests {
     }
 
     #[test]
-    fn write_zipper_join_results_test() {
+    fn write_zipper_join_results_test1() {
         let mut map = PathMap::<bool>::new();
         let head = map.zipper_head();
 
