@@ -882,6 +882,31 @@ mod tests {
         drop(rz)
     }
 
+    /// Test is causing a node to upgrade within a ZipperHead breaks anything
+    #[test]
+    fn zipper_headc() {
+        let mut space = PathMap::<()>::new();
+        space.set_val_at(b"A:rd1", ());
+        space.set_val_at(b"A:rd2", ());
+        let zh = space.zipper_head();
+
+        //Sanity check.  Validate that we see everything the items via a reader
+        let rz1 = zh.read_zipper_at_borrowed_path(b"A:").unwrap();
+        assert_eq!(rz1.val_count(), 2);
+
+        //Cause the node that supports the reader to be upgraded from a PairNode to a ByteNode
+        let _wz1 = zh.write_zipper_at_exclusive_path(b"B:wt").unwrap();
+        let _wz2 = zh.write_zipper_at_exclusive_path(b"C:wt").unwrap();
+        let _wz3 = zh.write_zipper_at_exclusive_path(b"D:wt").unwrap();
+
+        //Check we can re-create a reader, and see all the right stuff
+        let rz2 = zh.read_zipper_at_borrowed_path(b"A:").unwrap();
+        assert_eq!(rz2.val_count(), 2);
+
+        //Check that our original reader is still valid
+        assert_eq!(rz1.val_count(), 2);
+    }
+
     #[test]
     fn hierarchical_zipper_heads1() {
         let mut map = PathMap::<isize>::new();
