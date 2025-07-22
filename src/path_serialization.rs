@@ -4,7 +4,7 @@ use libz_ng_sys::*;
 use crate::PathMap;
 use crate::TrieValue;
 use crate::alloc::Allocator;
-use crate::zipper::{ZipperReadOnlyIteration, ZipperWriting};
+use crate::zipper::{ZipperReadOnlyConditionalIteration, ZipperWriting};
 
 #[derive(Debug, Clone, Copy)]
 pub struct SerializationStats {
@@ -19,15 +19,18 @@ pub struct DeserializationStats {
   pub path_count : usize
 }
 
-pub fn serialize_paths_<'a, V : TrieValue, RZ : ZipperReadOnlyIteration<'a, V>, W: std::io::Write>(rz: RZ, target: &mut W) -> std::io::Result<SerializationStats> {
+pub fn serialize_paths_<'a, V : TrieValue, RZ : ZipperReadOnlyConditionalIteration<'a, V>, W: std::io::Write>(rz: RZ, target: &mut W) -> std::io::Result<SerializationStats> {
   serialize_paths(rz, target, |_, _, _| {})
 }
 /// Serialize all paths in under path `k`
 /// Warning: the size of the individual path serialization can be double exponential in the size of the PathMap
 /// Returns the target output, total serialized bytes (uncompressed), and total number of paths
-pub fn serialize_paths<'a, V : TrieValue, RZ : ZipperReadOnlyIteration<'a, V>, W: std::io::Write, F: FnMut(usize, &[u8], &V) -> ()>(mut rz: RZ, target: &mut W, mut fv: F) -> std::io::Result<SerializationStats> {
+pub fn serialize_paths<'a, V : TrieValue, RZ : ZipperReadOnlyConditionalIteration<'a, V>, W: std::io::Write, F: FnMut(usize, &[u8], &V) -> ()>(mut rz: RZ, target: &mut W, mut fv: F) -> std::io::Result<SerializationStats> {
   const CHUNK: usize = 4096; // not tuned yet
   let mut buffer = [0u8; CHUNK];
+
+  let witness = rz.witness();
+
   #[allow(invalid_value)] //Squish the warning about a Null function ptr, because zlib uses a default allocator if the the ptr is NULL
   //I filed https://github.com/rust-lang/libz-sys/issues/243 to track this issue, and I confirmed the easy fix works, but I didn't submit
   // a PR because their build and validation process is very confusing.
@@ -36,7 +39,7 @@ pub fn serialize_paths<'a, V : TrieValue, RZ : ZipperReadOnlyIteration<'a, V>, W
   if ret != Z_OK { panic!("init failed") }
 
   let mut total_paths : usize = 0;
-  while let Some(v) = rz.to_next_get_val() {
+  while let Some(v) = rz.to_next_get_val_with_witness(&witness) {
     let p = rz.path();
     fv(total_paths, p, v);
     let l = p.len();
@@ -182,7 +185,7 @@ pub fn deserialize_paths<V: TrieValue, A: Allocator, WZ : ZipperWriting<V, A>, R
 
 #[cfg(test)]
 mod test {
-  use crate::zipper::{ZipperIteration, ZipperMoving};
+  use crate::zipper::{ZipperIteration, ZipperValues, ZipperMoving};
   use super::*;
 
   #[cfg(not(miri))] // miri really hates the zlib-ng-sys C API
@@ -280,13 +283,13 @@ mod test {
             println!("de {} {} {}", c, bw, pw);
 
             let mut lrz = restored_btm.read_zipper();
-            while let Some(v) = lrz.to_next_get_val() {
-              assert_eq!(btm.get_val_at(lrz.path()), Some(v));
+            while lrz.to_next_val() {
+              assert_eq!(btm.get_val_at(lrz.path()), Some(lrz.val().unwrap()));
             }
 
             let mut rrz = btm.read_zipper();
-            while let Some(v) = rrz.to_next_get_val() {
-              assert_eq!(restored_btm.get_val_at(rrz.path()), Some(v));
+            while rrz.to_next_val() {
+              assert_eq!(restored_btm.get_val_at(rrz.path()), Some(rrz.val().unwrap()));
             }
           }
           Err(e) => { println!("de e {}", e) }

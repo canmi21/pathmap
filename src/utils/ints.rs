@@ -284,3 +284,28 @@ fn int_range_generator_4() {
     //GOAT, I haven't done the math to figure out what the right answer is here yet!
     println!("{}", map.val_count());
 }
+
+/// This was a failure isolated from one of the benchmarks, but it's been further-simplified into a
+/// zipper_head test.  However there is no such thing as a worthless test, so I'll leave it here
+#[cfg(not(miri))]
+#[test]
+fn int_range_generator_5() {
+    use crate::zipper::*;
+
+    const K: u64 = 1_000_000_000;
+
+    let mut map = PathMap::new();
+    let zh = map.zipper_head();
+
+    let mut buildz = zh.write_zipper_at_exclusive_path(&[0]).unwrap();
+    buildz.graft_map(gen_int_range(0, K, 1, ()));
+    drop(buildz);
+    let mut z = zh.read_zipper_at_path(&[0]).unwrap();
+
+    z.descend_until();
+    z.descend_first_byte();
+    let _z2 = zh.read_zipper_at_path(z.origin_path()).unwrap();
+
+    z.to_next_sibling_byte();
+    z.ascend_byte();
+}

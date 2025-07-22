@@ -200,7 +200,6 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
         let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)?;
         self.with_inner_core_z(|z| {
             z.focus_stack.advance_if_empty();
-            z.descend_to(path);
             let (root_node, root_val) = z.splitting_borrow_focus();
 
             //SAFETY: I am effectively taking items bound by `z`'s lifetime and lifting them up to the `'trie`
@@ -209,15 +208,13 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             // logic makes sure conflicting paths aren't permitted, so we should not get aliased &mut borrows
             let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*(v as *const _) } );
-            let new_zipper = ReadZipperTracked::new_with_node_and_path_in(root_node, path.as_ref(), path.len(), path.len(), root_val, z.alloc.clone(), zipper_tracker);
-            z.reset();
+            let new_zipper = ReadZipperTracked::new_with_node_and_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), zipper_tracker);
             Ok(new_zipper)
         })
     }
     unsafe fn read_zipper_at_borrowed_path_unchecked<'a, 'path>(&'a self, path: &'path[u8]) -> ReadZipperUntracked<'a, 'path, V, A> where 'trie: 'a {
         self.with_inner_core_z(|z| {
             z.focus_stack.advance_if_empty();
-            z.descend_to(path);
             let (root_node, root_val) = z.splitting_borrow_focus();
 
             //SAFETY: The user is asserting that the paths won't conflict.
@@ -230,13 +227,12 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             {
                 let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)
                     .unwrap_or_else(|conflict| panic!("Fatal error. ReadZipper at {path:?} {conflict}"));
-                new_zipper = ReadZipperUntracked::new_with_node_and_path_in(root_node, path.as_ref(), path.len(), path.len(), root_val, z.alloc.clone(), Some(zipper_tracker));
+                new_zipper = ReadZipperUntracked::new_with_node_and_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), Some(zipper_tracker));
             }
             #[cfg(not(debug_assertions))]
             {
-                new_zipper = ReadZipperUntracked::new_with_node_and_path_in(root_node, path.as_ref(), path.len(), path.len(), root_val, z.alloc.clone());
+                new_zipper = ReadZipperUntracked::new_with_node_and_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone());
             }
-            z.reset();
             new_zipper
         })
     }
@@ -245,15 +241,13 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
         let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)?;
         self.with_inner_core_z(|z| {
             z.focus_stack.advance_if_empty();
-            z.descend_to(path);
             let (root_node, root_val) = z.splitting_borrow_focus();
 
             //SAFETY: See identical code in `read_zipper_at_borrowed_path` for more discussion
             let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*(v as *const _) } );
 
-            let new_zipper = ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, path.as_ref(), path.len(), path.len(), root_val, z.alloc.clone(), zipper_tracker);
-            z.reset();
+            let new_zipper = ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), zipper_tracker);
             Ok(new_zipper)
         })
     }
@@ -261,7 +255,6 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
         let path = path.as_ref();
         self.with_inner_core_z(|z| {
             z.focus_stack.advance_if_empty();
-            z.descend_to(path);
             let (root_node, root_val) = z.splitting_borrow_focus();
 
             //SAFETY: The user is asserting that the paths won't conflict.
@@ -274,13 +267,12 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             {
                 let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)
                     .unwrap_or_else(|conflict| panic!("Fatal error. ReadZipper at {path:?} {conflict}"));
-                new_zipper = ReadZipperUntracked::new_with_node_and_cloned_path_in(root_node, path.as_ref(), path.len(), path.len(), root_val, z.alloc.clone(), Some(zipper_tracker));
+                new_zipper = ReadZipperUntracked::new_with_node_and_cloned_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), Some(zipper_tracker));
             }
             #[cfg(not(debug_assertions))]
             {
-                new_zipper = ReadZipperUntracked::new_with_node_and_cloned_path_in(root_node, path.as_ref(), path.len(), path.len(), root_val, z.alloc.clone());
+                new_zipper = ReadZipperUntracked::new_with_node_and_cloned_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone());
             }
-            z.reset();
             new_zipper
         })
     }
@@ -347,7 +339,7 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
 /// 3. The zipper focus doesn't exist, in which case we need to create it, and then follow one of the
 ///  other paths.
 /// 4. The target path is the zipper focus
-fn prepare_exclusive_write_path<'a, 'trie: 'a, 'path: 'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'trie>(z: &'a mut WriteZipperCore<'trie, 'path, V, A>, path: &[u8]) -> (&'a mut TrieNodeODRc<V, A>, &'a mut Option<V>)
+pub(crate) fn prepare_exclusive_write_path<'a, 'trie: 'a, 'path: 'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'trie>(z: &'a mut WriteZipperCore<'trie, 'path, V, A>, path: &[u8]) -> (&'a mut TrieNodeODRc<V, A>, &'a mut Option<V>)
 {
     //If we end up taking write zipper from the ZipperHead's root, we leave the focus_stack in an
     // undescended root state, so we need to fix it.
@@ -472,6 +464,7 @@ fn prepare_node_at_path_end<'a, V: Clone + Send + Sync, A: Allocator>(start_node
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::ByteMask;
     use crate::{PathMap, utils::BitMask};
     use crate::zipper::*;
     use crate::tests::prefix_key;
@@ -932,11 +925,12 @@ mod tests {
 
         //Sanity check.  Validate that we see everything the items via a reader
         let mut rz1 = zh.read_zipper_at_borrowed_path(b"A").unwrap();
-        assert_eq!(rz1.get_val(), Some(&42));
+        let rz1_witness = rz1.witness();
+        assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&42));
         assert_eq!(rz1.descend_to(":rd1"), true);
-        assert_eq!(rz1.get_val(), Some(&1));
+        assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&1));
         assert_eq!(rz1.move_to_path(":rd2"), (3, true));
-        assert_eq!(rz1.get_val(), Some(&2));
+        assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&2));
 
         //Cause the node that supports the reader to be upgraded from a PairNode to a ByteNode
         let _wz1 = zh.write_zipper_at_exclusive_path(b"B:wt").unwrap();
@@ -945,19 +939,110 @@ mod tests {
 
         //Check we can re-create a reader, and see all the right stuff
         let mut rz2 = zh.read_zipper_at_borrowed_path(b"A").unwrap();
-        assert_eq!(rz2.get_val(), Some(&42));
+        let rz2_witness = rz1.witness();
+        assert_eq!(rz2.get_val_with_witness(&rz2_witness), Some(&42));
         assert_eq!(rz2.descend_to(":rd1"), true);
-        assert_eq!(rz2.get_val(), Some(&1));
+        assert_eq!(rz2.get_val_with_witness(&rz2_witness), Some(&1));
         assert_eq!(rz2.move_to_path(":rd2"), (3, true));
-        assert_eq!(rz2.get_val(), Some(&2));
+        assert_eq!(rz2.get_val_with_witness(&rz2_witness), Some(&2));
 
         //Check that our original reader is still valid
         rz1.reset();
-        assert_eq!(rz1.get_val(), Some(&42));
+        assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&42));
         assert_eq!(rz1.descend_to(":rd1"), true);
-        assert_eq!(rz1.get_val(), Some(&1));
-        assert_eq!(rz1.move_to_path(":rd2"), (2, true));
-        assert_eq!(rz1.get_val(), Some(&2));
+        assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&1));
+        assert_eq!(rz1.move_to_path(":rd2"), (3, true));
+        assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&2));
+    }
+
+    #[test]
+    fn zipper_heade() {
+        let mut map = PathMap::new();
+        map.set_val_at(b"path", 42);
+        let zh = map.zipper_head();
+        let rz = zh.read_zipper_at_path(b"path").unwrap();
+        let rz_witness = rz.witness();
+        let val_ref = rz.get_val_with_witness(&rz_witness).unwrap();
+        assert_eq!(*val_ref, 42);
+        drop(rz);
+
+        //Make sure the existance of the borrowed witness keeps the WZ from being created
+        assert!(zh.write_zipper_at_exclusive_path(b"path").is_err());
+
+        assert_eq!(*val_ref, 42);
+        drop(rz_witness);
+
+        //Now that the witness is gone, validate I can create the WZ, and remove the value
+        let mut wz = zh.write_zipper_at_exclusive_path(b"path").unwrap();
+        wz.remove_val();
+        drop(wz);
+        drop(zh);
+        assert_eq!(map.get_val_at(b"path"), None);
+    }
+
+    /// Test that a ReadZipper pointing at empty root behaves as it should
+    #[test]
+    fn zipper_headf() {
+        let mut map = PathMap::new();
+        map.set_val_at(b"ABCDEFG", 42);
+        let zh = map.zipper_head();
+
+        // Test *at* the end of a path that exists
+        let mut z = zh.read_zipper_at_path(b"ABCDEFG").unwrap();
+        assert_eq!(z.val(), Some(&42));
+        assert_eq!(z.child_count(), 0);
+        assert_eq!(z.child_mask(), ByteMask::EMPTY);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.to_next_sibling_byte(), false);
+        assert_eq!(z.ascend_byte(), false);
+
+        // Test creating a zipper at a path that doesn't exist
+        let mut z2 = zh.read_zipper_at_path(b"ABCDEFGH").unwrap();
+        assert_eq!(z2.val(), None);
+        assert_eq!(z2.child_count(), 0);
+        assert_eq!(z2.child_mask(), ByteMask::EMPTY);
+        assert_eq!(z2.to_next_sibling_byte(), false);
+        assert_eq!(z2.ascend_byte(), false);
+
+        //Conceptually this should be `false`, but the act of creating the ReadZipper currently creates
+        // the path - which is incorrect behavior and should be fixed!
+        assert_eq!(z2.path_exists(), false);
+    }
+
+    /// This test ensures that a ReadZipper isn't invalidated by creating another ReadZipper at an
+    /// overlapping path
+    #[test]
+    fn zipper_headg() {
+        let mut map = PathMap::new();
+        map.set_val_at(b"ABCDEFG", 42);
+        map.set_val_at(b"A", 24);
+        let zh = map.zipper_head();
+
+        // Create a zipper and test to make sure it behaves properly
+        let mut z = zh.read_zipper_at_path(b"A").unwrap();
+        assert_eq!(z.val(), Some(&24));
+        assert_eq!(z.to_next_sibling_byte(), false);
+        z.descend_until();
+        assert_eq!(z.path(), b"BCDEFG");
+        assert_eq!(z.origin_path(), b"ABCDEFG");
+        assert_eq!(z.val(), Some(&42));
+        assert_eq!(z.to_next_sibling_byte(), false);
+
+        // Create a second zipper and ensure it's valid
+        let mut z2 = zh.read_zipper_at_path(z.origin_path()).unwrap();
+        assert_eq!(z2.path(), b"");
+        assert_eq!(z2.origin_path(), b"ABCDEFG");
+        assert_eq!(z2.val(), Some(&42));
+        assert_eq!(z2.to_next_sibling_byte(), false);
+
+        // Test the original zipper
+        assert_eq!(z.val(), Some(&42));
+        assert_eq!(z.to_next_sibling_byte(), false);
+        assert_eq!(z.ascend_until(), true);
+        assert_eq!(z.path(), b"");
+        assert_eq!(z.origin_path(), b"A");
+        assert_eq!(z.val(), Some(&24));
+        assert_eq!(z.to_next_sibling_byte(), false);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 
 use core::slice;
-use std::mem::MaybeUninit;
+use core::mem::MaybeUninit;
+use std::sync::Arc;
 
 use crate::alloc::{global_alloc, Allocator, GlobalAlloc};
 use crate::utils::ByteMask;
@@ -8,6 +9,7 @@ use crate::PathMap;
 use crate::trie_node::*;
 use crate::zipper::*;
 use crate::zipper::zipper_priv::*;
+use crate::zipper_tracking::*;
 
 /// A borrowed read-only reference to a location in a trie
 ///
@@ -89,7 +91,7 @@ impl<V: Clone + Send + Sync, A: Allocator> Clone for TrieRef<'_, V, A> {
         Self{
             focus_node: self.focus_node,
             val_or_key: self.val_or_key,
-            alloc: self.alloc.clone()
+            alloc: self.alloc.clone(),
         }
     }
 }
@@ -261,6 +263,7 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyV
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for TrieRef<'a, V, A> {
+    type TrieRefT = TrieRef<'a, V, A>;
     fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> {
         if self.is_valid() {
             let path = path.as_ref();
@@ -273,6 +276,9 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyS
         } else {
             TrieRef::new_invalid_in(self.alloc.clone())
         }
+    }
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> {
+        self.trie_ref_at_path(path)
     }
 }
 
@@ -340,6 +346,70 @@ pub(crate) fn trie_ref_at_path_in<'a, 'paths, V: Clone + Send + Sync, A: Allocat
     TrieRef::new_with_node_and_path_in(node, val, key, alloc)
 }
 
+/// A borrowed read-only reference to a location in a trie.  See [TrieRef]
+///
+#[derive(Clone)]
+pub struct TrieRefTracked<'a, V: Clone + Send + Sync, A: Allocator = GlobalAlloc> {
+    pub(crate) trie_ref: TrieRef<'a, V, A>,
+    pub(crate) tracker: Arc<ZipperTracker<TrackingRead>>,
+}
+
+impl<'a, V: Clone + Send + Sync, A: Allocator> Drop for TrieRefTracked<'a, V, A> {
+    fn drop(&mut self) { }
+}
+
+impl<V: Clone + Send + Sync + Unpin, A: Allocator> Zipper for TrieRefTracked<'_, V, A> {
+    fn path_exists(&self) -> bool { self.trie_ref.path_exists() }
+    fn is_val(&self) -> bool { self.trie_ref.is_val() }
+    fn child_count(&self) -> usize { self.trie_ref.child_count() }
+    fn child_mask(&self) -> ByteMask { self.trie_ref.child_mask() }
+}
+
+impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperValues<V> for TrieRefTracked<'_, V, A> {
+    fn val(&self) -> Option<&V> { self.trie_ref.val() }
+}
+
+impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperForking<V> for TrieRefTracked<'_, V, A> {
+    type ReadZipperT<'a> = ReadZipperUntracked<'a, 'a, V, A> where Self: 'a;
+    fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> { self.trie_ref.fork_read_zipper() }
+}
+
+impl<V: Clone + Send + Sync, A: Allocator> zipper_priv::ZipperPriv for TrieRefTracked<'_, V, A> {
+    type V = V;
+    type A = A;
+    fn get_focus(&self) -> AbstractNodeRef<'_, Self::V, Self::A> { self.trie_ref.get_focus() }
+    fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>> { self.trie_ref.try_borrow_focus() }
+}
+
+impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperSubtries<V, A> for TrieRefTracked<'_, V, A> {
+    fn make_map(&self) -> Option<PathMap<Self::V, A>> { self.trie_ref.make_map() }
+}
+
+impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for TrieRefTracked<'a, V, A> {
+    type TrieRefT = TrieRefTracked<'a, V, A>;
+    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRefTracked<'a, V, A> {
+        let inner = self.trie_ref.trie_ref_at_path(path);
+        TrieRefTracked{ trie_ref: inner, tracker: self.tracker.clone() }
+    }
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> {
+        self.trie_ref.trie_ref_at_path(path)
+    }
+}
+
+impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for TrieRefTracked<'_, V, A> {
+    fn is_shared(&self) -> bool {
+        false //We don't have enough info in the TrieRef to get back to the Rc header.  This may change in the future
+    }
+}
+
+impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperReadOnlyPriv<'a, V, A> for TrieRefTracked<'a, V, A> {
+    fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'a, V, A>, &'z [u8], Option<&'a V>) { self.trie_ref.borrow_raw_parts() }
+    fn take_core(&mut self) -> Option<read_zipper_core::ReadZipperCore<'a, 'static, V, A>> { None }
+}
+
+impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcretePriv for TrieRefTracked<'_, V, A> {
+    fn shared_node_id(&self) -> Option<u64> { self.trie_ref.shared_node_id() }
+}
 
 #[cfg(test)]
 mod tests {
@@ -447,5 +517,30 @@ mod tests {
 
         let new_map = trie_ref.make_map().unwrap();
         assert_eq!(new_map.val_count(), 9);
+    }
+
+    /// Tests that a TrieRef can't be invalidated through a ZipperHead
+    #[test]
+    fn trie_ref_test3() {
+        let mut map = PathMap::<usize>::new();
+        map.set_val_at(b"path", 42);
+        let zh = map.zipper_head();
+        let rz = zh.read_zipper_at_borrowed_path(b"path").unwrap();
+        let tr = rz.trie_ref_at_path(b"");
+
+        assert_eq!(tr.val(), Some(&42));
+        drop(rz);
+
+        assert_eq!(tr.val(), Some(&42));
+        assert!(zh.write_zipper_at_exclusive_path(b"path").is_err());
+
+        assert_eq!(tr.val(), Some(&42));
+        drop(tr);
+
+        let mut wz = zh.write_zipper_at_exclusive_path(b"path").unwrap();
+        wz.remove_val();
+        drop(wz);
+        drop(zh);
+        assert_eq!(map.get_val_at(b"path"), None);
     }
 }

@@ -43,7 +43,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
 
         //Get TrieRefs for the remaining zippers
         for other_z in other_z_iter {
-            let trie_ref = other_z.trie_ref_at_path("");
+            let trie_ref = unsafe{ other_z.trie_ref_at_path_unchecked("") };
             secondaries.push(trie_ref);
             source_zippers.push(Box::new(other_z));
         }
@@ -75,7 +75,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
     {
         let other_z_iter = other_zippers.into_iter();
         for other_z in other_z_iter {
-            let trie_ref = other_z.trie_ref_at_path("");
+            let trie_ref = unsafe{ other_z.trie_ref_at_path_unchecked("") };
             self.secondaries.push(trie_ref);
             self.source_zippers.push(Box::new(other_z));
         }
@@ -287,6 +287,12 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 
 impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyValues<'trie, V> for ProductZipper<'factor_z, 'trie, V, A> {
     fn get_val(&self) -> Option<&'trie V> { self.z.get_val() }
+}
+
+impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyConditionalValues<'trie, V> for ProductZipper<'factor_z, 'trie, V, A> {
+    type WitnessT = ();
+    fn witness<'w>(&self) -> Self::WitnessT { () }
+    fn get_val_with_witness<'w>(&self, _witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w { self.get_val() }
 }
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper for ProductZipper<'_, 'trie, V, A> {

@@ -325,7 +325,7 @@ impl SplitCataJumping {
     }
 }
 
-impl<'a, Z, V: 'a> Catamorphism<V> for Z where Z: Zipper + ZipperReadOnlyValues<'a, V> + ZipperConcrete + ZipperAbsolutePath + ZipperPathBuffer {
+impl<'a, Z, V: 'a> Catamorphism<V> for Z where Z: Zipper + ZipperReadOnlyConditionalValues<'a, V> + ZipperConcrete + ZipperAbsolutePath + ZipperPathBuffer {
     fn into_cata_side_effect_fallible<W, Err, AlgF>(self, mut alg_f: AlgF) -> Result<W, Err>
         where AlgF: FnMut(&ByteMask, &mut [W], Option<&V>, &[u8]) -> Result<W, Err>,
     {
@@ -400,7 +400,7 @@ impl<V: 'static + Clone + Send + Sync + Unpin, A: Allocator + 'static> Catamorph
 #[inline]
 fn cata_side_effect_body<'a, Z, V: 'a, W, Err, AlgF, const JUMPING: bool>(mut z: Z, mut alg_f: AlgF) -> Result<W, Err>
     where
-    Z: Zipper + ZipperReadOnlyValues<'a, V> + ZipperAbsolutePath + ZipperPathBuffer,
+    Z: Zipper + ZipperReadOnlyConditionalValues<'a, V> + ZipperAbsolutePath + ZipperPathBuffer,
     AlgF: FnMut(&ByteMask, &mut [W], usize, Option<&V>, &[u8]) -> Result<W, Err>
 {
     //`stack` holds a "frame" at each forking point above the zipper position.  No frames exist for values
@@ -483,9 +483,10 @@ fn ascend_to_fork<'a, Z, V: 'a, W, Err, AlgF, const JUMPING: bool>(z: &mut Z,
         alg_f: &mut AlgF, children: &mut [W]
 ) -> Result<W, Err>
     where
-    Z: Zipper + ZipperReadOnlyValues<'a, V> + ZipperAbsolutePath + ZipperPathBuffer,
+    Z: Zipper + ZipperReadOnlyConditionalValues<'a, V> + ZipperAbsolutePath + ZipperPathBuffer,
     AlgF: FnMut(&ByteMask, &mut [W], usize, Option<&V>, &[u8]) -> Result<W, Err>
 {
+    let z_witness = z.witness();
     let mut w;
     let mut child_mask = ByteMask::from(z.child_mask());
     let mut children = &mut children[..];
@@ -494,7 +495,7 @@ fn ascend_to_fork<'a, Z, V: 'a, W, Err, AlgF, const JUMPING: bool>(z: &mut Z,
         // for each value we encounter along the way while ascending
         loop {
             let old_path_len = z.origin_path().len();
-            let old_val = z.get_val();
+            let old_val = z.get_val_with_witness(&z_witness);
             let ascended = z.ascend_until();
             debug_assert!(ascended);
 
@@ -709,7 +710,7 @@ fn into_cata_cached_body<'a, Z, V: 'a, W, E, AlgF, Cache, const JUMPING: bool>(
 ) -> Result<W, E>
     where
     Cache: CacheStrategy<W>,
-    Z: Zipper + ZipperReadOnlyValues<'a, V> + ZipperConcrete + ZipperAbsolutePath + ZipperPathBuffer,
+    Z: Zipper + ZipperReadOnlyConditionalValues<'a, V> + ZipperConcrete + ZipperAbsolutePath + ZipperPathBuffer,
     AlgF: FnMut(&ByteMask, &mut [W], usize, Option<&V>, &[u8]) -> Result<W, E>
 {
     zipper.reset();

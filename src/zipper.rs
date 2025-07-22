@@ -26,6 +26,7 @@
 //!
 
 use maybe_dangling::MaybeDangling;
+use std::sync::Arc;
 
 use crate::alloc::{Allocator, GlobalAlloc};
 use crate::utils::{ByteMask, find_prefix_overlap};
@@ -400,6 +401,29 @@ pub trait ZipperReadOnlyValues<'a, V>: ZipperValues<V> {
     }
 }
 
+pub struct ReadZipperWitness(pub(crate) Arc<ZipperTracker<TrackingRead>>);
+
+/// Conceptually similar to [ZipperReadOnlyValues] but requires a [ZipperWitness] to ensure the data
+/// is intact.
+///
+/// NOTE: In a future version of rust, when there is some support for disjoint borrows, we could unify
+/// this trait with `ZipperReadOnlyValues` by splitting the "read guard" function of the zipper from
+/// the "cursor" function of the zipper.
+pub trait ZipperReadOnlyConditionalValues<'a, V>: ZipperValues<V> {
+    /// The type that acts as a witness for the validity of the zipper
+    type WitnessT;
+
+    /// Creates a witness that can allow acquisition of longer-lived borrows of values, while the
+    /// zipper itself is mutated
+    fn witness<'w>(&self) -> Self::WitnessT;
+
+    /// Returns a refernce to the value at the zipper's focus, or `None` if there is no value
+    ///
+    /// NOTE: Unlike [ZipperValues::val], this method returns a reference with the lifetime of `'a`
+    /// instead of the temporary lifetime of the method.
+    fn get_val_with_witness<'w>(&self, witness: &'w Self::WitnessT) -> Option<&'w V> where 'a: 'w;
+}
+
 /// An interface to implement iterating over all values in a subtrie via a zipper
 pub trait ZipperReadOnlyIteration<'a, V>: ZipperReadOnlyValues<'a, V> + ZipperIteration {
     /// Advances to the next value with behavior identical to [ZipperIteration::to_next_val], but returns
@@ -421,13 +445,37 @@ pub trait ZipperReadOnlyIteration<'a, V>: ZipperReadOnlyValues<'a, V> + ZipperIt
     }
 }
 
+/// Similar to [ZipperReadOnlyIteration].  See [ZipperReadOnlyConditionalValues] for an explanation about
+/// why this trait exists
+pub trait ZipperReadOnlyConditionalIteration<'a, V>: ZipperReadOnlyConditionalValues<'a, V> + ZipperIteration {
+    /// See [ZipperReadOnlyIteration::to_next_get_val]
+    fn to_next_get_val_with_witness<'w>(&mut self, witness: &'w Self::WitnessT) -> Option<&'w V> where 'a: 'w {
+        if self.to_next_val() {
+            let val = self.get_val_with_witness(witness);
+            debug_assert!(val.is_some());
+            val
+        } else {
+            None
+        }
+    }
+}
+
 /// An interface to access subtries through a [Zipper] that cannot modify the trie.  Allows
 /// references with lifetimes that may outlive the zipper
 ///
 /// This trait will never be implemented on the same type as [ZipperWriting]
 pub trait ZipperReadOnlySubtries<'a, V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: ZipperSubtries<V, A> + ZipperReadOnlyPriv<'a, V, A> {
+    /// The type of the returned [TrieRef] or [TrieRefTracked]
+    type TrieRefT;
+
     /// Returns a [TrieRef] for the specified path, relative to the current focus
-    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A>;
+    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT;
+
+    /// Returns an untracked [TrieRef]
+    ///
+    /// NOTE: this method should only be used when the reference validity can be ensured through
+    /// other means - such as keeping the parent zipper alive.
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A>;
 }
 
 /// An interface for advanced [Zipper] movements used for various types of iteration; such as iterating
@@ -726,12 +774,24 @@ impl<'a, V: Clone + Send + Sync, Z> ZipperReadOnlyValues<'a, V> for &mut Z where
     fn get_val(&self) -> Option<&'a V> { (**self).get_val() }
 }
 
+impl<'a, V: Clone + Send + Sync, Z> ZipperReadOnlyConditionalValues<'a, V> for &mut Z where Z: ZipperReadOnlyConditionalValues<'a, V>, Self: ZipperValues<V> {
+    type WitnessT = Z::WitnessT;
+    fn witness<'w>(&self) -> Z::WitnessT { (**self).witness() }
+    fn get_val_with_witness<'w>(&self, witness: &'w Z::WitnessT) -> Option<&'w V> where 'a: 'w { (**self).get_val_with_witness(witness) }
+}
+
 impl<'a, V, Z> ZipperReadOnlyIteration<'a, V> for &mut Z where Z: ZipperReadOnlyIteration<'a, V>, Self: ZipperReadOnlyValues<'a, V> + ZipperIteration {
     fn to_next_get_val(&mut self) -> Option<&'a V> { (**self).to_next_get_val() }
 }
 
-impl<'a, V: Clone + Send + Sync, Z, A: Allocator> ZipperReadOnlySubtries<'a, V, A> for &mut Z where Z: ZipperReadOnlySubtries<'a, V, A>, Self: ZipperReadOnlyPriv<'a, V, A> + ZipperSubtries<V, A> {
-    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { (**self).trie_ref_at_path(path) }
+impl<'a, V, Z> ZipperReadOnlyConditionalIteration<'a, V> for &mut Z where Z: ZipperReadOnlyConditionalIteration<'a, V>, Self: ZipperReadOnlyConditionalValues<'a, V, WitnessT = Z::WitnessT> + ZipperIteration {
+    fn to_next_get_val_with_witness<'w>(&mut self, witness: &'w Self::WitnessT) -> Option<&'w V> where 'a: 'w { (**self).to_next_get_val_with_witness(witness) }
+}
+
+impl<'a, V: Clone + Send + Sync + 'a, Z, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for &mut Z where Z: ZipperReadOnlySubtries<'a, V, A>, Self: ZipperReadOnlyPriv<'a, V, A> + ZipperSubtries<V, A> {
+    type TrieRefT = <Z as ZipperReadOnlySubtries<'a, V, A>>::TrieRefT;
+    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT { (**self).trie_ref_at_path(path) }
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { (**self).trie_ref_at_path_unchecked(path) }
 }
 
 impl<Z> ZipperConcrete for &mut Z where Z: ZipperConcrete, Self: ZipperConcretePriv {
@@ -769,7 +829,7 @@ impl<Z> ZipperConcretePriv for &mut Z where Z: ZipperConcretePriv {
 #[derive(Clone)]
 pub struct ReadZipperTracked<'a, 'path, V: Clone + Send + Sync, A: Allocator = GlobalAlloc> {
     z: ReadZipperCore<'a, 'path, V, A>,
-    tracker: ZipperTracker<TrackingRead>,
+    tracker: Arc<ZipperTracker<TrackingRead>>,
 }
 
 //The Drop impl ensures the tracker gets dropped at the right time
@@ -822,12 +882,25 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     fn to_next_step(&mut self) -> bool { self.z.to_next_step() }
 }
 
-impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyValues<'trie, V> for ReadZipperTracked<'trie, '_, V, A> {
-    fn get_val(&self) -> Option<&'trie V> { self.z.get_val() }
+impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyConditionalValues<'trie, V> for ReadZipperTracked<'trie, '_, V, A> {
+    type WitnessT = ReadZipperWitness;
+    fn witness<'w>(&self) -> ReadZipperWitness {
+        ReadZipperWitness(self.tracker.clone())
+    }
+    fn get_val_with_witness<'w>(&self, witness: &'w ReadZipperWitness) -> Option<&'w V> where 'trie: 'w {
+        debug_assert!(witness.0.path() == self.tracker.path());
+        self.z.get_val()
+    }
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for ReadZipperTracked<'a, '_, V, A> {
-    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { self.z.trie_ref_at_path(path) }
+    type TrieRefT = TrieRefTracked<'a, V, A>;
+    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRefTracked<'a, V, A> {
+        TrieRefTracked { trie_ref: self.z.trie_ref_at_path(path), tracker: self.tracker.clone() }
+    }
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> {
+        self.z.trie_ref_at_path(path)
+    }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipperTracked<'_, '_, V, A> {
@@ -867,9 +940,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     fn to_next_k_path(&mut self, k: usize) -> bool { self.z.to_next_k_path(k) }
 }
 
-impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyIteration<'trie, V> for ReadZipperTracked<'trie, '_, V, A> {
-    fn to_next_get_val(&mut self) -> Option<&'trie V> { self.z.to_next_get_val() }
-}
+impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyConditionalIteration<'trie, V> for ReadZipperTracked<'trie, '_, V, A> { }
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperAbsolutePath for ReadZipperTracked<'trie, '_, V, A> {
     fn origin_path(&self) -> &[u8] { self.z.origin_path() }
@@ -880,31 +951,35 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ReadZipperTra
     /// See [ReadZipperCore::new_with_node_and_path]
     pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: ZipperTracker<TrackingRead>) -> Self {
         let core = ReadZipperCore::new_with_node_and_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
-        Self { z: core, tracker: tracker }
+        Self { z: core, tracker: Arc::new(tracker) }
     }
     /// See [ReadZipperCore::new_with_node_and_cloned_path]
     pub(crate) fn new_with_node_and_cloned_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: ZipperTracker<TrackingRead>) -> Self {
         let core = ReadZipperCore::new_with_node_and_cloned_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
-        Self { z: core, tracker: tracker }
+        Self { z: core, tracker: Arc::new(tracker) }
     }
 }
 
-impl<'a, 'path, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> std::iter::IntoIterator for ReadZipperTracked<'a, 'path, V, A> {
-    type Item = (Vec<u8>, &'a V);
-    type IntoIter = ReadZipperIter<'a, 'path, V, A>;
+//GOAT, the standard prototype of IntoIterator isn't compatible with ReadZipperTracked anymore because 
+// we would need to require a witness to create the iterator.  We could add a special into_iter method
+// but I will wait for somebody to ask for it.
+//
+// impl<'a, 'path, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> std::iter::IntoIterator for ReadZipperTracked<'a, 'path, V, A> {
+//     type Item = (Vec<u8>, &'a V);
+//     type IntoIter = ReadZipperIter<'a, 'path, V, A>;
 
-    fn into_iter(self) -> Self::IntoIter {
-        //Destructure `self` without dropping it
-        let zip = core::mem::ManuallyDrop::new(self);
-        let core_z = unsafe { std::ptr::read(&zip.z) };
-        let tracker = unsafe { std::ptr::read(&zip.tracker) };
-        ReadZipperIter {
-            started: false,
-            zipper: Some(core_z),
-            _tracker: Some(tracker)
-        }
-    }
-}
+//     fn into_iter(self) -> Self::IntoIter {
+//         //Destructure `self` without dropping it
+//         let zip = core::mem::ManuallyDrop::new(self);
+//         let core_z = unsafe { std::ptr::read(&zip.z) };
+//         let tracker = unsafe { std::ptr::read(&zip.tracker) };
+//         ReadZipperIter {
+//             started: false,
+//             zipper: Some(core_z),
+//             _tracker: Some(tracker)
+//         }
+//     }
+// }
 
 // ***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---
 // ReadZipperUntracked
@@ -975,8 +1050,16 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     fn get_val(&self) -> Option<&'trie V> { self.z.get_val() }
 }
 
+impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyConditionalValues<'trie, V> for ReadZipperUntracked<'trie, '_, V, A> {
+    type WitnessT = ();
+    fn witness<'w>(&self) -> Self::WitnessT { () }
+    fn get_val_with_witness<'w>(&self, _witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w { self.get_val() }
+}
+
 impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for ReadZipperUntracked<'a, '_, V, A> {
+    type TrieRefT = TrieRef<'a, V, A>;
     fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { self.z.trie_ref_at_path(path) }
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { self.z.trie_ref_at_path(path) }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipperUntracked<'_, '_, V, A> {
@@ -1019,6 +1102,8 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyIteration<'trie, V> for ReadZipperUntracked<'trie, '_, V, A> {
     fn to_next_get_val(&mut self) -> Option<&'trie V> { self.z.to_next_get_val() }
 }
+
+impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyConditionalIteration<'trie, V> for ReadZipperUntracked<'trie, '_, V, A> { }
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperAbsolutePath for ReadZipperUntracked<'trie, '_, V, A> {
     fn origin_path(&self) -> &[u8] { self.z.origin_path() }
@@ -1188,8 +1273,16 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator> ZipperReadOnlyValues<'a, 
     fn get_val(&self) -> Option<&'a V> { self.z.get_val() }
 }
 
+impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyConditionalValues<'trie, V> for ReadZipperOwned<V, A> {
+    type WitnessT = ();
+    fn witness<'w>(&self) -> Self::WitnessT { () }
+    fn get_val_with_witness<'w>(&self, _witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w { self.get_val() }
+}
+
 impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator> ZipperReadOnlySubtries<'a, V, A> for ReadZipperOwned<V, A> where Self: 'a {
+    type TrieRefT = TrieRef<'a, V, A>;
     fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { self.z.trie_ref_at_path(path) }
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { self.z.trie_ref_at_path(path) }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipperOwned<V, A> {
@@ -1233,6 +1326,8 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperReadOnlyIterat
     fn to_next_get_val(&mut self) -> Option<&'a V> { self.z.to_next_get_val() }
 }
 
+impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyConditionalIteration<'trie, V> for ReadZipperOwned<V, A> { }
+
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperAbsolutePath for ReadZipperOwned<V, A> {
     fn origin_path(&self) -> &[u8] { self.z.origin_path() }
     fn root_prefix_path(&self) -> &[u8] { self.z.root_prefix_path() }
@@ -1249,6 +1344,7 @@ pub(crate) const EXPECTED_DEPTH: usize = 16;
 pub(crate) const EXPECTED_PATH_LEN: usize = 64;
 
 pub(crate) mod read_zipper_core {
+    use core::ptr::NonNull;
     use crate::trie_node::*;
     use crate::PathMap;
     use crate::trie_ref::*;
@@ -1264,7 +1360,7 @@ pub(crate) mod read_zipper_core {
         /// `root_key = origin_path[root_key_start..]`
         root_key_start: usize,
         /// A special-case to access a value at the root node, because that value would be otherwise inaccessible
-        root_val: Option<&'a V>,
+        root_val: Option<NonNull<V>>,
         /// A reference to the [TrieNodeODRc] that points at the zipper's root
         root_node: Option<&'a TrieNodeODRc<V, A>>,
         /// A reference to the focus node
@@ -1279,6 +1375,8 @@ pub(crate) mod read_zipper_core {
         ancestors: Vec<(TaggedNodeRef<'a, V, A>, u128, usize)>,
         pub(crate) alloc: A,
     }
+    unsafe impl<V: Clone + Send + Sync, A: Allocator> Send for ReadZipperCore<'_, '_, V, A> {}
+    unsafe impl<V: Clone + Send + Sync, A: Allocator> Sync for ReadZipperCore<'_, '_, V, A> {}
 
     impl<V: Clone + Send + Sync, A: Allocator> Clone for ReadZipperCore<'_, '_, V, A> where V: Clone {
         fn clone(&self) -> Self {
@@ -1784,17 +1882,20 @@ pub(crate) mod read_zipper_core {
                 if let Some((parent, _iter_tok, _prefix_offset)) = self.ancestors.last() {
                     parent.node_get_val(self.parent_key())
                 } else {
-                    self.root_val.clone() //Just clone the ref, not the value itself
+                    self.root_val.map(|v| unsafe{ &*v.as_ptr() })
                 }
             }
         }
     }
 
     impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for ReadZipperCore<'a, '_, V, A> {
+        type TrieRefT = TrieRef<'a, V, A>;
         fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> {
             let path = path.as_ref();
-            trie_ref_at_path_in(self.focus_parent(), self.root_val, self.node_key(), path, self.alloc.clone())
+            let root_val = self.root_val.map(|v| unsafe{ &*v.as_ptr() });
+            trie_ref_at_path_in(self.focus_parent(), root_val, self.node_key(), path, self.alloc.clone())
         }
+        unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { self.trie_ref_at_path(path) }
     }
 
     impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperReadOnlyPriv<'a, V, A> for ReadZipperCore<'a, '_, V, A> {
@@ -2006,7 +2107,7 @@ pub(crate) mod read_zipper_core {
             Self {
                 origin_path: SliceOrLen::from(path),
                 root_key_start,
-                root_val,
+                root_val: root_val.map(|v| v.into()),
                 focus_node: focus,
                 root_node,
                 focus_iter_token: NODE_ITER_INVALID,
@@ -2026,7 +2127,7 @@ pub(crate) mod read_zipper_core {
             Self {
                 origin_path: SliceOrLen::new_owned(path.len()),
                 root_key_start: new_root_key_start,
-                root_val: val,
+                root_val: val.map(|v| v.into()),
                 root_node: Some(node),
                 focus_node: node.as_tagged(),
                 focus_iter_token: NODE_ITER_INVALID,
@@ -2068,7 +2169,7 @@ pub(crate) mod read_zipper_core {
         ///  regularized form.  Alternatively it could be represented with the `focus_node` of `b` and a
         ///  `node_key()` of `c`, which is called a deregularized form.
         fn regularize(&mut self) {
-            debug_assert!(self.prefix_buf.len() > self.node_key_start()); //If this triggers, we have uninitialized buffers
+            debug_assert!(self.prefix_buf.len() >= self.node_key_start()); //If this triggers, we have uninitialized buffers
             if let Some((_consumed_byte_cnt, next_node)) = self.focus_node.node_get_child(self.node_key()) {
                 self.ancestors.push((self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
                 self.focus_node = next_node.as_tagged();

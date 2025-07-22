@@ -63,6 +63,13 @@ impl Clone for ZipperTracker<TrackingRead> {
     }
 }
 
+impl<M: TrackingMode> ZipperTracker<M> {
+    /// Returns the path that the tracker is guarding
+    pub fn path(&self) -> &[u8] {
+        &self.this_path
+    }
+}
+
 /// An error type that may be produced when attempting to create a zipper or otherwise acquire
 /// permission to access a path
 #[derive(Debug)]
