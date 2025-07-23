@@ -22,14 +22,28 @@ pub struct DeserializationStats {
 pub fn serialize_paths_<'a, V : TrieValue, RZ : ZipperReadOnlyConditionalIteration<'a, V>, W: std::io::Write>(rz: RZ, target: &mut W) -> std::io::Result<SerializationStats> {
   serialize_paths(rz, target, |_, _, _| {})
 }
+
+pub fn serialize_paths<'a, V : TrieValue, RZ : ZipperReadOnlyConditionalIteration<'a, V>, W: std::io::Write, F: FnMut(usize, &[u8], &V) -> ()>(mut rz: RZ, target: &mut W, mut fv: F) -> std::io::Result<SerializationStats> {
+  let witness = rz.witness();
+  let mut k = 0;
+  for_each_path_serialize(target, || {
+     match rz.to_next_get_val_with_witness(&witness) {
+       None => { Ok(None) }
+       Some(v) => {
+         fv(k, rz.path(), v);
+         k += 1;
+         Ok(Some(unsafe { std::mem::transmute(rz.path()) }))
+       }
+     }
+  })
+}
+
 /// Serialize all paths in under path `k`
 /// Warning: the size of the individual path serialization can be double exponential in the size of the PathMap
 /// Returns the target output, total serialized bytes (uncompressed), and total number of paths
-pub fn serialize_paths<'a, V : TrieValue, RZ : ZipperReadOnlyConditionalIteration<'a, V>, W: std::io::Write, F: FnMut(usize, &[u8], &V) -> ()>(mut rz: RZ, target: &mut W, mut fv: F) -> std::io::Result<SerializationStats> {
+pub fn for_each_path_serialize<'p, W: std::io::Write, F: FnMut() -> std::io::Result<Option<&'p [u8]>>>(target: &mut W, mut f: F) -> std::io::Result<SerializationStats> {
   const CHUNK: usize = 4096; // not tuned yet
   let mut buffer = [0u8; CHUNK];
-
-  let witness = rz.witness();
 
   #[allow(invalid_value)] //Squish the warning about a Null function ptr, because zlib uses a default allocator if the the ptr is NULL
   //I filed https://github.com/rust-lang/libz-sys/issues/243 to track this issue, and I confirmed the easy fix works, but I didn't submit
@@ -39,9 +53,7 @@ pub fn serialize_paths<'a, V : TrieValue, RZ : ZipperReadOnlyConditionalIteratio
   if ret != Z_OK { panic!("init failed") }
 
   let mut total_paths : usize = 0;
-  while let Some(v) = rz.to_next_get_val_with_witness(&witness) {
-    let p = rz.path();
-    fv(total_paths, p, v);
+  while let Some(p) = f()? {
     let l = p.len();
     let mut lin = (l as u32).to_le_bytes();
     strm.avail_in = 4;
