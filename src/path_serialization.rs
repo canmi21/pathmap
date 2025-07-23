@@ -98,9 +98,20 @@ pub fn deserialize_paths_<V: TrieValue, A: Allocator, WZ : ZipperWriting<V, A>, 
   deserialize_paths(wz, source, |_, _| v.clone())
 }
 
+pub fn deserialize_paths<V: TrieValue, A: Allocator, WZ : ZipperWriting<V, A>, R: std::io::Read, F: Fn(usize, &[u8]) -> V>(mut wz: WZ, mut source: R, fv: F) -> std::io::Result<DeserializationStats> {
+  let mut submap = PathMap::new_in(wz.alloc());
+  let r = for_each_deserialized_path(source, |k, p| {
+    let v = fv(k, p);
+    submap.set_val_at(p, v);
+    Ok(())
+  });
+  wz.graft_map(submap);
+  r
+}
+
 /// Deserialize bytes that were serialized by `serialize_paths` under path `k`
 /// Returns the source input, total deserialized bytes (uncompressed), and total number of path insert attempts
-pub fn deserialize_paths<V: TrieValue, A: Allocator, WZ : ZipperWriting<V, A>, R: std::io::Read, F: Fn(usize, &[u8]) -> V>(mut wz: WZ, mut source: R, fv: F) -> std::io::Result<DeserializationStats> {
+pub fn for_each_deserialized_path<R: std::io::Read, F: FnMut(usize, &[u8]) -> std::io::Result<()>>(mut source: R, mut f: F) -> std::io::Result<DeserializationStats> {
   use libz_ng_sys::*;
   const IN: usize = 1024;
   const OUT: usize = 2048;
@@ -115,7 +126,6 @@ pub fn deserialize_paths<V: TrieValue, A: Allocator, WZ : ZipperWriting<V, A>, R
   let mut strm: z_stream = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
   let mut ret = unsafe { zng_inflateInit(&mut strm) };
   if ret != Z_OK { return Err(std::io::Error::new(std::io::ErrorKind::Other, "failed to init zlib-ng inflate")) }
-  let mut submap = PathMap::new_in(wz.alloc());
   let mut wz_buf = vec![];
   // if statement in loop that emulates goto for the many to many ibuffer-obuffer relation
   'reading: loop {
@@ -153,8 +163,7 @@ pub fn deserialize_paths<V: TrieValue, A: Allocator, WZ : ZipperWriting<V, A>, R
 
         if pos + l as usize <= end {
           wz_buf.extend(&obuffer[pos..pos + l as usize]);
-          let v = fv(total_paths, &wz_buf[..]);
-          submap.set_val_at(&wz_buf[..], v);
+          f(total_paths, &wz_buf[..])?;
           wz_buf.clear();
           total_paths += 1;
           pos += l as usize;
@@ -171,7 +180,6 @@ pub fn deserialize_paths<V: TrieValue, A: Allocator, WZ : ZipperWriting<V, A>, R
       }
     }
   }
-  wz.graft_map(submap);
 
   unsafe { inflateEnd(&mut strm) };
 
