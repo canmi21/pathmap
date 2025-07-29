@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::rc::Rc;
 use crate::trie_node::TrieNodeDowncast;
-use std::sync::Arc;
 use gxhash::{HashSet, HashSetExt};
 use smallvec::{SmallVec, ToSmallVec};
 use crate::alloc::Allocator;
@@ -12,11 +10,11 @@ use crate::trie_node::{TaggedNodeRef, TrieNodeODRc, NODE_ITER_FINISHED};
 use crate::TrieValue;
 
 
-struct DrawConfig {
-    ascii: bool,
-    share_values: bool,
-    hide_values: bool,
-    color_mix: bool,
+pub struct DrawConfig {
+    pub ascii: bool,
+    pub share_values: bool,
+    pub hide_values: bool,
+    pub color_mix: bool,
 }
 
 struct NodeMeta {

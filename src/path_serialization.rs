@@ -6,10 +6,8 @@ use crate::TrieValue;
 use crate::alloc::Allocator;
 use crate::zipper::{
   ZipperReadOnlyConditionalIteration,
-  ZipperReadOnlyConditionalValues,
   ZipperWriting,
 };
-use core::marker::PhantomData;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SerializationStats {
@@ -33,72 +31,25 @@ pub fn serialize_paths_<'a, V, W, RZ>(rz: RZ, target: &mut W) -> std::io::Result
   serialize_paths(rz, target, |_, _, _| {})
 }
 
-pub trait PathIterator {
-  fn next_path(&mut self) -> Result<Option<&[u8]>, std::io::Error>;
-}
-
-struct RZIterator<'w, 'a, V, RZ, Visitor>
-  where
-    RZ: ZipperReadOnlyConditionalIteration<'a, V>,
-    <RZ as ZipperReadOnlyConditionalValues<'a, V>>::WitnessT: 'w,
-    Visitor: FnMut(usize, &[u8], &V) -> (),
-{
-  zipper: RZ,
-  witness: <RZ as ZipperReadOnlyConditionalValues<'a, V>>::WitnessT,
-  counter: usize,
-  visitor: Visitor,
-  _marker: PhantomData<&'w()>,
-}
-
-impl<'w, 'a, V, RZ, Visitor> PathIterator for RZIterator<'w, 'a, V, RZ, Visitor>
-  where
-    RZ: ZipperReadOnlyConditionalIteration<'a, V>,
-    <RZ as ZipperReadOnlyConditionalValues<'a, V>>::WitnessT: 'w,
-    Visitor: FnMut(usize, &[u8], &V) -> (),
-{
-  fn next_path(&mut self) -> Result<Option<&[u8]>, std::io::Error> {
-    match self.zipper.to_next_get_val_with_witness(&self.witness) {
-      None => { Ok(None) }
-      Some(v) => {
-        let path = self.zipper.path();
-        (self.visitor)(self.counter, path, v);
-        self.counter += 1;
-        Ok(Some(path))
-      }
-    }
-  }
-}
-
-pub fn serialize_paths<'a, V, RZ, W, F>(
-  rz: RZ, target: &mut W, visitor: F
-) -> std::io::Result<SerializationStats>
-  where
-    V: TrieValue,
-    RZ: ZipperReadOnlyConditionalIteration<'a, V>,
-    W: std::io::Write,
-    F: FnMut(usize, &[u8], &V) -> ()
-{
+pub fn serialize_paths<'a, V : TrieValue, RZ : ZipperReadOnlyConditionalIteration<'a, V>, W: std::io::Write, F: FnMut(usize, &[u8], &V) -> ()>(mut rz: RZ, target: &mut W, mut fv: F) -> std::io::Result<SerializationStats> {
   let witness = rz.witness();
-  let iterator = RZIterator {
-    zipper: rz,
-    witness,
-    counter: 0,
-    visitor,
-    _marker: PhantomData,
-  };
-  for_each_path_serialize(target, iterator)
+  let mut k = 0;
+  for_each_path_serialize(target, || {
+     match rz.to_next_get_val_with_witness(&witness) {
+       None => { Ok(None) }
+       Some(v) => {
+         fv(k, rz.path(), v);
+         k += 1;
+         Ok(Some(unsafe { std::mem::transmute(rz.path()) }))
+       }
+     }
+  })
 }
 
 /// Serialize all paths in under path `k`
 /// Warning: the size of the individual path serialization can be double exponential in the size of the PathMap
 /// Returns the target output, total serialized bytes (uncompressed), and total number of paths
-pub fn for_each_path_serialize<W, I>(
-  target: &mut W, mut iterator: I
-) -> std::io::Result<SerializationStats>
-where
-  W: std::io::Write,
-  I: PathIterator,
-{
+pub fn for_each_path_serialize<'p, W: std::io::Write, F: FnMut() -> std::io::Result<Option<&'p [u8]>>>(target: &mut W, mut f: F) -> std::io::Result<SerializationStats> {
   const CHUNK: usize = 4096; // not tuned yet
   let mut buffer = [0u8; CHUNK];
 
@@ -110,7 +61,7 @@ where
   if ret != Z_OK { panic!("init failed") }
 
   let mut total_paths : usize = 0;
-  while let Some(p) = iterator.next_path()? {
+  while let Some(p) = f()? {
     let l = p.len();
     let mut lin = (l as u32).to_le_bytes();
     strm.avail_in = 4;
