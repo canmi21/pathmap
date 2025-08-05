@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use crate::trie_node::TrieNodeDowncast;
-use gxhash::{HashSet, HashSetExt};
+use crate::gxhash::{HashSet, HashSetExt};
 use smallvec::{SmallVec, ToSmallVec};
 use crate::alloc::Allocator;
 use crate::trie_map::BytesTrieMap;

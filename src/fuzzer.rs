@@ -9,11 +9,7 @@ use crate::TrieValue;
 use crate::utils::{BitMask, ByteMask};
 use crate::zipper::{ReadZipperUntracked, Zipper, ZipperReadOnlyIteration, ZipperMoving, ZipperReadOnlyValues};
 
-#[cfg(not(miri))]
-use gxhash::{HashMap, HashMapExt};
-
-#[cfg(miri)]
-use std::collections::HashMap;
+use crate::gxhash::{HashMap, HashMapExt};
 
 #[derive(Debug)]
 pub struct Histogram<T : std::cmp::Eq + std::hash::Hash> {
