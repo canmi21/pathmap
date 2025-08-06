@@ -6,7 +6,14 @@
 rustflags = "-C target-cpu=native"
 
 # prerequisites:
-# sudo apt install qemu-user binutils-riscv64-linux-gnu gcc-riscv64-linux-gnu
+# sudo apt install qemu-user binutils-riscv64-linux-gnu gcc-riscv64-linux-gnu clang-22
+# rustup target add riscv64gc-unknown-linux-gnu 
 [target.riscv64gc-unknown-linux-gnu]
-linker = "riscv64-linux-gnu-gcc"
-runner = "qemu-riscv64 -L /usr/riscv64-linux-gnu/"
+rustflags = [
+    "-Ctarget-cpu=tt-ascalon-d8",
+    "-Clinker=clang-22",
+    "-Clink-args=--target=riscv64-unknown-linux-gnu",
+    "-Clink-args=-fuse-ld=lld",
+]
+# runner = "qemu-riscv64 -L /usr/riscv64-linux-gnu/"
+runner = "qemu-riscv64 -cpu tt-ascalon -L /usr/riscv64-linux-gnu/"
