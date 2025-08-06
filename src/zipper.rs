@@ -36,7 +36,7 @@ use crate::PathMap;
 pub use crate::write_zipper::*;
 pub use crate::trie_ref::*;
 pub use crate::zipper_head::*;
-pub use crate::product_zipper::ProductZipper;
+pub use crate::product_zipper::{ProductZipper, ProductZipperG, ZipperReq};
 
 use crate::zipper_tracking::*;
 
