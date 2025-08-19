@@ -93,3 +93,7 @@ harness = false
 [[bench]]
 name = "pointcloud"
 harness = false
+
+[[bench]]
+name = "product_zipper"
+harness = false
