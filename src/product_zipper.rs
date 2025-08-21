@@ -346,12 +346,10 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 
 /// A convenience trait to make where clauses for `ProductZipperG` less bulky
 pub trait ZipperReq<'trie, V>:
-    Zipper + ZipperConcrete + ZipperReadOnlyConditionalValues<'trie, V>
-    + ZipperReadOnlyValues<'trie, V> + ZipperAbsolutePath + ZipperPathBuffer {}
+    Zipper + ZipperValues<V> + ZipperAbsolutePath + ZipperPathBuffer {}
 
 impl<'trie, V, Z> ZipperReq<'trie, V> for Z
-where Z: Zipper + ZipperConcrete + ZipperReadOnlyConditionalValues<'trie, V>
-    + ZipperReadOnlyValues<'trie, V> + ZipperAbsolutePath + ZipperPathBuffer {}
+where Z: Zipper + ZipperValues<V> + ZipperAbsolutePath + ZipperPathBuffer {}
 
 /// A [Zipper] type that moves through a Cartesian product space created by extending each value at the
 /// end of a path in a primary space with the root of a secondardary space, and doing it recursively for
@@ -529,8 +527,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperConcretePriv
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperReq<'trie, V>,
-        SecondaryZ: ZipperReq<'trie, V>,
+        PrimaryZ: ZipperReq<'trie, V> + ZipperConcretePriv,
+        SecondaryZ: ZipperReq<'trie, V> + ZipperConcretePriv,
 {
     fn shared_node_id(&self) -> Option<u64> {
         if let Some(idx) = self.factor_idx(true) {
@@ -545,8 +543,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperConcrete
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperReq<'trie, V>,
-        SecondaryZ: ZipperReq<'trie, V>,
+        PrimaryZ: ZipperReq<'trie, V> + ZipperConcrete,
+        SecondaryZ: ZipperReq<'trie, V> + ZipperConcrete,
 {
     fn is_shared(&self) -> bool {
         if let Some(idx) = self.factor_idx(true) {
@@ -573,8 +571,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperValues<V>
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperReq<'trie, V>,
-        SecondaryZ: ZipperReq<'trie, V>,
+        PrimaryZ: ZipperReq<'trie, V> + ZipperReadOnlyValues<'trie, V>,
+        SecondaryZ: ZipperReq<'trie, V> + ZipperReadOnlyValues<'trie, V>,
 {
     fn val(&self) -> Option<&V> {
         if let Some(idx) = self.factor_idx(true) {
@@ -589,8 +587,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperReadOnlyValues<'trie, V>
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperReq<'trie, V>,
-        SecondaryZ: ZipperReq<'trie, V>,
+        PrimaryZ: ZipperReq<'trie, V> + ZipperReadOnlyValues<'trie, V>,
+        SecondaryZ: ZipperReq<'trie, V> + ZipperReadOnlyValues<'trie, V>,
 {
     fn get_val(&self) -> Option<&'trie V> {
         if let Some(idx) = self.factor_idx(true) {
@@ -605,8 +603,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperReadOnlyConditionalValues<'trie, V>
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperReq<'trie, V>,
-        SecondaryZ: ZipperReq<'trie, V>,
+        PrimaryZ: ZipperReq<'trie, V> + ZipperReadOnlyValues<'trie, V> + ZipperReadOnlyConditionalValues<'trie, V>,
+        SecondaryZ: ZipperReq<'trie, V> + ZipperReadOnlyValues<'trie, V> + ZipperReadOnlyConditionalValues<'trie, V>,
 {
     type WitnessT = ();
     fn witness<'w>(&self) -> Self::WitnessT { () }

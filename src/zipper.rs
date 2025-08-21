@@ -37,6 +37,7 @@ pub use crate::write_zipper::*;
 pub use crate::trie_ref::*;
 pub use crate::zipper_head::*;
 pub use crate::product_zipper::{ProductZipper, ProductZipperG, ZipperReq};
+pub use crate::prefix_zipper::{PrefixZipper};
 
 use crate::zipper_tracking::*;
 
