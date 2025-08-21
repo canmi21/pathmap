@@ -5,7 +5,7 @@ set -o pipefail
 set -o xtrace
 set -o errtrace
 
-WHISPER_PATH=/var/data/whisper/demo
+WHISPER_PATH=${WHISPER_PATH:-/var/data/whisper/demo}
 THIS_DIR="$CARGO_MANIFEST_DIR/whisper_benches"
 prepare_base_fs() {
     echo "creating base-fs"
