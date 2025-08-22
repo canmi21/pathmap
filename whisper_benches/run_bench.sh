@@ -7,6 +7,32 @@ set -o errtrace
 
 WHISPER_PATH=${WHISPER_PATH:-/var/data/whisper/demo}
 THIS_DIR="$CARGO_MANIFEST_DIR/whisper_benches"
+CROSS_LIBC_PATH=${CROSS_LIBC_PATH:-/usr/riscv64-linux-gnu/lib}
+
+check_env() {
+    RED="\033[31m"
+    RESET="\033[0m"
+    if ! test -e "$CROSS_LIBC_PATH/libc.so.6"; then
+        echo "${RED}Missing libc in '$CROSS_LIBC_PATH'${RESET}"
+        echo "Need to 'sudo apt-get install libc6-riscv64-cross',"
+        echo "or equivalent package in your linux distribution."
+        echo "Alternatively, provide path to riscv64 libc directory as CROSS_LIBC_PATH env var."
+        exit 1
+    fi
+    for file in bin/whisper \
+        bin/whisper.json \
+        bin/fw_jump.elf \
+        bin/wb.dtb \
+        bin/Image \
+        bin/initramfs.cpio; do
+        if ! test -e "$WHISPER_PATH/$file"; then
+            echo "${RED}Missing whisper installation in '$WHISPER_PATH'${RESET}"
+            echo "you can use the demo archive to get all the necessary files"
+            exit 1
+        fi
+    done
+}
+
 prepare_base_fs() {
     echo "creating base-fs"
     rm -fr "$THIS_DIR/base-fs"
@@ -18,7 +44,7 @@ prepare_base_fs() {
         libgcc_s.so.1 \
         libm.so.6 \
         libpthread.so.0; do
-        cp "/usr/riscv64-linux-gnu/lib/$file" -t "$THIS_DIR/base-fs/lib"
+        cp "$CROSS_LIBC_PATH/$file" -t "$THIS_DIR/base-fs/lib"
     done
     mkdir "$THIS_DIR/base-fs/data"
     for file in "$THIS_DIR/../benches"/*.{txt,laz,paths}; do
@@ -53,6 +79,7 @@ cleanup() {
     rm -fr "$THIS_DIR/base-fs" "$THIS_DIR/base-fs.img"
 }
 
+check_env
 prepare_base_fs "$1"
 run_whisper "$1"
 cleanup
