@@ -27,7 +27,8 @@ check_env() {
         bin/initramfs.cpio; do
         if ! test -e "$WHISPER_PATH/$file"; then
             echo "${RED}Missing whisper installation in '$WHISPER_PATH'${RESET}"
-            echo "you can use the demo archive to get all the necessary files"
+            echo "You can use the demo archive to get all the necessary files,"
+            echo "and provide path to the directory as WHISPER_PATH env var."
             exit 1
         fi
     done
