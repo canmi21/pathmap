@@ -6,7 +6,7 @@ set -o xtrace
 set -o errtrace
 
 WHISPER_PATH=${WHISPER_PATH:-/var/data/whisper/demo}
-THIS_DIR="$CARGO_MANIFEST_DIR/whisper_benches"
+THIS_DIR=$(dirname "${BASH_SOURCE[0]}")
 CROSS_LIBC_PATH=${CROSS_LIBC_PATH:-/usr/riscv64-linux-gnu/lib}
 
 check_env() {
