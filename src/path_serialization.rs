@@ -1,4 +1,4 @@
-
+use std::ptr::slice_from_raw_parts;
 // GOAT both functions should be tested on long paths (larger than chunk size)
 use libz_ng_sys::*;
 use crate::PathMap;
@@ -54,7 +54,9 @@ pub fn for_each_path_serialize<'p, W: std::io::Write, F: FnMut() -> std::io::Res
 
   let mut total_paths : usize = 0;
   while let Some(p) = f()? {
+    // println!("healthy {:?}", unsafe { slice_from_raw_parts(&strm as *const z_stream as *const u8, 104).as_ref() });
     let l = p.len();
+    // println!("({l}) {:?}", p);
     let mut lin = (l as u32).to_le_bytes();
     strm.avail_in = 4;
     strm.next_in = lin.as_mut_ptr();
@@ -108,7 +110,7 @@ pub fn for_each_path_serialize<'p, W: std::io::Write, F: FnMut() -> std::io::Res
 
 
 pub fn apath_serialize<'p, W: std::io::Write>(target: &mut W) -> impl std::ops::Coroutine<Option<&'p [u8]>, Yield=(), Return=std::io::Result<SerializationStats>> {
-  let coro = #[coroutine] move |_: Option<&'p [u8]>| {
+  let coro = #[coroutine] move |i: Option<&'p [u8]>| {
     const CHUNK: usize = 4096; // not tuned yet
     let mut buffer = [0u8; CHUNK];
 
@@ -120,9 +122,10 @@ pub fn apath_serialize<'p, W: std::io::Write>(target: &mut W) -> impl std::ops::
     if ret != Z_OK { panic!("init failed") }
 
     let mut total_paths: usize = 0;
-    while let Some(p) = yield () {
+    while let Some(p) = if total_paths == 0 { i.clone() } else { yield () } {
+      println!("unhealthy {:?}", unsafe { slice_from_raw_parts(&strm as *const z_stream as *const u8, 104).as_ref() });
       let l = p.len();
-      println!("len {l}");
+      println!("({l}) {:?}", p);
       let mut lin = (l as u32).to_le_bytes();
       strm.avail_in = 4;
       strm.next_in = lin.as_mut_ptr();
