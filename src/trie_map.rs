@@ -220,11 +220,11 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         };
         #[cfg(debug_assertions)]
         {
-            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap(), false, path.as_ref(), path.len(), 0, root_val, self.alloc.clone(), None)
+            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone(), None)
         }
         #[cfg(not(debug_assertions))]
         {
-            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap(), false, path.as_ref(), path.len(), 0, root_val, self.alloc.clone())
+            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone())
         }
     }
 
@@ -1198,7 +1198,8 @@ mod tests {
 
         let expected = [3, 5, 4];
         let mut i = 0;
-        while let Some(val) = zipper.to_next_get_val() {
+        let witness = zipper.witness();
+        while let Some(val) = zipper.to_next_get_val_with_witness(&witness) {
             assert_eq!(*val, expected[i]);
             i += 1;
         }

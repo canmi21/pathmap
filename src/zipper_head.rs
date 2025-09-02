@@ -223,11 +223,12 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             {
                 let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)
                     .unwrap_or_else(|conflict| panic!("Fatal error. ReadZipper at {path:?} {conflict}"));
-                new_zipper = ReadZipperUntracked::new_with_node_and_path_in(root_node, true, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), Some(zipper_tracker));
+                //GOAT, we will pass `true` for `owned_root` to new_with_node_and_path_in, when we migrate to `ReadZipperTracked`
+                new_zipper = ReadZipperUntracked::new_with_node_and_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), Some(zipper_tracker));
             }
             #[cfg(not(debug_assertions))]
             {
-                new_zipper = ReadZipperUntracked::new_with_node_and_path_in(root_node, true, path.as_ref(), path.len(), 0, root_val, z.alloc.clone());
+                new_zipper = ReadZipperUntracked::new_with_node_and_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone());
             }
             new_zipper
         })
@@ -243,7 +244,7 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*v.as_ptr() } );
 
-            let new_zipper = ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), zipper_tracker);
+            let new_zipper = ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, true, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), zipper_tracker);
             Ok(new_zipper)
         })
     }
@@ -846,33 +847,46 @@ mod tests {
 
         assert_eq!(wz.val(), None);
         assert!(wz.set_val(()).is_none());
-        drop(wz);
-        drop(rz);
-        drop(zh);
-        assert_eq!(map.get_val_at([3, 194, 22]), Some(&()));
 
-        //Same as above case, but for the ReadZipper that uses a cloned path
-        let mut map = PathMap::<()>::new();
-        map.set_val_at([1], ());
-        map.set_val_at([2], ());
-        map.set_val_at([3, 193, 4], ());
-        map.set_val_at([3, 194, 21, 134], ());
-        map.set_val_at([3, 194, 21, 133], ());
-
-        let zh = map.zipper_head();
-        let mut rz = zh.read_zipper_at_path(&[3, 194, 21]).unwrap();
-        let mut wz = zh.write_zipper_at_exclusive_path(&[3, 194, 22]).unwrap();
-
+        rz.reset();
         assert_eq!(rz.val(), None);
         assert!(rz.descend_first_byte());
         assert_eq!(rz.val(), Some(&()));
 
-        assert_eq!(wz.val(), None);
-        assert!(wz.set_val(()).is_none());
         drop(wz);
         drop(rz);
         drop(zh);
         assert_eq!(map.get_val_at([3, 194, 22]), Some(&()));
+
+        //Similar to above case, but for the ReadZipper that uses a cloned path
+        let mut map = PathMap::<usize>::new();
+        map.set_val_at([1], 1000);
+        map.set_val_at([2], 1001);
+        map.set_val_at([3, 193, 4], 1002);
+        map.set_val_at([3, 194, 21, 134], 1003);
+        map.set_val_at([3, 194, 21, 133], 1004);
+
+        let zh = map.zipper_head();
+        let mut rz = zh.read_zipper_at_path(&[3, 194, 21]).unwrap();
+        let rz2 = zh.read_zipper_at_path(&[3, 194, 21, 134]).unwrap();
+        let mut wz = zh.write_zipper_at_exclusive_path(&[3, 194, 22]).unwrap();
+
+        assert_eq!(rz.val(), None);
+        assert!(rz.descend_first_byte());
+        assert_eq!(rz.val(), Some(&1004));
+
+        assert_eq!(rz2.val(), Some(&1003));
+
+        assert_eq!(wz.val(), None);
+        assert!(wz.set_val(1005).is_none());
+
+        assert_eq!(rz2.val(), Some(&1003));
+
+        drop(wz);
+        drop(rz);
+        drop(rz2);
+        drop(zh);
+        assert_eq!(map.get_val_at([3, 194, 22]), Some(&1005));
     }
 
     /// Dance a bunch of readers and writers inside the same zipper head
@@ -1437,4 +1451,5 @@ mod tests {
 //GOAT, then the ReadZipperUntracked can totally ditch the tracker internally, because there will be no way to make them with a ZipperHead
 //
 //GOAT ReadZipperOwned doesn't need its internal map anymore.
-//GOAT ReadZipperTracked is then just a ReadZipperOwned plus a tracker
+// Then, ReadZipperTracked is then just a ReadZipperOwned plus a tracker
+//**UPDATE** TOo early to make this change; because the root value still lives outside the ReadZipper.  We could move to an owned root value, like we did for TrieRefOwned, but I would rather just push ahead with moving root values inside nodes.  For now I am just trying to get to the right external API.

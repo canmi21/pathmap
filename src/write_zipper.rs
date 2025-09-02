@@ -354,7 +354,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperTr
         let root_val = core::mem::take(&mut self.z.root_val);
         let root_val = root_val.and_then(|root_val| unsafe{ (&*root_val).as_ref() });
 
-        let mut new_zipper = ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, root_path, root_path.len(), self.z.key.root_key_start, root_val, self.z.alloc.clone(), tracker);
+        let mut new_zipper = ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, false, root_path, root_path.len(), self.z.key.root_key_start, root_val, self.z.alloc.clone(), tracker);
         new_zipper.descend_to(descended_path);
         new_zipper
     }
