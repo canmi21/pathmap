@@ -1,3 +1,7 @@
+#![feature(coroutine_trait)]
+#![feature(coroutines)]
+#![feature(stmt_expr_attributes)]
+#![feature(gen_blocks)]
 #![cfg_attr(feature = "nightly", allow(internal_features), feature(core_intrinsics))]
 #![cfg_attr(feature = "nightly", feature(portable_simd))]
 #![cfg_attr(feature = "nightly", feature(allocator_api))]

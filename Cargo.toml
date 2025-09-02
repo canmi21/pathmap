@@ -1,7 +1,7 @@
 [package]
 name = "pathmap"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 rust-version = "1.88"
 description = "A key-value store with prefix compression, structural sharing, and powerful algebraic operations"
 exclude = ["benches/", "pathmap-book/", ".*"]
