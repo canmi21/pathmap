@@ -1,5 +1,6 @@
 
 use maybe_dangling::MaybeDangling;
+use core::ptr::NonNull;
 
 use crate::alloc::{Allocator, GlobalAlloc};
 use crate::utils::ByteMask;
@@ -869,7 +870,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin, A: Allocator + 'trie> ZipperForking<
         let new_root_val = self.val();
         let path = self.origin_path();
 
-        read_zipper_core::ReadZipperCore::new_with_node_and_path_in(self.focus_parent(), path, path.len(), self.key.node_key_start(), new_root_val, self.alloc.clone())
+        read_zipper_core::ReadZipperCore::new_with_node_and_path_in(self.focus_parent(), false, path, path.len(), self.key.node_key_start(), new_root_val, self.alloc.clone())
     }
 }
 
@@ -1123,19 +1124,16 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     ///
     /// This is called for the ZipperHead's root, the first time a ReadZipper is created in a ZipperHead,
     /// to isolate the part of the trie that is below the ZipperHead from the part of the trie above it.
-    pub(crate) fn splitting_borrow_focus(&mut self) -> (&TrieNodeODRc<V, A>, Option<&V>) {
-        let self_ptr: *mut Self = self;
-        let node = match (*self).try_borrow_focus() {
+    pub(crate) fn splitting_borrow_focus(&mut self) -> (*const TrieNodeODRc<V, A>, Option<NonNull<V>>) {
+        let node = match self.try_borrow_focus() {
             Some(root) => root,
             None => {
-                //SAFETY: This is another "We need Polonius" case.  We're finished with the borrow if we get here.
-                let self_ref = unsafe{ &mut *self_ptr };
-                self_ref.split_at_focus();
-                (*self).try_borrow_focus().unwrap()
+                self.split_at_focus();
+                self.try_borrow_focus().unwrap()
             },
         };
         let val = self.val();
-        (node, val)
+        (node, val.map(|v| v.into()))
     }
 
     /// Internal method to ensure the focus begins at its own node, splitting the node if necessary
@@ -1161,6 +1159,26 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         if sub_branch_added {
             self.mend_root();
             self.descend_to_internal();
+        }
+    }
+
+    /// Similar to [WriteZipperCore::try_borrow_focus], but it may reset the focus_stack to an
+    /// undescended root state.  This is currently only called by [prepare_exclusive_write_path]
+    pub(crate) fn try_borrow_focus_mut(&mut self) -> Option<&mut TrieNodeODRc<V, A>> {
+        let node_key = self.key.node_key();
+        if node_key.len() == 0 {
+            debug_assert!(self.at_root());
+            debug_assert_eq!(self.focus_stack.depth(), 1);
+            self.focus_stack.to_root();
+            self.focus_stack.root_mut()
+        } else {
+            match self.focus_stack.top_mut().unwrap().node_get_child_mut(node_key) {
+                Some((consumed_bytes, child_node)) => {
+                    debug_assert_eq!(consumed_bytes, node_key.len());
+                    Some(child_node)
+                },
+                None => None
+            }
         }
     }
 

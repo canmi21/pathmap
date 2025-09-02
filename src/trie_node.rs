@@ -2332,6 +2332,14 @@ mod slim_node_ptr {
         }
     }
 
+    impl<V: Clone + Send + Sync, A: Allocator> PartialEq<SlimNodePtr<V, A>> for SlimNodePtr<V, A> {
+        #[inline]
+        fn eq(&self, rhs: &SlimNodePtr<V, A>) -> bool {
+            self.ptr_eq(rhs)
+        }
+    }
+    impl<V: Clone + Send + Sync, A: Allocator> Eq for SlimNodePtr<V, A> { }
+
     impl<V: Clone + Send + Sync, A: Allocator> SlimNodePtr<V, A> {
         #[allow(unused)]
         #[inline]
@@ -2436,6 +2444,7 @@ mod slim_node_ptr {
     /// The pointer must be of the correct type, otherwise you're basically unsafely casting the pointer.
     ///
     /// You must use the same settings as you packed the pointer with. The pointer must be packed into the lower bits
+    #[inline]
     fn unpack<T: Sized>(packed: *mut T, a: u8, s: bool, v: u8) -> *mut T {
         // Mask off all the stolen bits to get the pointer data.
         let asv = asv_mask(a, s, v);
@@ -2474,6 +2483,14 @@ mod opaque_dyn_rc_trie_node {
         ptr: SlimNodePtr<V, A>,
         alloc: MaybeUninit<A>,
     }
+
+    impl<V: Clone + Send + Sync, A: Allocator> PartialEq<TrieNodeODRc<V, A>> for TrieNodeODRc<V, A> {
+        #[inline]
+        fn eq(&self, rhs: &TrieNodeODRc<V, A>) -> bool {
+            self.ptr == rhs.ptr
+        }
+    }
+    impl<V: Clone + Send + Sync, A: Allocator> Eq for TrieNodeODRc<V, A> { }
 
     impl<V: Clone + Send + Sync, A: Allocator> Clone for TrieNodeODRc<V, A> {
         /// Increases the node refcount.  See the implementation of Arc::clone in the stdlib
@@ -2677,8 +2694,9 @@ mod opaque_dyn_rc_trie_node {
             let (ptr, _tag) = self.ptr.get_raw_parts();
             unsafe{ &*ptr }.load(Acquire) as usize
         }
+        /// Ensures that we hold the only reference to a node, by cloning it if necessary
         #[inline]
-        pub(crate) fn make_mut(&mut self) -> TaggedNodeRefMut<'_, V, A> {
+        pub(crate) fn make_unique(&mut self) {
             let (ptr, _tag) = self.ptr.get_raw_parts();
 
             if unsafe{ &*ptr }.compare_exchange(1, 0, Acquire, Relaxed).is_err() {
@@ -2692,6 +2710,10 @@ mod opaque_dyn_rc_trie_node {
                 // We were the sole reference so bump back up the  ref count.
                 unsafe{ &*ptr }.store(1, Release);
             }
+        }
+        #[inline]
+        pub(crate) fn make_mut(&mut self) -> TaggedNodeRefMut<'_, V, A> {
+            self.make_unique();
 
             // We are now clear to copy the inner pointer because our reference was either unique
             // to begin with, or became unique upon cloning the contents.
@@ -2851,5 +2873,32 @@ impl<V: DistributiveLattice + Clone + Send + Sync, A: Allocator> DistributiveLat
                 }
             }
         }
+    }
+}
+
+/// Test to make sure slim_ptrs are good with provenance under miri
+#[cfg(test)]
+mod tests {
+    use crate::PathMap;
+    use crate::zipper::*;
+
+    #[test]
+    fn slim_ptrs_test1() {
+        let map = PathMap::<()>::new();
+        let z1 = map.read_zipper();
+        let z2 = map.read_zipper();
+        drop(z1);
+        drop(z2);
+    }
+
+    #[test]
+    fn slim_ptrs_test2() {
+        let mut map = PathMap::<()>::new();
+        let zh = map.zipper_head();
+        let rz = zh.read_zipper_at_borrowed_path(b"A").unwrap();
+        let wz = zh.write_zipper_at_exclusive_path(b"Z").unwrap();
+        drop(rz);
+        drop(wz);
+        drop(zh);
     }
 }

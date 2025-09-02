@@ -43,7 +43,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
 
         //Get TrieRefs for the remaining zippers
         for other_z in other_z_iter {
-            let trie_ref = unsafe{ other_z.trie_ref_at_path_unchecked("") };
+            let trie_ref: TrieRef<'trie, V, A> = unsafe{ other_z.trie_ref_at_path_unchecked("").into() };
             secondaries.push(trie_ref);
             source_zippers.push(Box::new(other_z));
         }
@@ -75,7 +75,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
     {
         let other_z_iter = other_zippers.into_iter();
         for other_z in other_z_iter {
-            let trie_ref = unsafe{ other_z.trie_ref_at_path_unchecked("") };
+            let trie_ref: TrieRef<'trie, V, A> = unsafe{ other_z.trie_ref_at_path_unchecked("").into() };
             self.secondaries.push(trie_ref);
             self.source_zippers.push(Box::new(other_z));
         }
@@ -123,6 +123,9 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
         // paths are joined.  And the value from the earlier zipper takes precedence
         let (secondary_root, partial_path, _secondary_root_val) = self.secondaries[self.factor_paths.len()].borrow_raw_parts();
 
+        //SAFETY: We won't drop the `secondaries` vec until we're done with the stack of node references
+        let secondary_root: TaggedNodeRef<'trie, V, A> = unsafe{ core::mem::transmute(secondary_root) };
+
         //TODO! Dealing with hidden root path in a secondary factor is very nasty.  I'm going to punt
         // on handling this until we move this feature out of the experimental stage.
         //See "WARNING" in ProductZipper creation methods
@@ -150,6 +153,9 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
             //If there is a `_secondary_root_val`, it lands at the same path as the value where the
             // paths are joined.  And the value from the earlier zipper takes precedence
             let (secondary_root, partial_path, _secondary_root_val) = self.secondaries[self.factor_paths.len()].borrow_raw_parts();
+
+            //SAFETY: We won't drop the `secondaries` vec until we're done with the stack of node references
+            let secondary_root: TaggedNodeRef<'trie, V, A> = unsafe{ core::mem::transmute(secondary_root) };
 
             //TODO! Dealing with hidden root path in a secondary factor is very nasty.  I'm going to punt
             // on handling this until we move this feature out of the experimental stage.

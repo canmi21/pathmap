@@ -26,7 +26,6 @@
 //!
 
 use maybe_dangling::MaybeDangling;
-use std::sync::Arc;
 
 use crate::alloc::{Allocator, GlobalAlloc};
 use crate::utils::{ByteMask, find_prefix_overlap};
@@ -401,7 +400,7 @@ pub trait ZipperReadOnlyValues<'a, V>: ZipperValues<V> {
     }
 }
 
-pub struct ReadZipperWitness(pub(crate) Arc<ZipperTracker<TrackingRead>>);
+pub struct ReadZipperWitness<V: Clone + Send + Sync, A: Allocator>(pub(crate) Option<TrieNodeODRc<V, A>>);
 
 /// Conceptually similar to [ZipperReadOnlyValues] but requires a [ZipperWitness] to ensure the data
 /// is intact.
@@ -466,16 +465,18 @@ pub trait ZipperReadOnlyConditionalIteration<'a, V>: ZipperReadOnlyConditionalVa
 /// This trait will never be implemented on the same type as [ZipperWriting]
 pub trait ZipperReadOnlySubtries<'a, V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: ZipperSubtries<V, A> + ZipperReadOnlyPriv<'a, V, A> {
     /// The type of the returned [TrieRef] or [TrieRefTracked]
-    type TrieRefT;
+    type TrieRefT: Into<TrieRef<'a, V, A>> where V: 'a, A: 'a;
 
     /// Returns a [TrieRef] for the specified path, relative to the current focus
     fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT;
 
+    //GOAT, This `trie_ref_at_path_unchecked` API has become redundant.  Doesn't do anything that the regular version doesn't do.  Should be deleted
+    //
     /// Returns an untracked [TrieRef]
     ///
     /// NOTE: this method should only be used when the reference validity can be ensured through
     /// other means - such as keeping the parent zipper alive.
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A>;
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT;
 }
 
 /// An interface for advanced [Zipper] movements used for various types of iteration; such as iterating
@@ -686,7 +687,7 @@ pub(crate) mod zipper_priv {
         ///
         /// This method will always return either a zero-length `node_key` or `None` for
         /// `focus_val` (it may return both of those things, but always at least one)
-        fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'a, V, A>, &'z [u8], Option<&'a V>);
+        fn borrow_raw_parts(&self) -> (TaggedNodeRef<'_, V, A>, &[u8], Option<&V>);
 
         /// Returns a the [ReadZipperCore] from inside the zipper leaving a placeholder in the zipper.
         /// Returns `None` if the zipper doesn't support movement
@@ -791,7 +792,7 @@ impl<'a, V, Z> ZipperReadOnlyConditionalIteration<'a, V> for &mut Z where Z: Zip
 impl<'a, V: Clone + Send + Sync + 'a, Z, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for &mut Z where Z: ZipperReadOnlySubtries<'a, V, A>, Self: ZipperReadOnlyPriv<'a, V, A> + ZipperSubtries<V, A> {
     type TrieRefT = <Z as ZipperReadOnlySubtries<'a, V, A>>::TrieRefT;
     fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT { (**self).trie_ref_at_path(path) }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { (**self).trie_ref_at_path_unchecked(path) }
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT { (**self).trie_ref_at_path_unchecked(path) }
 }
 
 impl<Z> ZipperConcrete for &mut Z where Z: ZipperConcrete, Self: ZipperConcretePriv {
@@ -812,7 +813,7 @@ impl<Z> ZipperPathBuffer for &mut Z where Z: ZipperPathBuffer {
 }
 
 impl<'a, V: Clone + Send + Sync, Z, A: Allocator> ZipperReadOnlyPriv<'a, V, A> for &mut Z where Z: ZipperReadOnlyPriv<'a, V, A> {
-    fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'a, V, A>, &'z [u8], Option<&'a V>) { (**self).borrow_raw_parts() }
+    fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'z, V, A>, &'z [u8], Option<&'z V>) { (**self).borrow_raw_parts() }
     fn take_core(&mut self) -> Option<ReadZipperCore<'a, 'static, V, A>> { (**self).take_core() }
 }
 
@@ -829,7 +830,8 @@ impl<Z> ZipperConcretePriv for &mut Z where Z: ZipperConcretePriv {
 #[derive(Clone)]
 pub struct ReadZipperTracked<'a, 'path, V: Clone + Send + Sync, A: Allocator = GlobalAlloc> {
     z: ReadZipperCore<'a, 'path, V, A>,
-    tracker: Arc<ZipperTracker<TrackingRead>>,
+    #[allow(unused)]
+    tracker: ZipperTracker<TrackingRead>,
 }
 
 //The Drop impl ensures the tracker gets dropped at the right time
@@ -883,23 +885,19 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 }
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyConditionalValues<'trie, V> for ReadZipperTracked<'trie, '_, V, A> {
-    type WitnessT = ReadZipperWitness;
-    fn witness<'w>(&self) -> ReadZipperWitness {
-        ReadZipperWitness(self.tracker.clone())
-    }
-    fn get_val_with_witness<'w>(&self, witness: &'w ReadZipperWitness) -> Option<&'w V> where 'trie: 'w {
-        debug_assert!(witness.0.path() == self.tracker.path());
-        self.z.get_val()
-    }
+    type WitnessT = ReadZipperWitness<V, A>;
+    fn witness<'w>(&self) -> ReadZipperWitness<V, A> { self.z.witness() }
+    fn get_val_with_witness<'w>(&self, witness: &'w ReadZipperWitness<V, A>) -> Option<&'w V> where 'trie: 'w { self.z.get_val_with_witness(witness) }
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for ReadZipperTracked<'a, '_, V, A> {
-    type TrieRefT = TrieRefTracked<'a, V, A>;
-    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRefTracked<'a, V, A> {
-        TrieRefTracked { trie_ref: self.z.trie_ref_at_path(path), tracker: self.tracker.clone() }
+    type TrieRefT = TrieRefOwned<V, A>;
+    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRefOwned<V, A> {
+        let path = path.as_ref();
+        TrieRefOwned::new_with_key_and_path_in(self.z.focus_parent(), self.val(), self.z.node_key(), path, self.z.alloc.clone())
     }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> {
-        self.z.trie_ref_at_path(path)
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRefOwned<V, A> {
+        self.trie_ref_at_path(path)
     }
 }
 
@@ -908,9 +906,9 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipper
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyPriv<'a, V, A> for ReadZipperTracked<'a, '_, V, A> {
-    fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'a, V, A>, &'z [u8], Option<&'a V>) { self.z.borrow_raw_parts() }
+    fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'z, V, A>, &'z [u8], Option<&'z V>) { self.z.borrow_raw_parts() }
     fn take_core(&mut self) -> Option<ReadZipperCore<'a, 'static, V, A>> {
-        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(None, &[], 0, None, self.z.alloc.clone());
+        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(OwnedOrBorrowed::None, &[], 0, None, self.z.alloc.clone());
         core::mem::swap(&mut temp_core, &mut self.z);
         Some(temp_core.make_static_path())
     }
@@ -949,14 +947,14 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ReadZipperTracked<'a, 'path, V, A> {
     /// See [ReadZipperCore::new_with_node_and_path]
-    pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: ZipperTracker<TrackingRead>) -> Self {
-        let core = ReadZipperCore::new_with_node_and_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
-        Self { z: core, tracker: Arc::new(tracker) }
+    pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, owned_root: bool, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: ZipperTracker<TrackingRead>) -> Self {
+        let core = ReadZipperCore::new_with_node_and_path_in(root_node, owned_root, path, root_prefix_len, root_key_start, root_val, alloc);
+        Self { z: core, tracker }
     }
     /// See [ReadZipperCore::new_with_node_and_cloned_path]
     pub(crate) fn new_with_node_and_cloned_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: ZipperTracker<TrackingRead>) -> Self {
         let core = ReadZipperCore::new_with_node_and_cloned_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
-        Self { z: core, tracker: Arc::new(tracker) }
+        Self { z: core, tracker }
     }
 }
 
@@ -1057,9 +1055,12 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for ReadZipperUntracked<'a, '_, V, A> {
-    type TrieRefT = TrieRef<'a, V, A>;
-    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { self.z.trie_ref_at_path(path) }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { self.z.trie_ref_at_path(path) }
+    type TrieRefT = TrieRefBorrowed<'a, V, A>;
+    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRefBorrowed<'a, V, A> {
+        let path = path.as_ref();
+        TrieRefBorrowed::new_with_key_and_path_in(self.z.focus_parent_borrowed(), self.get_val(), self.z.node_key(), path, self.z.alloc.clone())
+    }
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRefBorrowed<'a, V, A> { self.trie_ref_at_path(path) }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipperUntracked<'_, '_, V, A> {
@@ -1067,9 +1068,9 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipper
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyPriv<'a, V, A> for ReadZipperUntracked<'a, '_, V, A>{
-    fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'a, V, A>, &'z [u8], Option<&'a V>) { self.z.borrow_raw_parts() }
+    fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'z, V, A>, &'z [u8], Option<&'z V>) { self.z.borrow_raw_parts() }
     fn take_core(&mut self) -> Option<ReadZipperCore<'a, 'static, V, A>> {
-        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(None, &[], 0, None, self.z.alloc.clone());
+        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(OwnedOrBorrowed::None, &[], 0, None, self.z.alloc.clone());
         core::mem::swap(&mut temp_core, &mut self.z);
         Some(temp_core.make_static_path())
     }
@@ -1113,24 +1114,24 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 impl<'a, 'path, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ReadZipperUntracked<'a, 'path, V, A> {
     /// See [ReadZipperCore::new_with_node_and_path]
     #[cfg(debug_assertions)]
-    pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
-        let core = ReadZipperCore::new_with_node_and_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
+    pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, owned_root: bool, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
+        let core = ReadZipperCore::new_with_node_and_path_in(root_node, owned_root, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core, tracker }
     }
     #[cfg(not(debug_assertions))]
     pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
-        let core = ReadZipperCore::new_with_node_and_path_in(root_node, path, root_prefix_len, root_key_start, root_val, alloc);
+        let core = ReadZipperCore::new_with_node_and_path_in(root_node, owned_root, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core }
     }
     /// See [ReadZipperCore::new_with_node_and_path_internal]
     #[cfg(debug_assertions)]
     pub(crate) fn new_with_node_and_path_internal_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
-        let core = ReadZipperCore::new_with_node_and_path_internal_in(Some(root_node), path, root_key_start, root_val, alloc);
+        let core = ReadZipperCore::new_with_node_and_path_internal_in(OwnedOrBorrowed::Borrowed(root_node), path, root_key_start, root_val, alloc);
         Self { z: core, tracker }
     }
     #[cfg(not(debug_assertions))]
     pub(crate) fn new_with_node_and_path_internal_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
-        let core = ReadZipperCore::new_with_node_and_path_internal_in(Some(root_node), path, root_key_start, root_val, alloc);
+        let core = ReadZipperCore::new_with_node_and_path_internal_in(OwnedOrBorrowed::Borrowed(root_node), path, root_key_start, root_val, alloc);
         Self { z: core }
     }
     /// See [ReadZipperCore::new_with_node_and_cloned_path]
@@ -1280,9 +1281,12 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator> ZipperReadOnlySubtries<'a, V, A> for ReadZipperOwned<V, A> where Self: 'a {
-    type TrieRefT = TrieRef<'a, V, A>;
-    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { self.z.trie_ref_at_path(path) }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { self.z.trie_ref_at_path(path) }
+    type TrieRefT = TrieRefOwned<V, A>;
+    fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRefOwned<V, A> {
+        let path = path.as_ref();
+        TrieRefOwned::new_with_key_and_path_in(self.z.focus_parent(), self.val(), self.z.node_key(), path, self.z.alloc.clone())
+    }
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRefOwned<V, A> { self.trie_ref_at_path(path) }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipperOwned<V, A> {
@@ -1290,9 +1294,9 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipper
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator> ZipperReadOnlyPriv<'a, V, A> for ReadZipperOwned<V, A> where Self: 'a {
-    fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'a, V, A>, &'z [u8], Option<&'a V>) { self.z.borrow_raw_parts() }
+    fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'z, V, A>, &'z [u8], Option<&'z V>) { self.z.borrow_raw_parts() }
     fn take_core(&mut self) -> Option<ReadZipperCore<'a, 'static, V, A>> {
-        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(None, &[], 0, None, self.z.alloc.clone());
+        let mut temp_core = ReadZipperCore::new_with_node_and_path_internal_in(OwnedOrBorrowed::None, &[], 0, None, self.z.alloc.clone());
         core::mem::swap(&mut temp_core, &mut self.z);
         Some(temp_core.make_static_path())
     }
@@ -1344,10 +1348,8 @@ pub(crate) const EXPECTED_DEPTH: usize = 16;
 pub(crate) const EXPECTED_PATH_LEN: usize = 64;
 
 pub(crate) mod read_zipper_core {
-    use core::ptr::NonNull;
     use crate::trie_node::*;
     use crate::PathMap;
-    use crate::trie_ref::*;
     use crate::zipper::*;
 
     /// A [Zipper] that is unable to modify the trie
@@ -1359,10 +1361,17 @@ pub(crate) mod read_zipper_core {
         /// The byte offset in `origin_path` for the start of the root node's key.
         /// `root_key = origin_path[root_key_start..]`
         root_key_start: usize,
+        /// The byte offset in `origin_path` for the start of the key in `root_node` that produces the
+        /// zipper's root.  This is needed to access to the root value if we have a ReadZipper that was
+        /// descended from a ZipperHead, and thus the `root_node` field is `Owned`
+        /// In the cases where this field is not used, it will be set to [usize::MAX]
+        root_parent_key_start: usize,
         /// A special-case to access a value at the root node, because that value would be otherwise inaccessible
-        root_val: Option<NonNull<V>>,
-        /// A reference to the [TrieNodeODRc] that points at the zipper's root
-        root_node: Option<&'a TrieNodeODRc<V, A>>,
+        /// NOTE: `root_val` will be `None`, except in situations where `ReadZipper` at the root of a map or `ZipperHead`
+        root_val: Option<&'a V>,
+        /// The [TrieNodeODRc] that contains the root node from which the zipper is descended. If the zipper
+        /// is descended from a `ZipperHead`, this field will be `Owned`, otherwise it will be `Borrowed`
+        root_node: OwnedOrBorrowed<'a, TrieNodeODRc<V, A>>,
         /// A reference to the focus node
         focus_node: TaggedNodeRef<'a, V, A>,
         /// An iter token corresponding to the location of the `node_key` within the `focus_node`, or NODE_ITER_INVALID
@@ -1375,16 +1384,87 @@ pub(crate) mod read_zipper_core {
         ancestors: Vec<(TaggedNodeRef<'a, V, A>, u128, usize)>,
         pub(crate) alloc: A,
     }
-    unsafe impl<V: Clone + Send + Sync, A: Allocator> Send for ReadZipperCore<'_, '_, V, A> {}
-    unsafe impl<V: Clone + Send + Sync, A: Allocator> Sync for ReadZipperCore<'_, '_, V, A> {}
+
+    //GOAT-TODO, we should unify this `OwnedOrBorrowed` type with [`AbstractNodeRef`], and it should be able to
+    // be packed into a single 64-bit word, and do the right thing when it is dropped.
+    #[derive(Clone, Debug)]
+    pub enum OwnedOrBorrowed<'a, T> {
+        Owned(T),
+        Borrowed(&'a T),
+        None,
+    }
+
+    impl<'a, T> From<Option<&'a T>> for OwnedOrBorrowed<'a, T> {
+        fn from(opt: Option<&'a T>) -> Self {
+            match opt {
+                Some(t) => Self::Borrowed(t),
+                None => Self::None
+            }
+        }
+    }
+
+    impl<'a, T> OwnedOrBorrowed<'a, T> {
+        /// Returns a reference to the content, regardless of whether it is owned or borrowed
+        #[inline]
+        pub fn as_ref(&self) -> &T {
+            match self {
+                Self::Owned(t) => &t,
+                Self::Borrowed(t) => t,
+                Self::None => panic!(),
+            }
+        }
+        //GOAT, may be unneeded
+        // /// Returns a reference to the 
+        // #[inline]
+        // pub fn as_option(&self) -> Option<&T> {
+        //     match self {
+        //         Self::Owned(t) => Some(&t),
+        //         Self::Borrowed(t) => Some(t),
+        //         Self::None => None,
+        //     }
+        // }
+        /// Returns a reference to the content in the reference lifetime, if it's borrowed.  Panics if the content is owned
+        pub fn as_borrowed_ref(&self) -> &'a T {
+            match self {
+                Self::Borrowed(t) => t,
+                Self::Owned(_) => panic!(),
+                Self::None => panic!(),
+            }
+        }
+        /// Returns a reference to the owned content, or `None` if the content is borrowed
+        pub fn get_owned_ref(&self) -> Option<&T> {
+            match self {
+                Self::Owned(t) => Some(&t),
+                Self::Borrowed(_) => None,
+                Self::None => None,
+            }
+        }
+        /// Returns `true` if the content is owned, or `false` otherwise
+        pub fn is_owned(&self) -> bool {
+            match self {
+                Self::Owned(_) => true,
+                Self::Borrowed(_) => false,
+                Self::None => false,
+            }
+        }
+        /// Returns `true` if the content is borrowed, or `false` otherwise
+        pub fn is_borrowed(&self) -> bool {
+            match self {
+                Self::Borrowed(_) => true,
+                Self::Owned(_) => false,
+                Self::None => false,
+            }
+        }
+    }
 
     impl<V: Clone + Send + Sync, A: Allocator> Clone for ReadZipperCore<'_, '_, V, A> where V: Clone {
         fn clone(&self) -> Self {
             Self {
                 origin_path: self.origin_path.clone(),
                 root_key_start: self.root_key_start,
+                root_parent_key_start: self.root_parent_key_start,
                 root_val: self.root_val,
-                root_node: self.root_node,
+                root_node: self.root_node.clone(),
                 focus_node: self.focus_node.clone(),
                 focus_iter_token: NODE_ITER_INVALID,
                 prefix_buf: self.prefix_buf.clone(),
@@ -1426,7 +1506,7 @@ pub(crate) mod read_zipper_core {
             let new_root_val = self.get_val();
             let new_root_path = self.origin_path();
             let new_root_key_start = new_root_path.len() - self.node_key().len();
-            Self::ReadZipperT::new_with_node_and_path_internal_in(Some(self.focus_parent()), new_root_path, new_root_key_start, new_root_val, self.alloc.clone())
+            Self::ReadZipperT::new_with_node_and_path_internal_in(OwnedOrBorrowed::Borrowed(self.focus_parent()), new_root_path, new_root_key_start, new_root_val, self.alloc.clone())
         }
     }
 
@@ -1801,7 +1881,7 @@ pub(crate) mod read_zipper_core {
                 match self.ancestors.last() {
                     Some((focus_node, _iter_tok, _prefix_offset)) => (focus_node, self.parent_key()),
                     None => {
-                        return AbstractNodeRef::BorrowedRc(self.root_node.as_ref().unwrap())
+                        return AbstractNodeRef::BorrowedRc(self.root_node.as_ref())
                     }
                 }
             } else {
@@ -1814,7 +1894,7 @@ pub(crate) mod read_zipper_core {
             let (focus_node, node_key) = if node_key.len() == 0 {
                 let parent_key = self.parent_key();
                 if parent_key.len() == 0 {
-                    return self.root_node
+                    return Some(self.root_node.as_ref())
                 }
 
                 let parent_node = match self.ancestors.last() {
@@ -1822,7 +1902,7 @@ pub(crate) mod read_zipper_core {
                         *focus_node
                     },
                     None => {
-                        self.root_node.as_ref().unwrap().as_tagged()
+                        self.root_node.as_ref().as_tagged()
                     }
                 };
                 (parent_node, parent_key)
@@ -1873,6 +1953,36 @@ pub(crate) mod read_zipper_core {
         }
     }
 
+    impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyConditionalValues<'trie, V> for ReadZipperCore<'trie, '_, V, A> {
+        type WitnessT = ReadZipperWitness<V, A>;
+        fn witness<'w>(&self) -> Self::WitnessT {
+            if self.root_node.is_owned() {
+                ReadZipperWitness(Some(self.root_node.as_ref().clone()))
+            } else {
+                ReadZipperWitness(None)
+            }
+        }
+        fn get_val_with_witness<'w>(&self, witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w {
+            assert_eq!(witness.0.as_ref(), self.root_node.get_owned_ref());
+            let key = self.node_key();
+            if key.len() > 0 {
+                self.focus_node.node_get_val(key)
+            } else {
+                if let Some((parent, _iter_tok, _prefix_offset)) = self.ancestors.last() {
+                    parent.node_get_val(self.parent_key())
+                } else {
+                    if self.root_val.is_some() {
+                        self.root_val
+                    } else {
+                        //We know the node in the witness and the node in self.root_node are the same,
+                        // but we borrow it from the witness here because that has the lifetime we need
+                        witness.0.as_ref().unwrap().as_tagged().node_get_val(self.root_node_key())
+                    }
+                }
+            }
+        }
+    }
+
     impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyValues<'trie, V> for ReadZipperCore<'trie, '_, V, A> {
         fn get_val(&self) -> Option<&'trie V> {
             let key = self.node_key();
@@ -1882,20 +1992,11 @@ pub(crate) mod read_zipper_core {
                 if let Some((parent, _iter_tok, _prefix_offset)) = self.ancestors.last() {
                     parent.node_get_val(self.parent_key())
                 } else {
-                    self.root_val.map(|v| unsafe{ &*v.as_ptr() })
+                    debug_assert_eq!(self.root_node.is_borrowed(), true); //We shouldn't have ZipperReadOnlyValues implemented on a type that comes from a ZipperHead
+                    self.root_val
                 }
             }
         }
-    }
-
-    impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for ReadZipperCore<'a, '_, V, A> {
-        type TrieRefT = TrieRef<'a, V, A>;
-        fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> {
-            let path = path.as_ref();
-            let root_val = self.root_val.map(|v| unsafe{ &*v.as_ptr() });
-            trie_ref_at_path_in(self.focus_parent(), root_val, self.node_key(), path, self.alloc.clone())
-        }
-        unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> { self.trie_ref_at_path(path) }
     }
 
     impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperReadOnlyPriv<'a, V, A> for ReadZipperCore<'a, '_, V, A> {
@@ -2088,25 +2189,51 @@ pub(crate) mod read_zipper_core {
         ///                       |   root_prefix_len
         ///                 root_key_start
         /// ```
-        pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
-            let (node, key, val) = node_along_path(root_node, &path[root_key_start..], root_val);
-
+        pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, owned_root: bool, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
+            let (node, key, val) = node_along_path(root_node, &path[root_key_start..], root_val, owned_root);
+            let node = if owned_root {
+                OwnedOrBorrowed::Owned(node.clone())
+            } else {
+                OwnedOrBorrowed::Borrowed(node)
+            };
             let new_root_key_start = root_prefix_len - key.len();
-            Self::new_with_node_and_path_internal_in(Some(node), path, new_root_key_start, val, alloc)
+            Self::new_with_node_and_path_internal_in(node, path, new_root_key_start, val, alloc)
         }
         /// Creates a new zipper, with a path relative to a node, assuming the path is fully-contained within
         /// the node
         ///
-        /// NOTE: This method currently doesn't descend subnodes.  Use [Self::new_with_node_and_path] if you can't
+        /// NOTE: This method currently doesn't descend subnodes.  Use [Self::new_with_node_and_path_in] if you can't
         /// guarantee the path is within the supplied node.
-        pub(crate) fn new_with_node_and_path_internal_in(root_node: Option<&'a TrieNodeODRc<V, A>>, path: &'path [u8], root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
-            let focus = match root_node {
-                Some(node) => node.as_tagged(),
-                None => TaggedNodeRef::empty_node(),
+        pub(crate) fn new_with_node_and_path_internal_in(root_node: OwnedOrBorrowed<'a, TrieNodeODRc<V, A>>, path: &'path [u8], mut root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
+            let mut focus: TaggedNodeRef<'a, V, A> = match &root_node {
+                OwnedOrBorrowed::Owned(root_node) => {
+                    // SAFETY: The root_node makes the ReadZipper essentially a self-referential type.  As long
+                    // as the ReadZipperCore is alive, this will remain valid, and the "witness" mechanism in
+                    // `ZipperReadOnlyConditionalValues` makes sure the references returned from the `get_val`
+                    // method remain valid
+                    unsafe{ core::mem::transmute(root_node.as_tagged()) }
+                },
+                OwnedOrBorrowed::Borrowed(root_node) => {
+                    root_node.as_tagged()
+                },
+                OwnedOrBorrowed::None => {
+                    TaggedNodeRef::empty_node()
+                }
             };
+
+            //Finish regularizing the zipper, if we stopped short when traversing to the focus node
+            let mut root_parent_key_start = usize::MAX;
+            if path.len() > root_key_start {
+                if let Some((consumed_byte_cnt, next_node)) = focus.node_get_child(&path[root_key_start..]) {
+                    focus = next_node.as_tagged();
+                    root_parent_key_start = root_key_start;
+                    root_key_start += consumed_byte_cnt;
+                }
+            }
             Self {
                 origin_path: SliceOrLen::from(path),
                 root_key_start,
+                root_parent_key_start,
                 root_val: root_val.map(|v| v.into()),
                 focus_node: focus,
                 root_node,
@@ -2116,10 +2243,10 @@ pub(crate) mod read_zipper_core {
                 alloc,
             }
         }
-        /// Same as [Self::new_with_node_and_path], but inits the zipper stack ahead of time, allowing a zipper
+        /// Same as [Self::new_with_node_and_path_in], but inits the zipper stack ahead of time, allowing a zipper
         /// that isn't bound by `'path`
         pub(crate) fn new_with_node_and_cloned_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
-            let (node, key, val) = node_along_path(root_node, &path[root_key_start..], root_val);
+            let (node, key, val) = node_along_path(root_node, &path[root_key_start..], root_val, false);
 
             let new_root_key_start = root_prefix_len - key.len();
             let mut prefix_buf = Vec::with_capacity(EXPECTED_PATH_LEN);
@@ -2127,8 +2254,9 @@ pub(crate) mod read_zipper_core {
             Self {
                 origin_path: SliceOrLen::new_owned(path.len()),
                 root_key_start: new_root_key_start,
+                root_parent_key_start: usize::MAX,
                 root_val: val.map(|v| v.into()),
-                root_node: Some(node),
+                root_node: OwnedOrBorrowed::Borrowed(node),
                 focus_node: node.as_tagged(),
                 focus_iter_token: NODE_ITER_INVALID,
                 prefix_buf,
@@ -2144,6 +2272,7 @@ pub(crate) mod read_zipper_core {
             ReadZipperCore {
                 origin_path: SliceOrLen::new_owned(self.origin_path.len()),
                 root_key_start: self.root_key_start,
+                root_parent_key_start: self.root_parent_key_start,
                 root_val: self.root_val,
                 root_node: self.root_node,
                 focus_node: self.focus_node,
@@ -2203,19 +2332,28 @@ pub(crate) mod read_zipper_core {
         }
 
         /// Returns the parent and path from which the top of the focus_stack can be re-acquired
-        fn focus_parent(&self) -> &'a TrieNodeODRc<V, A> {
+        #[inline]
+        pub(crate) fn focus_parent(&self) -> &TrieNodeODRc<V, A> {
             let parent_key = self.parent_key();
             if parent_key.len() == 0 {
-                return self.root_node.unwrap()
+                return self.root_node.as_ref()
+            }
+            self.focus_parent_borrowed()
+        }
+
+        /// Same behavior as [Self::focus_parent], but with a less restrictive return lifetime
+        #[inline]
+        pub(crate) fn focus_parent_borrowed(&self) -> &'a TrieNodeODRc<V, A> {
+            let parent_key = self.parent_key();
+            if parent_key.len() == 0 {
+                return self.root_node.as_borrowed_ref()
             }
 
             let parent_node = match self.ancestors.last() {
                 Some((focus_node, _iter_tok, _prefix_offset)) => {
                     *focus_node
                 },
-                None => {
-                    self.root_node.as_ref().unwrap().as_tagged()
-                }
+                None => unreachable!()
             };
             let (key_len, node) = parent_node.node_get_child(parent_key).unwrap();
             debug_assert_eq!(key_len, parent_key.len());
@@ -2489,6 +2627,16 @@ pub(crate) mod read_zipper_core {
             self.ancestors.last().map(|(_node, _iter_tok, i)| *i)
                 .unwrap_or_else(|| self.root_key_start)
         }
+        //GOAT, probably don't need this
+        // /// Returns the offset of the end of the focus node's key
+        // #[inline]
+        // fn node_key_end(&self) -> usize {
+        //     if self.prefix_buf.len() > 0 {
+        //         self.prefix_buf.len()
+        //     } else {
+        //         self.origin_path.len()
+        //     }
+        // }
         /// Internal method returning the key within the focus node
         #[inline]
         pub(crate) fn node_key(&self) -> &[u8] {
@@ -2503,9 +2651,20 @@ pub(crate) mod read_zipper_core {
                 }
             }
         }
+        /// Internal method returning the key that leads to the zipper root within the zipper's root_node
+        #[inline]
+        fn root_node_key(&self) -> &[u8] {
+            //This method should only be called when we have an owned `root_node`, which should go with
+            // a valid value for `root_parent_key_start`
+            debug_assert!(matches!(self.root_node, OwnedOrBorrowed::Owned(_)));
+            debug_assert!(self.root_parent_key_start < usize::MAX);
+            if self.prefix_buf.capacity() == 0 && self.origin_path.len() > 0 {
+                unsafe{ &self.origin_path.as_slice_unchecked()[self.root_parent_key_start..] }
+            } else {
+                &self.prefix_buf[self.root_parent_key_start..self.root_key_start]
+            }
+        }
         /// Internal method returning the key that leads to `self.focus_node` within the parent
-        /// NOTE: This method also returns the trailing parts of the key so it will only be useful when
-        /// [self::node_key] returns `&[]`
         #[inline]
         fn parent_key(&self) -> &[u8] {
             if self.prefix_buf.len() > 0 {
@@ -2516,7 +2675,12 @@ pub(crate) mod read_zipper_core {
                 };
                 &self.prefix_buf[key_start..self.node_key_start()]
             } else {
-                &[]
+                if self.root_parent_key_start == usize::MAX || self.origin_path.len() == 0 {
+                    &[]
+                } else {
+                    let origin_path = unsafe{ self.origin_path.as_slice_unchecked() };
+                    &origin_path[self.root_parent_key_start..self.root_key_start]
+                }
             }
         }
         /// Internal method similar to `self.node_key().len()`, but returns the number of chars that can be
@@ -2556,7 +2720,7 @@ pub(crate) mod read_zipper_core {
 use read_zipper_core::*;
 
 /// Internal function to walk along a path to the final node reference
-pub(crate) fn node_along_path<'a, 'path, V: Clone + Sync + Send, A: Allocator + 'a>(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_val: Option<&'a V>) -> (&'a TrieNodeODRc<V, A>, &'path [u8], Option<&'a V>) {
+pub(crate) fn node_along_path<'a, 'path, V: Clone + Sync + Send, A: Allocator + 'a>(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_val: Option<&'a V>, stop_short: bool) -> (&'a TrieNodeODRc<V, A>, &'path [u8], Option<&'a V>) {
     let mut key = path;
     let mut node = root_node;
     let mut val = root_val;
@@ -2569,9 +2733,13 @@ pub(crate) fn node_along_path<'a, 'path, V: Clone + Sync + Send, A: Allocator + 
                 node = next_node;
                 key = &key[consumed_byte_cnt..];
             } else {
-                val = tagged_node.node_get_val(key);
-                node = next_node;
-                key = &[];
+                if !stop_short {
+                    val = tagged_node.node_get_val(key);
+                    node = next_node;
+                    key = &[];
+                } else {
+                    val = None;
+                }
                 break;
             };
             tagged_node = node.as_tagged();
@@ -3996,14 +4164,14 @@ mod tests {
         rs.iter().for_each(|r| { btm.set_val_at(r.as_bytes(), *r); });
 
         let root_key = b"ro";
-        let mut zipper = ReadZipperCore::new_with_node_and_path_in(btm.root().unwrap(), root_key, root_key.len(), 0, None, global_alloc());
+        let mut zipper = ReadZipperCore::new_with_node_and_path_in(btm.root().unwrap(), false, root_key, root_key.len(), 0, None, global_alloc());
         assert_eq!(zipper.is_val(), false);
         zipper.descend_to(b"mulus");
         assert_eq!(zipper.is_val(), true);
         assert_eq!(zipper.get_val(), Some(&"romulus"));
 
         let root_key = b"roman";
-        let mut zipper = ReadZipperCore::new_with_node_and_path_in(btm.root().unwrap(), root_key, root_key.len(), 0, None, global_alloc());
+        let mut zipper = ReadZipperCore::new_with_node_and_path_in(btm.root().unwrap(), false, root_key, root_key.len(), 0, None, global_alloc());
         assert_eq!(zipper.is_val(), true);
         assert_eq!(zipper.get_val(), Some(&"roman"));
         zipper.descend_to(b"e");
