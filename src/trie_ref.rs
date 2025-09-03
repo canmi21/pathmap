@@ -392,8 +392,12 @@ impl<V> ValOrKey<V> {
     /// Returns `true` if the union contains a val, otherwise `false`
     #[inline]
     fn is_val(&self) -> bool {
-        let self_sentinel = unsafe{ self.val.0 };
-        self_sentinel == VAL_SENTINEL
+        if unsafe{ self.node_key.0 } == 0xFF {
+            debug_assert_eq!(VAL_SENTINEL, unsafe{ self.val.0 });
+            true
+        } else {
+            false
+        }
     }
 }
 
