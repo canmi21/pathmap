@@ -199,14 +199,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
     pub fn read_zipper<'a>(&'a self) -> ReadZipperUntracked<'a, 'static, V, A> {
         self.ensure_root();
         let root_val = unsafe{ &*self.root_val.get() }.as_ref();
-        #[cfg(debug_assertions)]
-        {
-            ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap(), &[], 0, root_val, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap(), &[], 0, root_val, self.alloc.clone())
-        }
+        ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap(), &[], 0, root_val, self.alloc.clone())
     }
 
     /// Creates a new read-only [Zipper], with the specified path from the root of the map; This method is much more
@@ -218,14 +211,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
             true => unsafe{ &*self.root_val.get() }.as_ref(),
             false => None
         };
-        #[cfg(debug_assertions)]
-        {
-            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone())
-        }
+        ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone())
     }
 
     /// Creates a new read-only [Zipper], with the `path` specified from the root of the map
@@ -236,14 +222,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
             true => unsafe{ &*self.root_val.get() }.as_ref(),
             false => None
         };
-        #[cfg(debug_assertions)]
-        {
-            ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap(), path, path.len(), 0, root_val, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap(), path, path.len(), 0, root_val, self.alloc.clone())
-        }
+        ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap(), path, path.len(), 0, root_val, self.alloc.clone())
     }
 
     /// Creates a new [write zipper](ZipperWriting) starting at the root of the `PathMap`

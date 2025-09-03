@@ -826,12 +826,12 @@ impl<Z> ZipperConcretePriv for &mut Z where Z: ZipperConcretePriv {
 // ReadZipperTracked
 // ***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---
 
-/// A [Zipper] that is unable to modify the trie
+/// A [Zipper] returned from a [ZipperHead](crate::zipper::ZipperHead) that is unable to modify the trie
 #[derive(Clone)]
 pub struct ReadZipperTracked<'a, 'path, V: Clone + Send + Sync, A: Allocator = GlobalAlloc> {
     z: ReadZipperCore<'a, 'path, V, A>,
     #[allow(unused)]
-    tracker: ZipperTracker<TrackingRead>,
+    tracker: Option<ZipperTracker<TrackingRead>>,
 }
 
 //The Drop impl ensures the tracker gets dropped at the right time
@@ -947,12 +947,12 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ReadZipperTracked<'a, 'path, V, A> {
     /// See [ReadZipperCore::new_with_node_and_path]
-    pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, owned_root: bool, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: ZipperTracker<TrackingRead>) -> Self {
+    pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, owned_root: bool, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
         let core = ReadZipperCore::new_with_node_and_path_in(root_node, owned_root, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core, tracker }
     }
     /// See [ReadZipperCore::new_with_node_and_cloned_path]
-    pub(crate) fn new_with_node_and_cloned_path_in(root_node: &'a TrieNodeODRc<V, A>, owned_root: bool, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: ZipperTracker<TrackingRead>) -> Self {
+    pub(crate) fn new_with_node_and_cloned_path_in(root_node: &'a TrieNodeODRc<V, A>, owned_root: bool, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
         let core = ReadZipperCore::new_with_node_and_cloned_path_in(root_node, owned_root, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core, tracker }
     }
@@ -988,9 +988,6 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ReadZipperTra
 #[derive(Clone)]
 pub struct ReadZipperUntracked<'a, 'path, V: Clone + Send + Sync, A: Allocator = GlobalAlloc> {
     z: ReadZipperCore<'a, 'path, V, A>,
-    /// We will still track the zipper in debug mode, because unsafe isn't permission to break the rules
-    #[cfg(debug_assertions)]
-    tracker: Option<ZipperTracker<TrackingRead>>,
 }
 
 #[cfg(debug_assertions)]
@@ -1113,34 +1110,16 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ReadZipperUntracked<'a, 'path, V, A> {
     /// See [ReadZipperCore::new_with_node_and_path]
-    #[cfg(debug_assertions)]
-    pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
-        let core = ReadZipperCore::new_with_node_and_path_in(root_node, false, path, root_prefix_len, root_key_start, root_val, alloc);
-        Self { z: core, tracker }
-    }
-    #[cfg(not(debug_assertions))]
     pub(crate) fn new_with_node_and_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
         let core = ReadZipperCore::new_with_node_and_path_in(root_node, false, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core }
     }
     /// See [ReadZipperCore::new_with_node_and_path_internal]
-    #[cfg(debug_assertions)]
-    pub(crate) fn new_with_node_and_path_internal_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
-        let core = ReadZipperCore::new_with_node_and_path_internal_in(OwnedOrBorrowed::Borrowed(root_node), path, root_key_start, root_val, alloc);
-        Self { z: core, tracker }
-    }
-    #[cfg(not(debug_assertions))]
     pub(crate) fn new_with_node_and_path_internal_in(root_node: &'a TrieNodeODRc<V, A>, path: &'path [u8], root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
         let core = ReadZipperCore::new_with_node_and_path_internal_in(OwnedOrBorrowed::Borrowed(root_node), path, root_key_start, root_val, alloc);
         Self { z: core }
     }
     /// See [ReadZipperCore::new_with_node_and_cloned_path]
-    #[cfg(debug_assertions)]
-    pub(crate) fn new_with_node_and_cloned_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A, tracker: Option<ZipperTracker<TrackingRead>>) -> Self {
-        let core = ReadZipperCore::new_with_node_and_cloned_path_in(root_node, false, path, root_prefix_len, root_key_start, root_val, alloc);
-        Self { z: core, tracker }
-    }
-    #[cfg(not(debug_assertions))]
     pub(crate) fn new_with_node_and_cloned_path_in(root_node: &'a TrieNodeODRc<V, A>, path: &[u8], root_prefix_len: usize, root_key_start: usize, root_val: Option<&'a V>, alloc: A) -> Self {
         let core = ReadZipperCore::new_with_node_and_cloned_path_in(root_node, false, path, root_prefix_len, root_key_start, root_val, alloc);
         Self { z: core }
@@ -1148,14 +1127,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ReadZipp
     /// Makes a new `ReadZipperUntracked` for use in the implementation of [Zipper::fork_read_zipper].
     /// Forked zippers never need to be tracked because they are always fully covered by their parent's permissions
     pub(crate) fn new_forked_with_inner_zipper(core: ReadZipperCore<'a, 'path, V, A>) -> Self {
-        #[cfg(debug_assertions)]
-        {
-            ReadZipperUntracked{ z: core, tracker: None }
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            ReadZipperUntracked{ z: core }
-        }
+        ReadZipperUntracked{ z: core }
     }
 }
 
@@ -1167,14 +1139,9 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> std::ite
         //Destructure `self` without dropping it
         let zip = core::mem::ManuallyDrop::new(self);
         let core_z = unsafe { std::ptr::read(&zip.z) };
-        #[cfg(debug_assertions)]
-        let tracker = unsafe { std::ptr::read(&zip.tracker) };
         ReadZipperIter {
             started: false,
             zipper: Some(core_z),
-            #[cfg(debug_assertions)]
-            _tracker: tracker,
-            #[cfg(not(debug_assertions))]
             _tracker: None,
         }
     }
@@ -1185,6 +1152,10 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> std::ite
 // ***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---
 
 /// A [Zipper] that holds ownership of the root node, so there is no need for a lifetime parameter
+//
+//GOAT ReadZipperOwned doesn't need its internal map anymore.
+// Then, ReadZipperTracked is then just a ReadZipperOwned plus a tracker
+//**UPDATE** TOo early to make this change; because the root value still lives outside the ReadZipper.  We could move to an owned root value, like we did for TrieRefOwned, but I would rather just push ahead with moving root values inside nodes.  For now I am just trying to get to the right external API.
 pub struct ReadZipperOwned<V: Clone + Send + Sync + 'static, A: Allocator + 'static = GlobalAlloc> {
     map: MaybeDangling<Box<PathMap<V, A>>>,
     // NOTE About this Box around the WriteZipperCore... The reason this is needed is for the
@@ -1355,7 +1326,7 @@ pub(crate) mod read_zipper_core {
         root_key_start: usize,
         /// The byte offset in `origin_path` for the start of the key in `root_node` that produces the
         /// zipper's root.  This is needed to access to the root value if we have a ReadZipper that was
-        /// descended from a ZipperHead, and thus the `root_node` field is `Owned`
+        /// descended from a [ZipperHead], and thus the `root_node` field is `Owned`
         /// In the cases where this field is not used, it will be set to [usize::MAX]
         root_parent_key_start: usize,
         /// A special-case to access a value at the root node, because that value would be otherwise inaccessible

@@ -20,11 +20,13 @@ pub trait ZipperCreation<'trie, V: Clone + Send + Sync, A: Allocator = GlobalAll
     /// Creates a new read-only [Zipper] with the path specified from the `ZipperHead`, where the caller
     /// guarantees that there are and there never will be any conflicts with any [write zippers](ZipperWriting)s at this time
     /// or any time before the returned zipper is dropped
-    unsafe fn read_zipper_at_path_unchecked<'a, K: AsRef<[u8]>>(&'a self, path: K) -> ReadZipperUntracked<'a, 'static, V, A> where 'trie: 'a;
+    ///
+    /// The returned type is [ReadZipperTracked] although the tracking logic will be skipped
+    unsafe fn read_zipper_at_path_unchecked<'a, K: AsRef<[u8]>>(&'a self, path: K) -> ReadZipperTracked<'a, 'static, V, A> where 'trie: 'a;
 
     /// A more efficient version of [read_zipper_at_path_unchecked](ZipperCreation::read_zipper_at_path_unchecked),
     /// where the returned zipper is constrained by the `'path` lifetime
-    unsafe fn read_zipper_at_borrowed_path_unchecked<'a, 'path>(&'a self, path: &'path[u8]) -> ReadZipperUntracked<'a, 'path, V, A> where 'trie: 'a;
+    unsafe fn read_zipper_at_borrowed_path_unchecked<'a, 'path>(&'a self, path: &'path[u8]) -> ReadZipperTracked<'a, 'path, V, A> where 'trie: 'a;
 
     //GOAT-TrackedOwnedZippers: This is a proposed feature to create owned variants of zippers, but still
     // track them using the ZipperHead infrastructure.  Creating owned zippers safely is easy to do and
@@ -204,11 +206,11 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             // logic makes sure conflicting paths aren't permitted, so we should not get aliased &mut borrows
             let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*v.as_ptr() } );
-            let new_zipper = ReadZipperTracked::new_with_node_and_path_in(root_node, true, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), zipper_tracker);
+            let new_zipper = ReadZipperTracked::new_with_node_and_path_in(root_node, true, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), Some(zipper_tracker));
             Ok(new_zipper)
         })
     }
-    unsafe fn read_zipper_at_borrowed_path_unchecked<'a, 'path>(&'a self, path: &'path[u8]) -> ReadZipperUntracked<'a, 'path, V, A> where 'trie: 'a {
+    unsafe fn read_zipper_at_borrowed_path_unchecked<'a, 'path>(&'a self, path: &'path[u8]) -> ReadZipperTracked<'a, 'path, V, A> where 'trie: 'a {
         self.with_inner_core_z(|z| {
             z.focus_stack.advance_if_empty();
             let (root_node, root_val) = z.splitting_borrow_focus();
@@ -218,19 +220,14 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*v.as_ptr() } );
 
-            let new_zipper;
             #[cfg(debug_assertions)]
-            {
-                let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)
-                    .unwrap_or_else(|conflict| panic!("Fatal error. ReadZipper at {path:?} {conflict}"));
-                //GOAT, we will pass `true` for `owned_root` to new_with_node_and_path_in, when we migrate to `ReadZipperTracked`
-                new_zipper = ReadZipperUntracked::new_with_node_and_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), Some(zipper_tracker));
-            }
+            let zipper_tracker = Some(ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)
+                .unwrap_or_else(|conflict| panic!("Fatal error. ReadZipper at {path:?} {conflict}")));
+
             #[cfg(not(debug_assertions))]
-            {
-                new_zipper = ReadZipperUntracked::new_with_node_and_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone());
-            }
-            new_zipper
+            let zipper_tracker = None;
+
+            ReadZipperTracked::new_with_node_and_path_in(root_node, true, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), zipper_tracker)
         })
     }
     fn read_zipper_at_path<'a, K: AsRef<[u8]>>(&'a self, path: K) -> Result<ReadZipperTracked<'a, 'static, V, A>, Conflict> where 'trie: 'a {
@@ -244,11 +241,11 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*v.as_ptr() } );
 
-            let new_zipper = ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, true, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), zipper_tracker);
+            let new_zipper = ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, true, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), Some(zipper_tracker));
             Ok(new_zipper)
         })
     }
-    unsafe fn read_zipper_at_path_unchecked<'a, K: AsRef<[u8]>>(&'a self, path: K) -> ReadZipperUntracked<'a, 'static, V, A> where 'trie: 'a {
+    unsafe fn read_zipper_at_path_unchecked<'a, K: AsRef<[u8]>>(&'a self, path: K) -> ReadZipperTracked<'a, 'static, V, A> where 'trie: 'a {
         let path = path.as_ref();
         self.with_inner_core_z(|z| {
             z.focus_stack.advance_if_empty();
@@ -259,18 +256,14 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*v.as_ptr() } );
 
-            let new_zipper;
             #[cfg(debug_assertions)]
-            {
-                let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)
-                    .unwrap_or_else(|conflict| panic!("Fatal error. ReadZipper at {path:?} {conflict}"));
-                new_zipper = ReadZipperUntracked::new_with_node_and_cloned_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), Some(zipper_tracker));
-            }
+            let zipper_tracker = Some(ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)
+                .unwrap_or_else(|conflict| panic!("Fatal error. ReadZipper at {path:?} {conflict}")));
+
             #[cfg(not(debug_assertions))]
-            {
-                new_zipper = ReadZipperUntracked::new_with_node_and_cloned_path_in(root_node, path.as_ref(), path.len(), 0, root_val, z.alloc.clone());
-            }
-            new_zipper
+            let zipper_tracker = None;
+
+            ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, true, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), zipper_tracker)
         })
     }
     fn write_zipper_at_exclusive_path<'a, K: AsRef<[u8]>>(&'a self, path: K) -> Result<WriteZipperTracked<'a, 'static, V, A>, Conflict> where 'trie: 'a {
@@ -557,7 +550,7 @@ mod tests {
 
         std::thread::scope(|scope| {
 
-            let mut zipper_senders: Vec<std::sync::mpsc::Sender<(ReadZipperUntracked<'_, '_, usize>, WriteZipperUntracked<'_, '_, usize>)>> = Vec::with_capacity(thread_cnt);
+            let mut zipper_senders: Vec<std::sync::mpsc::Sender<(ReadZipperTracked<'_, '_, usize>, WriteZipperUntracked<'_, '_, usize>)>> = Vec::with_capacity(thread_cnt);
             let mut signal_receivers: Vec<std::sync::mpsc::Receiver<bool>> = Vec::with_capacity(thread_cnt);
 
             //Spawn all the threads
@@ -575,7 +568,8 @@ mod tests {
                         match zipper_rx.recv() {
                             Ok((mut reader_z, mut writer_z)) => {
                                 //We got the zippers, do the stuff
-                                while let Some(val) = reader_z.to_next_get_val() {
+                                let witness = reader_z.witness();
+                                while let Some(val) = reader_z.to_next_get_val_with_witness(&witness) {
                                     writer_z.descend_to(reader_z.path());
                                     writer_z.set_val(*val);
                                     writer_z.reset();
@@ -1444,12 +1438,3 @@ mod tests {
         drop(zh);
     }
 }
-
-//GOAT TODO
-//
-//GOAT, The "read_zipper_**_unchecked" ZipperHead call needs to return a tracked zipper type.  The tracker can be None internally
-//GOAT, then the ReadZipperUntracked can totally ditch the tracker internally, because there will be no way to make them with a ZipperHead
-//
-//GOAT ReadZipperOwned doesn't need its internal map anymore.
-// Then, ReadZipperTracked is then just a ReadZipperOwned plus a tracker
-//**UPDATE** TOo early to make this change; because the root value still lives outside the ReadZipper.  We could move to an owned root value, like we did for TrieRefOwned, but I would rather just push ahead with moving root values inside nodes.  For now I am just trying to get to the right external API.
