@@ -38,7 +38,6 @@ pub fn serialize_paths<'a, V : TrieValue, RZ : ZipperReadOnlyConditionalIteratio
   })
 }
 
-/// Serialize all paths in under path `k`
 /// Warning: the size of the individual path serialization can be double exponential in the size of the PathMap
 /// Returns the target output, total serialized bytes (uncompressed), and total number of paths
 pub fn for_each_path_serialize<'p, W: std::io::Write, F: FnMut() -> std::io::Result<Option<&'p [u8]>>>(target: &mut W, mut f: F) -> std::io::Result<SerializationStats> {
@@ -50,7 +49,7 @@ pub fn for_each_path_serialize<'p, W: std::io::Write, F: FnMut() -> std::io::Res
   // a PR because their build and validation process is very confusing.
   let mut strm: z_stream = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
   let mut ret = unsafe { zng_deflateInit(&mut strm, 7) };
-  if ret != Z_OK { panic!("init failed") }
+  assert_eq!(ret, Z_OK);
 
   let mut total_paths : usize = 0;
   while let Some(p) = f()? {
@@ -108,9 +107,10 @@ pub fn for_each_path_serialize<'p, W: std::io::Write, F: FnMut() -> std::io::Res
   })
 }
 
-
-pub fn apath_serialize<'p, W: std::io::Write>(target: &mut W) -> impl std::ops::Coroutine<Option<&'p [u8]>, Yield=(), Return=std::io::Result<SerializationStats>> {
-  let coro = #[coroutine] move |i: Option<&'p [u8]>| {
+/// Warning: the size of the individual path serialization can be double exponential in the size of the PathMap
+/// Returns the target output, total serialized bytes (uncompressed), and total number of paths
+pub fn path_serialize_sink<'p, W: std::io::Write>(target: &mut W) -> impl std::ops::Coroutine<Option<&'p [u8]>, Yield=(), Return=std::io::Result<SerializationStats>> {
+  #[coroutine] move |i: Option<&'p [u8]>| {
     const CHUNK: usize = 4096; // not tuned yet
     let mut buffer = [0u8; CHUNK];
 
@@ -119,44 +119,47 @@ pub fn apath_serialize<'p, W: std::io::Write>(target: &mut W) -> impl std::ops::
     // a PR because their build and validation process is very confusing.
     let mut strm: z_stream = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
     let mut ret = unsafe { zng_deflateInit(&mut strm, 7) };
-    if ret != Z_OK { panic!("init failed") }
+    assert_eq!(ret, Z_OK);
 
     let mut total_paths: usize = 0;
-    while let Some(p) = if total_paths == 0 { i.clone() } else { yield () } {
-      println!("unhealthy {:?}", unsafe { slice_from_raw_parts(&strm as *const z_stream as *const u8, 104).as_ref() });
-      let l = p.len();
-      println!("({l}) {:?}", p);
-      let mut lin = (l as u32).to_le_bytes();
-      strm.avail_in = 4;
-      strm.next_in = lin.as_mut_ptr();
-
-      // todo (Adam): this is stupid/simple code; the following two blocks should be merged and write out the path length and path together
+    if let Some(mut p) = i {
       loop {
-        strm.avail_out = CHUNK as _;
-        strm.next_out = buffer.as_mut_ptr();
-        ret = unsafe { deflate(&mut strm, Z_NO_FLUSH) };
-        assert_ne!(ret, Z_STREAM_ERROR);
-        let have = CHUNK - strm.avail_out as usize;
-        target.write_all(&mut buffer[..have])?;
-        if strm.avail_out != 0 { break }
+        let l = p.len();
+        let mut lin = (l as u32).to_le_bytes();
+        strm.avail_in = 4;
+        strm.next_in = lin.as_mut_ptr();
+
+        // todo (Adam): this is stupid/simple code; the following two blocks should be merged and write out the path length and path together
+        loop {
+          strm.avail_out = CHUNK as _;
+          strm.next_out = buffer.as_mut_ptr();
+          ret = unsafe { deflate(&mut strm, Z_NO_FLUSH) };
+          assert_ne!(ret, Z_STREAM_ERROR);
+          let have = CHUNK - strm.avail_out as usize;
+          target.write_all(&mut buffer[..have])?;
+          if strm.avail_out != 0 { break }
+        }
+        assert_eq!(strm.avail_in, 0);
+
+        strm.avail_in = l as _;
+        strm.next_in = p.as_ptr().cast_mut();
+        loop {
+          strm.avail_out = CHUNK as _;
+          strm.next_out = buffer.as_mut_ptr();
+          ret = unsafe { deflate(&mut strm, Z_NO_FLUSH) };
+          assert_ne!(ret, Z_STREAM_ERROR);
+          let have = CHUNK - strm.avail_out as usize;
+          target.write_all(&mut buffer[..have])?;
+          if strm.avail_out != 0 { break }
+        }
+        assert_eq!(strm.avail_in, 0);
+
+        total_paths += 1;
+        match yield () {
+          Some(np) => { p = np }
+          None => break
+        }
       }
-      assert_eq!(strm.avail_in, 0);
-
-      strm.avail_in = l as _;
-      strm.next_in = p.as_ptr().cast_mut();
-      loop {
-        strm.avail_out = CHUNK as _;
-        strm.next_out = buffer.as_mut_ptr();
-        ret = unsafe { deflate(&mut strm, Z_NO_FLUSH) };
-        assert_ne!(ret, Z_STREAM_ERROR);
-        let have = CHUNK - strm.avail_out as usize;
-        target.write_all(&mut buffer[..have])?;
-        if strm.avail_out != 0 { break }
-      }
-      assert_eq!(strm.avail_in, 0);
-
-
-      total_paths += 1;
     }
     loop {
       strm.avail_out = CHUNK as _;
@@ -175,8 +178,7 @@ pub fn apath_serialize<'p, W: std::io::Write>(target: &mut W) -> impl std::ops::
       bytes_in   : strm.total_in,
       path_count : total_paths
     })
-  };
-  coro
+  }
 }
 
 
