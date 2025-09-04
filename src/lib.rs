@@ -5,6 +5,7 @@
 #![cfg_attr(feature = "nightly", feature(coroutines))]
 #![cfg_attr(feature = "nightly", feature(stmt_expr_attributes))]
 #![cfg_attr(feature = "nightly", feature(gen_blocks))]
+#![cfg_attr(feature = "nightly", feature(yield_expr))]
 
 #![doc = include_str!("../README.md")]
 
