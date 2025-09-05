@@ -1,6 +1,7 @@
 
 use core::hint::unreachable_unchecked;
 use core::mem::ManuallyDrop;
+use core::ptr::NonNull;
 use std::collections::HashMap;
 use dyn_clone::*;
 use local_or_heap::LocalOrHeap;
@@ -706,6 +707,7 @@ pub(crate) const TINY_REF_NODE_TAG: usize = 4;
 
 pub(crate) use tagged_node_ref::TaggedNodeRef;
 pub(crate) use tagged_node_ref::TaggedNodeRefMut;
+pub(crate) use tagged_node_ref::TaggedNodePtr;
 
 #[cfg(not(feature = "slim_dispatch"))]
 mod tagged_node_ref {
@@ -858,6 +860,17 @@ mod tagged_node_ref {
                 Self::CellByteNode(node) => TaggedNodeRef::CellByteNode(node),
             }
         }
+        /// Convert a `TaggedNodeRefMut` into a [TaggedNodeRef] so const methods may be called.
+        ///
+        /// NOTE: This should be a zero-cost conversation.
+        #[inline]
+        pub fn cast(self) -> TaggedNodeRef<'a, V, A> {
+            match self {
+                Self::DenseByteNode(node) => TaggedNodeRef::DenseByteNode(node),
+                Self::LineListNode(node) => TaggedNodeRef::LineListNode(node),
+                Self::CellByteNode(node) => TaggedNodeRef::CellByteNode(node),
+            }
+        }
         #[cfg(feature = "slim_ptrs")]
         #[inline]
         pub(super) fn from_slim_ptr(ptr: super::slim_node_ptr::SlimNodePtr<V, A>) -> Self {
@@ -898,6 +911,57 @@ mod tagged_node_ref {
             match self {
                 Self::CellByteNode(node) => node,
                 _ => unsafe { unreachable_unchecked() }
+            }
+        }
+    }
+
+    /// A ptr mirror of [TaggedNodeRefMut]
+    #[derive(Clone)]
+    pub enum TaggedNodePtr<V: Clone + Send + Sync, A: Allocator> {
+        DenseByteNode(NonNull<DenseByteNode<V, A>>),
+        LineListNode(NonNull<LineListNode<V, A>>),
+        #[cfg(feature = "bridge_nodes")]
+        BridgeNode(NonNull<BridgeNode<V, A>>),
+        CellByteNode(NonNull<CellByteNode<V, A>>),
+    }
+    impl<V: Clone + Send + Sync, A: Allocator> Copy for TaggedNodePtr<V, A> {}
+
+    impl<V: Clone + Send + Sync, A: Allocator> From<TaggedNodeRefMut<'_, V, A>> for TaggedNodePtr<V, A> {
+        #[inline]
+        fn from(src: TaggedNodeRefMut<'_, V, A>) -> Self {
+            match src {
+                TaggedNodeRefMut::DenseByteNode(node) => Self::DenseByteNode(node.into()),
+                TaggedNodeRefMut::LineListNode(node) => Self::LineListNode(node.into()),
+                #[cfg(feature = "bridge_nodes")]
+                TaggedNodeRefMut::BridgeNode(node) => Self::BridgeNode(node.into()),
+                TaggedNodeRefMut::CellByteNode(node) => Self::CellByteNode(node.into()),
+            }
+        }
+    }
+
+    impl<V: Clone + Send + Sync, A: Allocator> TaggedNodePtr<V, A> {
+        /// Returns a [TaggedNodeRefMut] from the `TaggedNodePtr`.  It is unsafe because the
+        /// caller must provide a valid lifetime and ensure no aliasing is possible
+        #[inline]
+        pub unsafe fn into_tagged_mut<'a>(self: TaggedNodePtr<V, A>) -> TaggedNodeRefMut<'a, V, A> {
+            match self {
+                TaggedNodePtr::DenseByteNode(mut node) => TaggedNodeRefMut::DenseByteNode(unsafe{ node.as_mut() }),
+                TaggedNodePtr::LineListNode(mut node) => TaggedNodeRefMut::LineListNode(unsafe{ node.as_mut() }),
+                #[cfg(feature = "bridge_nodes")]
+                TaggedNodePtr::BridgeNode(mut node) => TaggedNodeRefMut::BridgeNode(unsafe{ node.as_mut() }),
+                TaggedNodePtr::CellByteNode(mut node) => TaggedNodeRefMut::CellByteNode(unsafe{ node.as_mut() }),
+            }
+        }
+        /// Returns a [TaggedNodeRef] from the `TaggedNodePtr`.  It is unsafe because the
+        /// caller must provide a valid lifetime
+        #[inline]
+        pub unsafe fn as_tagged<'a>(self: &TaggedNodePtr<V, A>) -> TaggedNodeRef<'a, V, A> {
+            match self {
+                TaggedNodePtr::DenseByteNode(node) => TaggedNodeRef::DenseByteNode(unsafe{ node.as_ref() }),
+                TaggedNodePtr::LineListNode(node) => TaggedNodeRef::LineListNode(unsafe{ node.as_ref() }),
+                #[cfg(feature = "bridge_nodes")]
+                TaggedNodePtr::BridgeNode(node) => TaggedNodeRef::BridgeNode(unsafe{ node.as_ref() }),
+                TaggedNodePtr::CellByteNode(node) => TaggedNodeRef::CellByteNode(unsafe{ node.as_ref() }),
             }
         }
     }
@@ -2891,6 +2955,7 @@ mod tests {
         drop(z2);
     }
 
+    ///GOAT, This fails in miri!  Fix it!
     #[test]
     fn slim_ptrs_test2() {
         let mut map = PathMap::<()>::new();

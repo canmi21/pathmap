@@ -324,8 +324,7 @@ pub trait ZipperMoving: Zipper {
                 true
             },
             None => {
-                let descended = self.descend_to_byte(cur_byte);
-                debug_assert!(descended);
+                self.descend_to_byte(cur_byte);
                 false
             }
         }

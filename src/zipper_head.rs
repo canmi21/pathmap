@@ -142,12 +142,6 @@ impl<'trie, V: Clone + Send + Sync, A: Allocator> ZipperCreationPriv<'trie, V, A
     }
 }
 
-impl<'trie, V: Clone + Send + Sync, A: Allocator + 'trie> Drop for ZipperHead<'_, 'trie, V, A> {
-    fn drop(&mut self) {
-        self.with_inner_core_z(|z| z.focus_stack.advance_if_empty())
-    }
-}
-
 /// Similar to [ZipperHead], but owns the trie from which zippers are granted
 ///
 /// `ZipperHeadOwned` is useful when managing the lifetime of an ordinary `ZipperHead` is unwieldy, as
@@ -197,7 +191,6 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
     fn read_zipper_at_borrowed_path<'a, 'path>(&'a self, path: &'path[u8]) -> Result<ReadZipperTracked<'a, 'path, V, A>, Conflict> where 'trie: 'a {
         let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)?;
         self.with_inner_core_z(|z| {
-            z.focus_stack.advance_if_empty();
             let (root_node, root_val) = z.splitting_borrow_focus();
 
             //SAFETY: I am effectively taking items bound by `z`'s lifetime and lifting them up to the `'trie`
@@ -212,7 +205,6 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
     }
     unsafe fn read_zipper_at_borrowed_path_unchecked<'a, 'path>(&'a self, path: &'path[u8]) -> ReadZipperTracked<'a, 'path, V, A> where 'trie: 'a {
         self.with_inner_core_z(|z| {
-            z.focus_stack.advance_if_empty();
             let (root_node, root_val) = z.splitting_borrow_focus();
 
             //SAFETY: The user is asserting that the paths won't conflict.
@@ -234,7 +226,6 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
         let path = path.as_ref();
         let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)?;
         self.with_inner_core_z(|z| {
-            z.focus_stack.advance_if_empty();
             let (root_node, root_val) = z.splitting_borrow_focus();
 
             //SAFETY: See identical code in `read_zipper_at_borrowed_path` for more discussion
@@ -248,7 +239,6 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
     unsafe fn read_zipper_at_path_unchecked<'a, K: AsRef<[u8]>>(&'a self, path: K) -> ReadZipperTracked<'a, 'static, V, A> where 'trie: 'a {
         let path = path.as_ref();
         self.with_inner_core_z(|z| {
-            z.focus_stack.advance_if_empty();
             let (root_node, root_val) = z.splitting_borrow_focus();
 
             //SAFETY: The user is asserting that the paths won't conflict.
@@ -337,12 +327,6 @@ pub(crate) fn prepare_exclusive_write_path<'a, 'trie: 'a, 'path: 'a, V: Clone + 
         node.make_unique();
     }
 
-    //The focus_stack can get in an undescended root state two ways.
-    //1. By taking a write zipper from the ZipperHead's root (even if that WZ was subsequently dropped)
-    //2. By doing `make_unique` on the ZipperHead's root node.
-    //Either way, we need to fix it.
-    z.focus_stack.advance_if_empty();
-
     let node_key_start = z.key.node_key_start();
 
     //CASE 1
@@ -369,7 +353,7 @@ pub(crate) fn prepare_exclusive_write_path<'a, 'trie: 'a, 'path: 'a, V: Clone + 
     //Walk along the path to get the parent node
     let mut remaining_key = &z.key.prefix_buf[node_key_start..];
     if remaining_key.len() > 0 {
-        match z.focus_stack.top_mut().unwrap().node_get_child_mut(remaining_key) {
+        match z.focus_stack.top_mut().unwrap().node_into_child_mut(remaining_key) {
             Some((consumed_bytes, node)) => {
                 //CASE 2
                 remaining_key = &remaining_key[consumed_bytes..];
@@ -421,13 +405,13 @@ pub(crate) fn prepare_exclusive_write_path<'a, 'trie: 'a, 'path: 'a, V: Clone + 
         z.key.prefix_buf.truncate(original_path_len);
 
         //If the node on top of the stack is not a cell node, we need to upgrade it
-        if !z.focus_stack.top().unwrap().reborrow().is_cell_node() {
+        if !z.focus_stack.top().unwrap().is_cell_node() {
             swap_top_node(&mut z.focus_stack, &z.key, |mut existing_node| {
                 make_cell_node(&mut existing_node);
                 Some(existing_node)
             }, z.alloc.clone());
         }
-        let cell_node = z.focus_stack.top_mut().unwrap().as_cell_node().unwrap();
+        let cell_node = z.focus_stack.top_mut().unwrap().into_cell_node().unwrap();
         let (exclusive_node, val) = cell_node.prepare_cf(last_path_byte);
         return (exclusive_node, val)
     }
