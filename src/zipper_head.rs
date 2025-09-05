@@ -189,7 +189,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperCreationPriv<'static, V
 
 impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> ZipperCreation<'trie, V, A> for Z where Z: ZipperCreationPriv<'trie, V, A> {
     fn read_zipper_at_borrowed_path<'a, 'path>(&'a self, path: &'path[u8]) -> Result<ReadZipperTracked<'a, 'path, V, A>, Conflict> where 'trie: 'a {
-        let zipper_tracker = ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)?;
+        let zipper_tracker = Some(ZipperTracker::<TrackingRead>::new(self.tracker_paths().clone(), path)?);
         self.with_inner_core_z(|z| {
             let (root_node, root_val) = z.splitting_borrow_focus();
 
@@ -199,7 +199,7 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             // logic makes sure conflicting paths aren't permitted, so we should not get aliased &mut borrows
             let root_node: &'trie TrieNodeODRc<V, A> = unsafe{ core::mem::transmute(root_node) };
             let root_val: Option<&'trie V> = root_val.map(|v| unsafe{ &*v.as_ptr() } );
-            let new_zipper = ReadZipperTracked::new_with_node_and_path_in(root_node, true, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), Some(zipper_tracker));
+            let new_zipper = ReadZipperTracked::new_with_node_and_path_in(root_node, true, path.as_ref(), path.len(), 0, root_val, z.alloc.clone(), zipper_tracker);
             Ok(new_zipper)
         })
     }
@@ -408,8 +408,8 @@ pub(crate) fn prepare_exclusive_write_path<'a, 'trie: 'a, 'path: 'a, V: Clone + 
         if !z.focus_stack.top().unwrap().is_cell_node() {
             swap_top_node(&mut z.focus_stack, &z.key, |mut existing_node| {
                 make_cell_node(&mut existing_node);
-                Some(existing_node)
-            }, z.alloc.clone());
+                existing_node
+            });
         }
         let cell_node = z.focus_stack.top_mut().unwrap().into_cell_node().unwrap();
         let (exclusive_node, val) = cell_node.prepare_cf(last_path_byte);

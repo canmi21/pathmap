@@ -2943,6 +2943,9 @@ impl<V: DistributiveLattice + Clone + Send + Sync, A: Allocator> DistributiveLat
 /// Test to make sure slim_ptrs are good with provenance under miri
 #[cfg(test)]
 mod tests {
+    use crate::alloc::{GlobalAlloc, global_alloc};
+    use crate::line_list_node::LineListNode;
+    use crate::trie_node::TrieNodeODRc;
     use crate::PathMap;
     use crate::zipper::*;
 
@@ -2955,7 +2958,6 @@ mod tests {
         drop(z2);
     }
 
-    ///GOAT, This fails in miri!  Fix it!
     #[test]
     fn slim_ptrs_test2() {
         let mut map = PathMap::<()>::new();
@@ -2965,5 +2967,15 @@ mod tests {
         drop(rz);
         drop(wz);
         drop(zh);
+    }
+
+    /// A very basic test of TrieNodeODRc, that doesn't involve the complexity of Zippers or ZipperHead
+    #[test]
+    fn slim_ptrs_test3() {
+        let node = LineListNode::<(), GlobalAlloc>::new_in(global_alloc());
+        let mut node_ref = TrieNodeODRc::new_in(node, global_alloc());
+        let cloned = node_ref.clone();
+        node_ref.make_unique();
+        drop(cloned);
     }
 }

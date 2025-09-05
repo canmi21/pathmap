@@ -989,12 +989,6 @@ pub struct ReadZipperUntracked<'a, 'path, V: Clone + Send + Sync, A: Allocator =
     z: ReadZipperCore<'a, 'path, V, A>,
 }
 
-#[cfg(debug_assertions)]
-//We only need a custom drop when we have a tracker
-impl<V: Clone + Send + Sync, A: Allocator> Drop for ReadZipperUntracked<'_, '_, V, A> {
-    fn drop(&mut self) { }
-}
-
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> Zipper for ReadZipperUntracked<'_, '_, V, A> {
     fn path_exists(&self) -> bool { self.z.path_exists() }
     fn is_val(&self) -> bool { self.z.is_val() }
@@ -1335,7 +1329,7 @@ pub(crate) mod read_zipper_core {
         /// is descended from a `ZipperHead`, this field will be `Owned`, otherwise it will be `Borrowed`
         root_node: OwnedOrBorrowed<'a, TrieNodeODRc<V, A>>,
         /// A reference to the focus node
-        focus_node: TaggedNodeRef<'a, V, A>,
+        focus_node: MiriWrapper<TaggedNodeRef<'a, V, A>>,
         /// An iter token corresponding to the location of the `node_key` within the `focus_node`, or NODE_ITER_INVALID
         /// if iteration is not in-process
         focus_iter_token: u128,
@@ -1420,6 +1414,42 @@ pub(crate) mod read_zipper_core {
         // }
     }
 
+    #[cfg(miri)]
+    type MiriWrapper<T> = Box<T>;
+
+    #[cfg(not(miri))]
+    use miri_wrapper::MiriWrapper;
+    mod miri_wrapper {
+        use std::ops::{Deref, DerefMut};
+
+        /// A type that appears to be a Box but does nothing, so I can replace it with a box under miri
+        ///
+        /// The issue is how miri scopes its pointer tags, which make self-referential types fail
+        /// when they are dropped, because the reference and the referant get dropped within the same
+        /// scope.
+        #[derive(Clone)]
+        pub struct MiriWrapper<T>(T);
+
+        impl<T> Deref for MiriWrapper<T> {
+            type Target = T;
+            #[inline]
+            fn deref(&self) -> &T {
+                &self.0
+            }
+        }
+        impl<T> DerefMut for MiriWrapper<T> {
+            #[inline]
+            fn deref_mut(&mut self) -> &mut T {
+                &mut self.0
+            }
+        }
+        impl<T> MiriWrapper<T> {
+            pub fn new(t: T) -> Self {
+                Self(t)
+            }
+        }
+    }
+
     impl<V: Clone + Send + Sync, A: Allocator> Clone for ReadZipperCore<'_, '_, V, A> where V: Clone {
         fn clone(&self) -> Self {
             Self {
@@ -1498,7 +1528,7 @@ pub(crate) mod read_zipper_core {
             self.ancestors.truncate(1);
             match self.ancestors.pop() {
                 Some((node, _tok, _prefix_len)) => {
-                    self.focus_node = node;
+                    *self.focus_node = node;
                     self.focus_iter_token = NODE_ITER_INVALID;
                 },
                 None => {}
@@ -1517,7 +1547,7 @@ pub(crate) mod read_zipper_core {
 
         fn val_count(&self) -> usize {
             if self.node_key().len() == 0 {
-                val_count_below_root(self.focus_node) + (self.is_val() as usize)
+                val_count_below_root(*self.focus_node) + (self.is_val() as usize)
             } else {
                 let focus = self.get_focus();
                 if focus.is_none() {
@@ -1552,8 +1582,8 @@ pub(crate) mod read_zipper_core {
             self.focus_iter_token = NODE_ITER_INVALID;
             if let Some((_consumed_byte_cnt, next_node)) = self.focus_node.node_get_child(self.node_key()) {
                 let next_node = next_node.as_tagged();
-                self.ancestors.push((self.focus_node, self.focus_iter_token, self.prefix_buf.len()));
-                self.focus_node = next_node;
+                self.ancestors.push((*self.focus_node, self.focus_iter_token, self.prefix_buf.len()));
+                *self.focus_node = next_node;
                 return true;
             }
             self.focus_node.node_contains_partial_key(self.node_key())
@@ -1566,8 +1596,8 @@ pub(crate) mod read_zipper_core {
             match self.focus_node.nth_child_from_key(self.node_key(), child_idx) {
                 (Some(prefix), Some(child_node)) => {
                     self.prefix_buf.push(prefix);
-                    self.ancestors.push((self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
-                    self.focus_node = child_node;
+                    self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
+                    *self.focus_node = child_node;
                     self.focus_iter_token = NODE_ITER_INVALID;
                     true
                 },
@@ -1601,8 +1631,8 @@ pub(crate) mod read_zipper_core {
                     match child_node {
                         None => {},
                         Some(rec) => {
-                            self.ancestors.push((self.focus_node.clone(), new_tok, self.prefix_buf.len()));
-                            self.focus_node = rec.as_tagged();
+                            self.ancestors.push((*self.focus_node.clone(), new_tok, self.prefix_buf.len()));
+                            *self.focus_node = rec.as_tagged();
                             self.focus_iter_token = self.focus_node.new_iter_token();
                         },
                     }
@@ -1735,8 +1765,8 @@ pub(crate) mod read_zipper_core {
                         match child_node {
                             None => {},
                             Some(rec) => {
-                                self.ancestors.push((self.focus_node.clone(), new_tok, self.prefix_buf.len()));
-                                self.focus_node = rec.as_tagged();
+                                self.ancestors.push((*self.focus_node.clone(), new_tok, self.prefix_buf.len()));
+                                *self.focus_node = rec.as_tagged();
                                 self.focus_iter_token = NODE_ITER_INVALID
                             },
                         }
@@ -1764,7 +1794,7 @@ pub(crate) mod read_zipper_core {
                 if self.excess_key_len() == 0 {
                     match self.ancestors.pop() {
                         Some((node, iter_tok, _prefix_offset)) => {
-                            self.focus_node = node;
+                            *self.focus_node = node;
                             self.focus_iter_token = iter_tok;
                         },
                         None => {
@@ -1786,7 +1816,7 @@ pub(crate) mod read_zipper_core {
             if self.excess_key_len() == 0 {
                 match self.ancestors.pop() {
                     Some((node, iter_tok, _prefix_offset)) => {
-                        self.focus_node = node;
+                        *self.focus_node = node;
                         self.focus_iter_token = iter_tok;
                     },
                     None => {
@@ -1848,7 +1878,7 @@ pub(crate) mod read_zipper_core {
                     }
                 }
             } else {
-                (&self.focus_node, node_key)
+                (&*self.focus_node, node_key)
             };
             focus_node.get_node_at_key(node_key)
         }
@@ -1870,7 +1900,7 @@ pub(crate) mod read_zipper_core {
                 };
                 (parent_node, parent_key)
             } else {
-                (self.focus_node, node_key)
+                (*self.focus_node, node_key)
             };
 
             match focus_node.node_get_child(node_key) {
@@ -1969,9 +1999,9 @@ pub(crate) mod read_zipper_core {
         fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'a, V, A>, &'z [u8], Option<&'a V>) {
             let node_key = self.node_key();
             if node_key.len() > 0 {
-                (self.focus_node, node_key, None)
+                (*self.focus_node, node_key, None)
             } else {
-                (self.focus_node, &[], self.get_val())
+                (*self.focus_node, &[], self.get_val())
             }
         }
         fn take_core(&mut self) -> Option<ReadZipperCore<'a, 'static, V, A>> {
@@ -2090,8 +2120,8 @@ pub(crate) mod read_zipper_core {
                     match child_node {
                         None => {},
                         Some(rec) => {
-                            self.ancestors.push((self.focus_node.clone(), new_tok, self.prefix_buf.len()));
-                            self.focus_node = rec.as_tagged();
+                            self.ancestors.push((*self.focus_node.clone(), new_tok, self.prefix_buf.len()));
+                            *self.focus_node = rec.as_tagged();
                             self.focus_iter_token = self.focus_node.new_iter_token();
                         },
                     }
@@ -2103,7 +2133,7 @@ pub(crate) mod read_zipper_core {
                 } else {
                     //Ascend
                     if let Some((focus_node, iter_tok, prefix_offset)) = self.ancestors.pop() {
-                        self.focus_node = focus_node;
+                        *self.focus_node = focus_node;
                         self.focus_iter_token = iter_tok;
                         self.prefix_buf.truncate(prefix_offset);
                     } else {
@@ -2201,7 +2231,7 @@ pub(crate) mod read_zipper_core {
                 root_key_start,
                 root_parent_key_start,
                 root_val: root_val.map(|v| v.into()),
-                focus_node: focus,
+                focus_node: MiriWrapper::new(focus),
                 root_node,
                 focus_iter_token: NODE_ITER_INVALID,
                 prefix_buf: vec![],
@@ -2264,8 +2294,8 @@ pub(crate) mod read_zipper_core {
         fn regularize(&mut self) {
             debug_assert!(self.prefix_buf.len() >= self.node_key_start()); //If this triggers, we have uninitialized buffers
             if let Some((_consumed_byte_cnt, next_node)) = self.focus_node.node_get_child(self.node_key()) {
-                self.ancestors.push((self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
-                self.focus_node = next_node.as_tagged();
+                self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
+                *self.focus_node = next_node.as_tagged();
                 self.focus_iter_token = self.focus_node.new_iter_token();
             }
         }
@@ -2351,8 +2381,8 @@ pub(crate) mod read_zipper_core {
             while let Some((consumed_byte_cnt, next_node)) = self.focus_node.node_get_child(key) {
                 let next_node = next_node.as_tagged();
                 key_start += consumed_byte_cnt;
-                self.ancestors.push((self.focus_node.clone(), NODE_ITER_INVALID, key_start));
-                self.focus_node = next_node;
+                self.ancestors.push((*self.focus_node.clone(), NODE_ITER_INVALID, key_start));
+                *self.focus_node = next_node;
                 if consumed_byte_cnt < key.len() {
                     key = &key[consumed_byte_cnt..]
                 } else {
@@ -2373,8 +2403,8 @@ pub(crate) mod read_zipper_core {
                 match self.focus_node.get_sibling_of_child(self.node_key(), next) {
                     (Some(prefix), Some(child_node)) => {
                         *self.prefix_buf.last_mut().unwrap() = prefix;
-                        self.ancestors.push((self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
-                        self.focus_node = child_node;
+                        self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
+                        *self.focus_node = child_node;
                         self.focus_iter_token = NODE_ITER_INVALID;
                         true
                     },
@@ -2392,7 +2422,7 @@ pub(crate) mod read_zipper_core {
                         match parent.get_sibling_of_child(self.parent_key(), next) {
                             (Some(prefix), Some(child_node)) => {
                                 *self.prefix_buf.last_mut().unwrap() = prefix;
-                                self.focus_node = child_node;
+                                *self.focus_node = child_node;
                                 self.focus_iter_token = NODE_ITER_INVALID;
                                 true
                             },
@@ -2409,7 +2439,7 @@ pub(crate) mod read_zipper_core {
                 };
                 if should_pop {
                     let (focus_node, iter_tok, _prefix_offset) = self.ancestors.pop().unwrap();
-                    self.focus_node = focus_node;
+                    *self.focus_node = focus_node;
                     self.focus_iter_token = iter_tok;
                 }
                 result
@@ -2451,7 +2481,7 @@ pub(crate) mod read_zipper_core {
                     }
 
                     if let Some((focus_node, iter_tok, prefix_offset)) = self.ancestors.pop() {
-                        self.focus_node = focus_node;
+                        *self.focus_node = focus_node;
                         self.focus_iter_token = iter_tok;
                         self.prefix_buf.truncate(prefix_offset);
                     } else {
@@ -2489,8 +2519,8 @@ pub(crate) mod read_zipper_core {
                         match child_node {
                             None => {},
                             Some(rec) => {
-                                self.ancestors.push((self.focus_node.clone(), new_tok, self.prefix_buf.len()));
-                                self.focus_node = rec.as_tagged();
+                                self.ancestors.push((*self.focus_node.clone(), new_tok, self.prefix_buf.len()));
+                                *self.focus_node = rec.as_tagged();
                                 self.focus_iter_token = self.focus_node.new_iter_token();
                             },
                         }
@@ -2568,8 +2598,8 @@ pub(crate) mod read_zipper_core {
                 (Some(prefix), Some(child_node)) => {
                     //Step to a new node
                     self.prefix_buf.extend(prefix);
-                    self.ancestors.push((self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
-                    self.focus_node = child_node;
+                    self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
+                    *self.focus_node = child_node;
                     self.focus_iter_token = NODE_ITER_INVALID;
 
                     //If we're at the root of the new node, descend to the first child
@@ -2659,7 +2689,7 @@ pub(crate) mod read_zipper_core {
         fn ascend_across_nodes(&mut self) {
             debug_assert!(self.node_key().len() == 0);
             if let Some((focus_node, iter_tok, _prefix_offset)) = self.ancestors.pop() {
-                self.focus_node = focus_node;
+                *self.focus_node = focus_node;
                 self.focus_iter_token = iter_tok;
             } else {
                 self.focus_iter_token = NODE_ITER_INVALID;
@@ -2675,8 +2705,8 @@ pub(crate) mod read_zipper_core {
         /// Push a new node-path pair onto the zipper.  This is used in the internal implementation of
         /// the [crate::zipper::ProductZipper]
         pub(crate) fn push_node(&mut self, node: TaggedNodeRef<'a, V, A>) {
-            self.ancestors.push((self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
-            self.focus_node = node;
+            self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
+            *self.focus_node = node;
             self.focus_iter_token = NODE_ITER_INVALID;
         }
     }

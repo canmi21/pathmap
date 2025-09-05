@@ -1986,27 +1986,23 @@ pub(crate) fn replace_top_node<'cursor, V: Clone + Send + Sync, A: Allocator + '
 /// An internal function to replace the node at a the top of the focus stack
 #[inline]
 pub(crate) fn swap_top_node<'cursor, V: Clone + Send + Sync, A: Allocator + 'cursor, F>(focus_stack: &mut MutNodeStack<'cursor, V, A>,
-    key: &KeyFields, func: F, alloc: A)
-    where F: FnOnce(TrieNodeODRc<V, A>) -> Option<TrieNodeODRc<V, A>>
+    key: &KeyFields, func: F)
+    where F: FnOnce(TrieNodeODRc<V, A>) -> TrieNodeODRc<V, A>
 {
     if focus_stack.depth() > 1 {
         focus_stack.backtrack();
         let mut parent_node = unsafe{ focus_stack.top_mut().unwrap_unchecked() };
         let parent_key = key.parent_key();
         let existing_node = parent_node.take_node_at_key(parent_key).unwrap();
-        match func(existing_node) {
-            Some(replacement_node) => { parent_node.node_set_branch(parent_key, replacement_node).unwrap(); },
-            None => {},
-        }
+        let replacement_node = func(existing_node);
+        parent_node.node_set_branch(parent_key, replacement_node).unwrap();
         focus_stack.advance(|node| node.node_get_child_mut(parent_key).map(|(_, child_node)| child_node.make_mut()));
     } else {
         let stack_root = focus_stack.root_mut().unwrap();
-        let mut temp_node = TrieNodeODRc::new_allocated_in(0, 0, alloc);
+        let mut temp_node = TrieNodeODRc::new_empty();
         core::mem::swap(&mut temp_node, stack_root);
-        match func(temp_node) {
-            Some(replacement_node) => { *stack_root = replacement_node; },
-            None => { },
-        }
+        let replacement_node = func(temp_node);
+        *stack_root = replacement_node;
     }
 }
 
