@@ -173,6 +173,10 @@ impl Conflict {
             Some(lock) => Err(conflict_f(*lock, zipper.path())),
         }
     }
+
+    pub fn path(&self) -> &[u8] {
+        &self.at[..]
+    }
 }
 
 /// A shared registry of outstanding zippers

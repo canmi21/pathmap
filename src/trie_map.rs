@@ -6,11 +6,7 @@ use crate::trie_node::*;
 use crate::zipper::*;
 use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
 
-#[cfg(not(miri))]
-use gxhash::gxhash128;
-
-#[cfg(miri)]
-fn gxhash128(data: &[u8], _seed: i64) -> u128 { xxhash_rust::const_xxh3::xxh3_128(data) }
+use crate::gxhash::gxhash128;
 
 //GOAT-old-names
 #[deprecated]

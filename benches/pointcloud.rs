@@ -24,7 +24,11 @@ fn main() {
 
 #[divan::bench(args = ["build", "query", "knn"])]
 fn run(bencher: Bencher, stage: &str) {
-    let file_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches").join("lion_takanawa.copc.laz");
+    let data_dir = match std::env::var("BENCH_DATA_DIR") {
+        Ok(val) => std::path::PathBuf::from(val),
+        Err(_) => std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches"),
+    };
+    let file_path = data_dir.join("lion_takanawa.copc.laz");
     let mut reader = LASReader::from_path(file_path, false).expect("read file");
     let point_count: usize = reader.point_count().expect("point count meta data");
     let bbox: AABB<f64> = reader.las_metadata().bounds().expect("bbox meta data");

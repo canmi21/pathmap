@@ -1,13 +1,11 @@
-
 use divan::{Divan, Bencher, black_box};
-use pathmap::PathMap;
 
 use std::fs::File;
 use std::io::BufReader;
 
 use serde::*;
 use csv::ReaderBuilder;
-
+const CUT_CITIES_LIST: usize = 2000;
 fn main() {
     // Run registered benchmarks.
     let divan = Divan::from_args()
@@ -17,15 +15,10 @@ fn main() {
 }
 
 fn read_data() -> Vec<(String, i32)> {
-
     // A geonames file may be downloaded from: [http://download.geonames.org/export/dump/cities500.zip]
     // for a large file, or "cities15000.zip" for a smaller file
     //NOTE: Benchmark timing depends on the cities file, so benchmarks with different files are incomparable
-    let data_dir = match std::env::var("BENCH_DATA_DIR") {
-        Ok(val) => std::path::PathBuf::from(val),
-        Err(_) => std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches"),
-    };
-    let file_path = data_dir.join("cities5000.txt");
+    let file_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches").join("cities5000.txt");
     let file = File::open(file_path).unwrap();
 
     //Data structure to parse the GeoNames TSV file into
@@ -87,107 +80,83 @@ fn read_data() -> Vec<(String, i32)> {
 
     pairs
 }
-
-#[divan::bench()]
-fn cities_insert(bencher: Bencher) {
-
-    let pairs = read_data();
-
-    bencher.bench_local(|| {
-        let mut map = PathMap::new();
-        for (k, v) in pairs.iter() {
-            map.set_val_at(k, v);
-        }
-    });
+use pathmap::utils::ByteMask;
+// FnMut(&ByteMask, &mut [W], Option<&V>, &[u8])
+fn val_count_cata<V>(_bm: &ByteMask, vals: &mut[usize], _val: Option<&V>, _path: &[u8]) -> usize {
+    1 + vals.iter().copied().sum::<usize>()
 }
-
 #[divan::bench()]
-fn cities_get(bencher: Bencher) {
-
-    let pairs = read_data();
-    let mut map = PathMap::new();
-    for (k, v) in pairs.iter() {
-        map.set_val_at(k, *v);
-    }
-
-    // let counters = pathmap::counters::Counters::count_ocupancy(&map);
-    // // counters.print_histogram_by_depth();
-    // counters.print_run_length_histogram();
-
-    let mut _map_v = 0;
-    bencher.bench_local(|| {
-        for (k, _v) in pairs.iter() {
-            *black_box(&mut _map_v) = *map.get_val_at(k).unwrap();
-            //Annoyingly, we can't check for the correct value because so many places share a name
-            //assert_eq!(map.get_val_at(k), Some(&v));
-        }
-    });
-}
-
-#[cfg(feature="arena_compact")]
-#[divan::bench()]
-fn cities_get_act(bencher: Bencher) {
-    use pathmap::arena_compact::ArenaCompactTree;
-
-    let pairs = read_data();
-    let mut map = PathMap::new();
-    for (k, v) in pairs.iter() {
-        map.set_val_at(k, *v);
-    }
-    let act = ArenaCompactTree::from_zipper(map.read_zipper(), |&v| v as u64);
-    // let counters = pathmap::counters::Counters::count_ocupancy(&map);
-    // // counters.print_histogram_by_depth();
-    // counters.print_run_length_histogram();
-
-    let mut _map_v = 0;
-    bencher.bench_local(|| {
-        for (k, _v) in pairs.iter() {
-            *black_box(&mut _map_v) = act.get_val_at(k).unwrap();
-            //Annoyingly, we can't check for the correct value because so many places share a name
-            //assert_eq!(map.get_val_at(k), Some(&v));
-        }
-    });
-}
-
-#[divan::bench()]
-fn cities_val_count(bencher: Bencher) {
-
-    let pairs = read_data();
-    let mut map = PathMap::new();
-    let mut unique_count = 0;
-    for (k, v) in pairs.iter() {
-        if map.set_val_at(k, *v).is_none() {
-            unique_count += 1;
-        }
-    }
-
-    let mut sink = 0;
-    bencher.bench_local(|| {
-        *black_box(&mut sink) = map.val_count();
-    });
-    assert_eq!(sink, unique_count);
-}
-
-#[cfg(feature="arena_compact")]
-#[divan::bench()]
-fn cities_val_count_act(bencher: Bencher) {
+fn introspecting_pathmap_pathmap(bencher: Bencher) {
     use pathmap::{
-        arena_compact::ArenaCompactTree,
-        zipper::ZipperMoving,
+        PathMap,
+        morphisms::Catamorphism,
+        zipper::{ProductZipper},
     };
-    let pairs = read_data();
-    let mut map = PathMap::new();
-    let mut unique_count = 0;
-    for (k, v) in pairs.iter() {
-        if map.set_val_at(k, *v).is_none() {
-            unique_count += 1;
-        }
-    }
-    let act = ArenaCompactTree::from_zipper(map.read_zipper(), |&v| v as u64);
-    let zipper = act.read_zipper();
     let mut sink = 0;
+    let pairs = read_data();
+    let map1 = PathMap::from_iter(pairs.iter().take(CUT_CITIES_LIST).map(|p| (&p.0, p.1 as u64)));
+    let map2 = PathMap::from_iter(pairs.iter().take(CUT_CITIES_LIST).map(|p| (&p.0, p.1 as u64)));
     bencher.bench_local(|| {
-        *black_box(&mut sink) = zipper.val_count();
+        let pz = ProductZipper::new(map1.read_zipper(), [map2.read_zipper()]);
+        *black_box(&mut sink) = pz.into_cata_side_effect(val_count_cata);
     });
-    assert_eq!(sink, unique_count);
+}
+
+#[divan::bench()]
+fn generic_pathmap_pathmap(bencher: Bencher) {
+    use pathmap::{
+        PathMap,
+        morphisms::Catamorphism,
+        zipper::{ProductZipperG},
+    };
+    let mut sink = 0;
+    let pairs = read_data();
+    let map1 = PathMap::from_iter(pairs.iter().take(CUT_CITIES_LIST).map(|p| (&p.0, p.1 as u64)));
+    let map2 = PathMap::from_iter(pairs.iter().take(CUT_CITIES_LIST).map(|p| (&p.0, p.1 as u64)));
+    bencher.bench_local(|| {
+        let pz = ProductZipperG::new(map1.read_zipper(), [map2.read_zipper()]);
+        *black_box(&mut sink) = pz.into_cata_side_effect(val_count_cata);
+    });
+}
+
+#[cfg(feature="arena_compact")]
+#[divan::bench()]
+fn generic_act_act(bencher: Bencher) {
+    use pathmap::{
+        PathMap,
+        arena_compact::{ArenaCompactTree},
+        morphisms::Catamorphism,
+        zipper::{ProductZipperG},
+    };
+    let mut sink = 0;
+    let pairs = read_data();
+    let map1 = PathMap::from_iter(pairs.iter().take(CUT_CITIES_LIST).map(|p| (&p.0, p.1 as u64)));
+    let map2 = PathMap::from_iter(pairs.iter().take(CUT_CITIES_LIST).map(|p| (&p.0, p.1 as u64)));
+    let map1 = ArenaCompactTree::from_zipper(map1.read_zipper(), |x| *x as u64);
+    let map2 = ArenaCompactTree::from_zipper(map2.read_zipper(), |x| *x as u64);
+    bencher.bench_local(|| {
+        let pz = ProductZipperG::new(map1.read_zipper_u64(), [map2.read_zipper_u64()]);
+        *black_box(&mut sink) = pz.into_cata_side_effect(val_count_cata);
+    });
+}
+
+#[cfg(feature="arena_compact")]
+#[divan::bench()]
+fn generic_pathmap_act(bencher: Bencher) {
+    use pathmap::{
+        PathMap,
+        arena_compact::{ArenaCompactTree},
+        morphisms::Catamorphism,
+        zipper::{ProductZipperG},
+    };
+    let mut sink = 0;
+    let pairs = read_data();
+    let map1 = PathMap::from_iter(pairs.iter().take(CUT_CITIES_LIST).map(|p| (&p.0, p.1 as u64)));
+    let map2 = PathMap::from_iter(pairs.iter().take(CUT_CITIES_LIST).map(|p| (&p.0, p.1 as u64)));
+    // let map1 = ArenaCompactTree::from_zipper(map1.read_zipper(), |x| *x as u64);
+    let map2 = ArenaCompactTree::from_zipper(map2.read_zipper(), |x| *x as u64);
+    bencher.bench_local(|| {
+        let pz = ProductZipperG::new(map1.read_zipper(), [map2.read_zipper_u64()]);
+        *black_box(&mut sink) = pz.into_cata_side_effect(val_count_cata);
+    });
 }
