@@ -31,6 +31,22 @@ impl PrefixPos {
     }
 }
 
+/// A [Zipper] type that wrapps another `Zipper`, and allows an arbitrary path to prepend the
+/// wrapper's zipper's space
+///
+/// ```
+/// use pathmap::{PathMap, zipper::*};
+///
+/// let map: PathMap<()> = [(b"A", ()), (b"B", ())].into_iter().collect();
+/// let mut rz = PrefixZipper::new(b"origin.prefix.", map.read_zipper());
+/// rz.set_root_prefix_path(b"origin.").unwrap();
+///
+/// rz.descend_to(b"prefix.A");
+/// assert_eq!(rz.path_exists(), true);
+/// assert_eq!(rz.origin_path(), b"origin.prefix.A");
+/// assert_eq!(rz.path(), b"prefix.A");
+/// assert_eq!(rz.root_prefix_path(), b"origin.");
+/// ```
 pub struct PrefixZipper<'prefix, Z> {
     path: Vec<u8>,
     source: Z,
@@ -43,6 +59,8 @@ impl<'prefix, Z>  PrefixZipper<'prefix, Z>
     where
         Z: ZipperMoving
 {
+    /// Creates a new `PrefixZipper` wrapping the supplied `source` zipper and prepending the
+    /// supplied `prefix`
     pub fn new<P>(prefix: P, mut source: Z) -> Self
         where P: Into<Cow<'prefix, [u8]>>
     {
@@ -62,16 +80,20 @@ impl<'prefix, Z>  PrefixZipper<'prefix, Z>
         }
     }
 
-    pub fn set_origin(&mut self, origin: &[u8]) -> Result<(), &'static str> {
-        if !self.prefix.starts_with(origin) {
-            return Err("set_origin must be called within prefix");
+    /// Sets the portion of the zipper's `prefix` to treat as the [`root_prefix_path`](ZipperAbsolutePath::root_prefix_path)
+    ///
+    /// The remaining portion of the `prefix` will be part of the [`path`](ZipperMoving::path).
+    /// This method resets the zipper, and typically it is called immediately after creating the `PrefixZipper`.
+    pub fn set_root_prefix_path(&mut self, root_prefix_path: &[u8]) -> Result<(), &'static str> {
+        if !self.prefix.starts_with(root_prefix_path) {
+            return Err("zipper's prefix must begin with root_prefix_path");
         }
-        self.origin_depth = origin.len();
+        self.origin_depth = root_prefix_path.len();
         self.reset();
         Ok(())
     }
     fn set_valid(&mut self, valid: usize) {
-        assert!(valid <= self.prefix.len(), "valid prefix can't be outside prefix");
+        debug_assert!(valid <= self.prefix.len(), "valid prefix can't be outside prefix");
         self.position = if valid == self.prefix.len() - self.origin_depth {
             PrefixPos::Source
         } else {
@@ -214,8 +236,9 @@ impl<'prefix, 'source, Z, V> ZipperReadOnlyConditionalValues<'source, V>
 impl<'prefix, Z> ZipperPathBuffer for PrefixZipper<'prefix, Z>
     where Z: ZipperMoving
 {
-    unsafe fn origin_path_assert_len(&self, _len: usize) -> &[u8] {
-        unimplemented!()
+    unsafe fn origin_path_assert_len(&self, len: usize) -> &[u8] {
+        assert!(self.path.capacity() >= len);
+        unsafe{ core::slice::from_raw_parts(self.path.as_ptr(), len) }
     }
     fn prepare_buffers(&mut self) {}
     fn reserve_buffers(&mut self, path_len: usize, _stack_depth: usize) {
@@ -339,7 +362,7 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
         let Some(byte) = mask.indexed_bit::<true>(child_idx) else {
             return false;
         };
-        assert!(self.descend_to_byte(byte));
+        debug_assert!(self.descend_to_byte(byte));
         true
     }
 
@@ -432,7 +455,6 @@ impl<'prefix, Z> ZipperAbsolutePath for PrefixZipper<'prefix, Z>
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::PrefixZipper;
@@ -456,7 +478,7 @@ mod tests {
     fn test_prefix_zipper1() {
         let map = PathMap::from_iter(PATHS1.iter().map(|&x| x));
         let mut rz = PrefixZipper::new(b"prefix", map.read_zipper());
-        rz.set_origin(b"pre").unwrap();
+        rz.set_root_prefix_path(b"pre").unwrap();
         assert_eq!(rz.descend_to_existing(b"fix00000"), 8);
         assert_eq!(rz.ascend_until(), true);
         assert_eq!(rz.path(), b"fix0000");
@@ -476,7 +498,7 @@ mod tests {
     fn test_prefix_zipper2() {
         let map = PathMap::from_iter(PATHS2.iter().map(|&x| x));
         let mut rz = PrefixZipper::new(b"prefix", map.read_zipper());
-        rz.set_origin(b"pre").unwrap();
+        rz.set_root_prefix_path(b"pre").unwrap();
         assert_eq!(rz.descend_to_existing(b"fix00000"), 8);
         assert_eq!(rz.ascend_until(), true);
         assert_eq!(rz.path(), b"fix000");

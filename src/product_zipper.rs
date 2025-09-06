@@ -357,6 +357,9 @@ where Z: Zipper + ZipperValues<V> + ZipperAbsolutePath + ZipperPathBuffer {}
 ///
 /// Compared to [ProductZipper], this is a generic virtual zipper that works without
 /// inspecting the inner workings of primary and secondary zippers.
+///
+/// NOTE: In the future, this generic type will be renamed to `ProductZipper`, and the existing
+/// [ProductZipper] will be renamed something else or removed entirely.
 pub struct ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
