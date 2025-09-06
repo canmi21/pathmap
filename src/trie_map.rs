@@ -112,7 +112,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
     /// Internal method to ensure there is a valid node at the root of the map
     #[inline]
     pub(crate) fn ensure_root(&self) {
-        let root_ref = unsafe{ &mut *self.root.get() };
+        let root_ref = unsafe{ &*self.root.get() };
         if root_ref.is_some() {
             return
         }
@@ -185,24 +185,17 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
     }
 
     /// Creates a new [TrieRef], referring to a position from the root of the `PathMap`
-    pub fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'_, V, A> {
+    pub fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRefBorrowed<'_, V, A> {
         self.ensure_root();
         let path = path.as_ref();
-        trie_ref_at_path_in(self.root().unwrap().as_tagged(), self.root_val(), &[], path, self.alloc.clone())
+        TrieRefBorrowed::new_with_key_and_path_in(self.root().unwrap(), self.root_val(), &[], path, self.alloc.clone())
     }
 
     /// Creates a new read-only [Zipper], starting at the root of a `PathMap`
     pub fn read_zipper<'a>(&'a self) -> ReadZipperUntracked<'a, 'static, V, A> {
         self.ensure_root();
         let root_val = unsafe{ &*self.root_val.get() }.as_ref();
-        #[cfg(debug_assertions)]
-        {
-            ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap().as_tagged(), &[], 0, root_val, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap().as_tagged(), &[], 0, root_val, self.alloc.clone())
-        }
+        ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap(), &[], 0, root_val, self.alloc.clone())
     }
 
     /// Creates a new read-only [Zipper], with the specified path from the root of the map; This method is much more
@@ -214,14 +207,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
             true => unsafe{ &*self.root_val.get() }.as_ref(),
             false => None
         };
-        #[cfg(debug_assertions)]
-        {
-            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap().as_tagged(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap().as_tagged(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone())
-        }
+        ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone())
     }
 
     /// Creates a new read-only [Zipper], with the `path` specified from the root of the map
@@ -232,14 +218,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
             true => unsafe{ &*self.root_val.get() }.as_ref(),
             false => None
         };
-        #[cfg(debug_assertions)]
-        {
-            ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap().as_tagged(), path, path.len(), 0, root_val, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap().as_tagged(), path, path.len(), 0, root_val, self.alloc.clone())
-        }
+        ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap(), path, path.len(), 0, root_val, self.alloc.clone())
     }
 
     /// Creates a new [write zipper](ZipperWriting) starting at the root of the `PathMap`
@@ -1194,7 +1173,8 @@ mod tests {
 
         let expected = [3, 5, 4];
         let mut i = 0;
-        while let Some(val) = zipper.to_next_get_val() {
+        let witness = zipper.witness();
+        while let Some(val) = zipper.to_next_get_val_with_witness(&witness) {
             assert_eq!(*val, expected[i]);
             i += 1;
         }
