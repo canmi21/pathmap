@@ -77,14 +77,15 @@
 //!              [                      line_offset: varint64]
 //! ```
 use std::{io::Write, hash::Hasher};
+use std::cell::Cell;
+use std::marker::PhantomData;
 use crate::{
     morphisms::Catamorphism,
     utils::{BitMask, ByteMask, find_prefix_overlap},
     zipper::{
         Zipper, ZipperValues, ZipperForking, ZipperAbsolutePath, ZipperIteration,
         ZipperMoving, ZipperPathBuffer, ZipperReadOnlyValues,
-        ZipperReadOnlyConditionalValues,
-        ZipperConcretePriv, ZipperConcrete,
+        ZipperConcretePriv, ZipperConcrete, ZipperReadOnlyConditionalValues,
     },
 };
 
@@ -550,6 +551,8 @@ pub struct ArenaCompactTree<Storage> {
     lines: usize,
     /// Counters to debug storage usage
     counters: Counters,
+    /// Currently read value, so that the reader can borrow it
+    value: Cell<u64>,
 }
 
 impl<Storage> ArenaCompactTree<Storage> {
@@ -811,6 +814,7 @@ impl ArenaCompactTree<Vec<u8>> {
             hasher: Default::default(),
             lines: 0,
             counters: Counters::default(),
+            value: Cell::new(0),
         }
     }
 
@@ -912,6 +916,7 @@ impl ArenaCompactTree<Mmap> {
             line_map: Default::default(),
             lines: Default::default(),
             hasher: Default::default(),
+            value: Cell::new(0),
             counters: Counters::default(),
         })
     }
@@ -955,6 +960,7 @@ impl ArenaCompactTree<Mmap> {
             line_map: Default::default(),
             lines: Default::default(),
             hasher: Default::default(),
+            value: Cell::new(0),
             counters: arena.counters,
         })
     }
@@ -1099,6 +1105,7 @@ impl ArenaCompactTree<FileDumper> {
             hasher: GxHasher::default(),
             lines: 0,
             counters: Counters::default(),
+            value: Cell::new(0),
         };
         Ok(act)
     }
@@ -1221,7 +1228,7 @@ impl StackFrame {
     }
 }
 
-pub struct ACTZipper<'tree, Storage>
+pub struct ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     tree: &'tree ArenaCompactTree<Storage>,
@@ -1231,15 +1238,16 @@ where Storage: AsRef<[u8]>
     origin_depth: usize,
     origin_node_depth: usize,
     pub invalid: usize,
+    _marker: PhantomData<Value>,
 }
 
-impl<'tree, Storage> Clone for  ACTZipper<'tree, Storage>
+impl<'tree, Storage, Value> Clone for  ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     fn clone(&self) -> Self {
         let Self {
             tree, cur_node, stack, path,
-            origin_depth, origin_node_depth, invalid
+            origin_depth, origin_node_depth, invalid, ..
         } = self;
         Self {
             tree,
@@ -1249,6 +1257,7 @@ where Storage: AsRef<[u8]>
             origin_depth: *origin_depth,
             origin_node_depth: *origin_node_depth,
             invalid: *invalid,
+            _marker: PhantomData,
         }
     }
 }
@@ -1257,19 +1266,41 @@ impl<Storage> ArenaCompactTree<Storage>
 where Storage: AsRef<[u8]>
 {
     #[inline]
-    pub fn read_zipper<'tree>(&'tree self) -> ACTZipper<'tree, Storage> {
+    pub fn read_zipper_u64<'tree>(&'tree self) -> ACTZipper<'tree, Storage, u64> {
         ACTZipper::from_tree(self)
     }
 
     #[inline]
-    pub fn read_zipper_at_path<'tree>(&'tree self, path: &[u8]) -> ACTZipper<'tree, Storage> {
+    pub fn read_zipper_at_path_u64<'tree>(&'tree self, path: &[u8]) -> ACTZipper<'tree, Storage, u64> {
         let mut rz = ACTZipper::from_tree(self);
         rz.descend_to(path);
         rz.with_root_here()
     }
+
+    #[inline]
+    pub fn read_zipper_at_borrowed_path_u64<'tree>(&'tree self, path: &[u8]) -> ACTZipper<'tree, Storage, u64> {
+        self.read_zipper_at_path_u64(path)
+    }
+
+    #[inline]
+    pub fn read_zipper<'tree>(&'tree self) -> ACTZipper<'tree, Storage, ()> {
+        ACTZipper::from_tree(self)
+    }
+
+    #[inline]
+    pub fn read_zipper_at_path<'tree>(&'tree self, path: &[u8]) -> ACTZipper<'tree, Storage, ()> {
+        let mut rz = ACTZipper::from_tree(self);
+        rz.descend_to(path);
+        rz.with_root_here()
+    }
+
+    #[inline]
+    pub fn read_zipper_at_borrowed_path<'tree>(&'tree self, path: &[u8]) -> ACTZipper<'tree, Storage, ()> {
+        self.read_zipper_at_path(path)
+    }
 }
 
-impl<'tree, Storage> ACTZipper<'tree, Storage>
+impl<'tree, Storage, Value> ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     fn from_tree(tree: &'tree ArenaCompactTree<Storage>) -> Self {
@@ -1282,6 +1313,7 @@ where Storage: AsRef<[u8]>
             origin_depth: 0,
             origin_node_depth: 0,
             stack: Vec::from([stack_frame]),
+            _marker: PhantomData,
         }
     }
 
@@ -1297,17 +1329,27 @@ where Storage: AsRef<[u8]>
     }
 }
 
-impl<'tree, Storage> ZipperReadOnlyConditionalValues<'tree, ValueSlice> for ACTZipper<'tree, Storage>
+impl<'tree, Storage> ZipperReadOnlyConditionalValues<'tree, ()> for ACTZipper<'tree, Storage, ()>
 where Storage: AsRef<[u8]>
 {
     type WitnessT = ();
     fn witness<'w>(&self) -> Self::WitnessT {}
-    fn get_val_with_witness<'w>(&self, _witness: &'w Self::WitnessT) -> Option<&'w ValueSlice> where 'tree: 'w {
+    fn get_val_with_witness<'w>(&self, _witness: &'w Self::WitnessT) -> Option<&'w ()> where 'tree: 'w {
         self.get_val()
     }
 }
 
-impl<'tree, Storage> Zipper for ACTZipper<'tree, Storage>
+impl<'tree, Storage> ZipperReadOnlyConditionalValues<'tree, u64> for ACTZipper<'tree, Storage, u64>
+where Storage: AsRef<[u8]>
+{
+    type WitnessT = ();
+    fn witness<'w>(&self) -> Self::WitnessT {}
+    fn get_val_with_witness<'w>(&self, _witness: &'w Self::WitnessT) -> Option<&'w u64> where 'tree: 'w {
+        self.get_val()
+    }
+}
+
+impl<'tree, Storage, Value> Zipper for ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     /// Returns `true` if the zipper's focus is on a path within the trie, otherwise `false`
@@ -1383,7 +1425,7 @@ where Storage: AsRef<[u8]>
     }
 }
 
-impl<'tree, Storage> ZipperAbsolutePath for ACTZipper<'tree, Storage>
+impl<'tree, Storage, Value> ZipperAbsolutePath for ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     fn origin_path(&self) -> &[u8] {
@@ -1395,7 +1437,7 @@ where Storage: AsRef<[u8]>
     }
 }
 
-impl<'tree, Storage> ZipperPathBuffer for ACTZipper<'tree, Storage>
+impl<'tree, Storage, Value> ZipperPathBuffer for ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     unsafe fn origin_path_assert_len(&self, len: usize) -> &[u8] {
@@ -1413,40 +1455,8 @@ where Storage: AsRef<[u8]>
     }
 }
 
-#[repr(transparent)]
-#[derive(Clone)]
-pub struct ValueSlice([u8; 9]);
-impl ValueSlice {
-    fn from_ref(r: &[u8; 9]) -> &Self {
-        // Safety: due to repr(transparent), this conversion is always valid
-        unsafe { &*(r as *const [u8; 9] as *const Self) }
-    }
-    pub fn value(&self) -> u64 {
-        read_varint_u64(&self.0[..]).0
-    }
-}
-
-impl AsRef<()> for ValueSlice {
-    fn as_ref(&self) -> &() {
-        &()
-    }
-}
-
-impl AsRef<ValueSlice> for ValueSlice {
-    fn as_ref(&self) -> &ValueSlice {
-        self
-    }
-}
-
-impl core::fmt::Debug for ValueSlice {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> std::fmt::Result {
-        let value = read_varint_u64(&self.0).0;
-        write!(f, "VarInt({value})")
-    }
-}
-
 const DO_TRACE: bool = false;
-impl<'tree, Storage> ACTZipper<'tree, Storage>
+impl<'tree, Storage, Value> ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     fn trace_pos(&self) {
@@ -1455,7 +1465,7 @@ where Storage: AsRef<[u8]>
         eprintln!("node={:?}, path={:?}, depth={}",
             last_frame.node_id, self.path, last_frame.node_depth);
     }
-    fn get_value_slice(&self) -> Option<&'tree ValueSlice> {
+    fn get_value(&self) -> Option<u64> {
         if !self.is_val() {
             return None;
         }
@@ -1466,19 +1476,19 @@ where Storage: AsRef<[u8]>
         if head & VALUE_FLAG == 0 {
             return None;
         }
-        let pos = 1;
-        let slice_ref: &[u8; 9] = data[pos..pos+9].try_into().unwrap();
-        Some(ValueSlice::from_ref(slice_ref))
+        let value = read_varint_u64(&data[1..]).0;
+        Some(value)
     }
 
-    fn ascend_invalid(&mut self, limit: Option<usize>) -> bool {
+    fn ascend_invalid(&mut self, limit: Option<&mut usize>) -> bool {
         if self.invalid == 0 {
             return true;
         }
         let len = self.path.len();
         let mut invalid_cut = self.invalid.min(len - self.origin_depth);
         if let Some(limit) = limit {
-            invalid_cut = invalid_cut.min(limit);
+            invalid_cut = invalid_cut.min(*limit);
+            *limit -= invalid_cut;
         }
         self.path.truncate(len - invalid_cut);
         self.invalid = self.invalid - invalid_cut;
@@ -1621,32 +1631,72 @@ where Storage: AsRef<[u8]>
     }
 }
 
-impl<'tree, Storage> ZipperValues<ValueSlice> for ACTZipper<'tree, Storage>
+impl<'tree, Storage> ZipperValues<()> for ACTZipper<'tree, Storage, ()>
 where Storage: AsRef<[u8]>
 {
-    fn val(&self) -> Option<&ValueSlice> {
-        self.get_value_slice()
+    fn val(&self) -> Option<&()> {
+        self.get_value().map(|_x| &())
     }
 }
 
-impl<'tree, Storage> ZipperForking<ValueSlice> for ACTZipper<'tree, Storage>
+impl<'tree, Storage> ZipperValues<u64> for ACTZipper<'tree, Storage, u64>
 where Storage: AsRef<[u8]>
 {
-    type ReadZipperT<'t> = ACTZipper<'t, Storage> where Self: 't;
+    fn val(&self) -> Option<&u64> {
+        let value = self.get_value()?;
+        if self.tree.value.get() != value {
+            self.tree.value.set(value);            
+        }
+        let ptr = self.tree.value.as_ptr();
+        // technically if someone borrows the value twice, they will hit UB
+        // since we provided a read-only reference to the value, and we ALSO
+        // can update it.
+        // all of this is done so that the value can be borrowed with the same
+        // lifetime as the tree.
+        Some(unsafe { &*ptr })
+    }
+}
+
+impl<'tree, Storage> ZipperForking<()> for ACTZipper<'tree, Storage, ()>
+where Storage: AsRef<[u8]>
+{
+    type ReadZipperT<'t> = ACTZipper<'t, Storage, ()> where Self: 't;
     fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
         self.clone().with_root_here()
     }
 }
 
-impl<'tree, Storage> ZipperReadOnlyValues<'tree, ValueSlice> for ACTZipper<'tree, Storage>
+impl<'tree, Storage> ZipperForking<u64> for ACTZipper<'tree, Storage, u64>
 where Storage: AsRef<[u8]>
 {
-    fn get_val(&self) -> Option<&'tree ValueSlice> {
-        self.get_value_slice()
+    type ReadZipperT<'t> = ACTZipper<'t, Storage, u64> where Self: 't;
+    fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
+        self.clone().with_root_here()
     }
 }
 
-impl<'tree, Storage> ZipperConcretePriv for ACTZipper<'tree, Storage>
+impl<'tree, Storage> ZipperReadOnlyValues<'tree, ()> for ACTZipper<'tree, Storage, ()>
+where Storage: AsRef<[u8]>
+{
+    fn get_val(&self) -> Option<&'tree ()> {
+        self.get_value().map(|_x| &())
+    }
+}
+
+impl<'tree, Storage> ZipperReadOnlyValues<'tree, u64> for ACTZipper<'tree, Storage, u64>
+where Storage: AsRef<[u8]>
+{
+    fn get_val(&self) -> Option<&'tree u64> {
+        let value = self.get_value()?;
+        if self.tree.value.get() != value {
+            self.tree.value.set(value);            
+        }
+        let ptr = self.tree.value.as_ptr();
+        Some(unsafe { &*ptr })
+    }
+}
+
+impl<'tree, Storage, Value> ZipperConcretePriv for ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     fn shared_node_id(&self) -> Option<u64> {
@@ -1655,7 +1705,7 @@ where Storage: AsRef<[u8]>
     }
 }
 
-impl<'tree, Storage> ZipperConcrete for ACTZipper<'tree, Storage>
+impl<'tree, Storage, Value> ZipperConcrete for ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     fn is_shared(&self) -> bool {
@@ -1665,7 +1715,7 @@ where Storage: AsRef<[u8]>
 }
 
 /// An interface to enable moving a zipper around the trie and inspecting paths
-impl<'tree, Storage> ZipperMoving for ACTZipper<'tree, Storage>
+impl<'tree, Storage, Value> ZipperMoving for ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     /// Returns `true` if the zipper cannot ascend further, otherwise returns `false`
@@ -1674,10 +1724,12 @@ where Storage: AsRef<[u8]>
     /// Resets the zipper's focus back to the root
     fn reset(&mut self) {
         // self.ascend(self.path.len() - self.origin_depth);
-        self.path.truncate(self.origin_depth);
-        self.cur_node = self.tree.get_node(self.stack[0].node_id).0;
+        let (cur_node, _) = self.tree.get_node(self.stack[0].node_id);
+        self.cur_node = cur_node;
         self.stack.truncate(1);
         self.stack[0].node_depth = self.origin_node_depth;
+        self.path.truncate(self.origin_depth);
+        self.invalid = 0;
     }
 
     /// Returns the path from the zipper's root to the current focus
@@ -1734,6 +1786,10 @@ where Storage: AsRef<[u8]>
     /// If the focus is already on a value, this method will descend to the *next* value along
     /// the path.
     fn descend_to_value<K: AsRef<[u8]>>(&mut self, path: K) -> usize {
+        self.descend_cond(path.as_ref(), true)
+    }
+
+    fn descend_to_val<K: AsRef<[u8]>>(&mut self, path: K) -> usize {
         self.descend_cond(path.as_ref(), true)
     }
 
@@ -1862,7 +1918,7 @@ where Storage: AsRef<[u8]>
     /// the root and return `false`
     fn ascend(&mut self, mut steps: usize) -> bool {
         self.trace_pos();
-        if !self.ascend_invalid(Some(steps)) {
+        if !self.ascend_invalid(Some(&mut steps)) {
             return false;
         }
         while let Some(top_frame) = self.stack.last_mut() {
@@ -1917,7 +1973,7 @@ where Storage: AsRef<[u8]>
     // fn to_next_step(&mut self) -> bool;
 }
 
-impl<Storage> ZipperIteration for ACTZipper<'_, Storage>
+impl<Storage, Value> ZipperIteration for ACTZipper<'_, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     /// Systematically advances to the next value accessible from the zipper, traversing in a depth-first
@@ -2001,7 +2057,7 @@ where Storage: AsRef<[u8]>
 mod tests {
     use super::{ArenaCompactTree, ACTZipper};
     use crate::{
-        arena_compact::ValueSlice, morphisms::Catamorphism, PathMap, zipper::{zipper_iteration_tests, zipper_moving_tests, ZipperIteration, ZipperMoving, ZipperValues}
+        morphisms::Catamorphism, PathMap, zipper::{zipper_iteration_tests, zipper_moving_tests, ZipperIteration, ZipperMoving, ZipperValues}
     };
 
     zipper_moving_tests::zipper_moving_tests!(arena_compact_zipper,
@@ -2009,7 +2065,7 @@ mod tests {
             let btm = keys.into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             ArenaCompactTree::from_zipper(btm.read_zipper(), |&_v| 0)
         },
-        |trie: &mut ArenaCompactTree<Vec<u8>>, path: &[u8]| -> ACTZipper<'_, Vec<u8>> {
+        |trie: &mut ArenaCompactTree<Vec<u8>>, path: &[u8]| -> ACTZipper<'_, Vec<u8>, ()> {
             trie.read_zipper_at_path(path)
         }
     );
@@ -2019,7 +2075,7 @@ mod tests {
             let btm = keys.into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             ArenaCompactTree::from_zipper(btm.read_zipper(), |&_v| 0)
         },
-        |trie: &mut ArenaCompactTree<Vec<u8>>, path: &[u8]| -> ACTZipper<'_, Vec<u8>> {
+        |trie: &mut ArenaCompactTree<Vec<u8>>, path: &[u8]| -> ACTZipper<'_, Vec<u8>, ()> {
             trie.read_zipper_at_path(path)
         }
     );
@@ -2042,14 +2098,14 @@ mod tests {
         let act = ArenaCompactTree::from_zipper(btm.read_zipper(), |&v| v);
 
         let mut btm_zipper = btm.read_zipper();
-        let mut act_zipper = act.read_zipper();
+        let mut act_zipper = act.read_zipper_u64();
 
         loop {
             btm_zipper.to_next_val();
             act_zipper.to_next_val();
 
             let btm_val = btm_zipper.val().copied();
-            let act_val = act_zipper.val().map(|v: &ValueSlice| v.value());
+            let act_val = act_zipper.val().copied();
 
             assert_eq!(btm_zipper.path(), act_zipper.path());
             assert_eq!(btm_val, act_val);
@@ -2078,7 +2134,7 @@ mod tests {
 
         let btm = PathMap::from_iter(path_vals);
         let act1 = ArenaCompactTree::from_zipper(btm.read_zipper(), |&v| v);
-        let act2 = ArenaCompactTree::from_zipper(act1.read_zipper(), |v| v.value());
+        let act2 = ArenaCompactTree::from_zipper(act1.read_zipper_u64(), |&v: &u64| v);
         assert_eq!(act1.get_data(), act2.get_data());
     }
 
@@ -2088,15 +2144,14 @@ mod tests {
             .map(|(idx, path)| (path, idx as u64));
 
         let btm = PathMap::from_iter(path_vals);
-        let btm_value = btm.read_zipper().into_cata_side_effect(|bm, ch, v, path| {
+        let btm_value = btm.read_zipper().into_cata_side_effect(|bm, ch, val, path| {
             let path = std::str::from_utf8(path).unwrap();
             let children = ch.join(", ");
-            format!("('{path}' {v:?} {bm:?}\n{children})")
+            format!("('{path}' {val:?} {bm:?}\n{children})")
         });
         let act = ArenaCompactTree::from_zipper(btm.read_zipper(), |&v| v);
-        let act_value = act.read_zipper().into_cata_side_effect(|bm, ch, v, path| {
+        let act_value = act.read_zipper_u64().into_cata_side_effect(|bm, ch: &mut[String], val: Option<&u64>, path| {
             let path = std::str::from_utf8(path).unwrap();
-            let val = v.map(|v| v.value());
             let children = ch.join(", ");
             format!("('{path}' {val:?} {bm:?}\n{children})")
         });
@@ -2121,9 +2176,8 @@ mod tests {
             let children = ch.join(", ");
             format!("('{path}' {v:?} {bm:?}\n{children})")
         });
-        let act_value = act_mmap.read_zipper().into_cata_side_effect(|bm, ch, v, path| {
+        let act_value = act_mmap.read_zipper_u64().into_cata_side_effect(|bm, ch, val: Option<&u64>, path| {
             let path = std::str::from_utf8(path).unwrap();
-            let val = v.map(|v| v.value());
             let children = ch.join(", ");
             format!("('{path}' {val:?} {bm:?}\n{children})")
         });

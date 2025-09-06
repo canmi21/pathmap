@@ -110,7 +110,7 @@ pub fn deserialize_paths_<V: TrieValue, A: Allocator, WZ : ZipperWriting<V, A>, 
   deserialize_paths(wz, source, |_, _| v.clone())
 }
 
-pub fn deserialize_paths<V: TrieValue, A: Allocator, WZ : ZipperWriting<V, A>, R: std::io::Read, F: Fn(usize, &[u8]) -> V>(mut wz: WZ, mut source: R, fv: F) -> std::io::Result<DeserializationStats> {
+pub fn deserialize_paths<V: TrieValue, A: Allocator, WZ : ZipperWriting<V, A>, R: std::io::Read, F: Fn(usize, &[u8]) -> V>(mut wz: WZ, source: R, fv: F) -> std::io::Result<DeserializationStats> {
   let mut submap = PathMap::new_in(wz.alloc());
   let r = for_each_deserialized_path(source, |k, p| {
     let v = fv(k, p);

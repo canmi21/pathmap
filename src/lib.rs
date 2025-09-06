@@ -115,6 +115,7 @@ pub mod tree_serialization;
 mod trie_node;
 mod write_zipper;
 mod product_zipper;
+mod prefix_zipper;
 mod trie_ref;
 mod dense_byte_node;
 pub(crate) mod line_list_node;
