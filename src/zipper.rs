@@ -400,10 +400,11 @@ pub trait ZipperReadOnlyValues<'a, V>: ZipperValues<V> {
     }
 }
 
+/// A [`witness`](ZipperReadOnlyConditionalValues::witness) type used by [`ReadZipperTracked`] and [`ReadZipperOwned`]
 pub struct ReadZipperWitness<V: Clone + Send + Sync, A: Allocator>(pub(crate) Option<TrieNodeODRc<V, A>>);
 
-/// Conceptually similar to [ZipperReadOnlyValues] but requires a [ZipperWitness] to ensure the data
-/// is intact.
+/// Conceptually similar to [ZipperReadOnlyValues] but requires a [`witness`](ZipperReadOnlyConditionalValues::witness)
+/// to ensure the data remains intact.
 ///
 /// NOTE: In a future version of rust, when there is some support for disjoint borrows, we could unify
 /// this trait with `ZipperReadOnlyValues` by splitting the "read guard" function of the zipper from
@@ -447,7 +448,7 @@ pub trait ZipperReadOnlyIteration<'a, V>: ZipperReadOnlyValues<'a, V> + ZipperIt
 /// Similar to [ZipperReadOnlyIteration].  See [ZipperReadOnlyConditionalValues] for an explanation about
 /// why this trait exists
 pub trait ZipperReadOnlyConditionalIteration<'a, V>: ZipperReadOnlyConditionalValues<'a, V> + ZipperIteration {
-    /// See [ZipperReadOnlyIteration::to_next_get_val]
+    /// See [ZipperReadOnlyIteration::to_next_get_val] and [`witness`](ZipperReadOnlyConditionalValues::witness)
     fn to_next_get_val_with_witness<'w>(&mut self, witness: &'w Self::WitnessT) -> Option<&'w V> where 'a: 'w {
         if self.to_next_val() {
             let val = self.get_val_with_witness(witness);
@@ -464,7 +465,7 @@ pub trait ZipperReadOnlyConditionalIteration<'a, V>: ZipperReadOnlyConditionalVa
 ///
 /// This trait will never be implemented on the same type as [ZipperWriting]
 pub trait ZipperReadOnlySubtries<'a, V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: ZipperSubtries<V, A> + ZipperReadOnlyPriv<'a, V, A> {
-    /// The type of the returned [TrieRef] or [TrieRefTracked]
+    /// The type of the returned [TrieRef]
     type TrieRefT: Into<TrieRef<'a, V, A>> where V: 'a, A: 'a;
 
     /// Returns a [TrieRef] for the specified path, relative to the current focus
@@ -826,7 +827,7 @@ impl<Z> ZipperConcretePriv for &mut Z where Z: ZipperConcretePriv {
 // ReadZipperTracked
 // ***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---
 
-/// A [Zipper] returned from a [ZipperHead](crate::zipper::ZipperHead) that is unable to modify the trie
+/// A [Zipper] returned from a [ZipperHead] that is unable to modify the trie
 #[derive(Clone)]
 pub struct ReadZipperTracked<'a, 'path, V: Clone + Send + Sync, A: Allocator = GlobalAlloc> {
     z: ReadZipperCore<'a, 'path, V, A>,
@@ -1136,7 +1137,6 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> std::ite
         ReadZipperIter {
             started: false,
             zipper: Some(core_z),
-            _tracker: None,
         }
     }
 }
@@ -2780,14 +2780,13 @@ pub(crate) fn node_along_path<'a, 'path, V: Clone + Sync + Send, A: Allocator + 
     (node, key, val)
 }
 
-/// An iterator for depth-first traversal of a [Zipper], returned from [ReadZipperTracked::into_iter] or [ReadZipperUntracked::into_iter]
+/// An iterator for depth-first traversal of a [Zipper], returned from [ReadZipperUntracked::into_iter]
 ///
 /// NOTE: This is a convenience to allow access to syntactic sugar like `for` loops, [collect](std::iter::Iterator::collect),
 ///  etc.  It will always be faster to use the zipper itself for iteration and traversal.
 pub struct ReadZipperIter<'a, 'path, V: Clone + Send + Sync, A: Allocator = GlobalAlloc>{
     started: bool,
     zipper: Option<ReadZipperCore<'a, 'path, V, A>>,
-    _tracker: Option<ZipperTracker<TrackingRead>>,
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> Iterator for ReadZipperIter<'a, '_, V, A> {

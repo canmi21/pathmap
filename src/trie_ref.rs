@@ -626,6 +626,7 @@ impl<V: Clone + Send + Sync, A: Allocator> zipper_priv::ZipperPriv for TrieRefOw
     }
 }
 
+/// A [`witness`](ZipperReadOnlyConditionalValues::witness) type used by [`TrieRefOwned`]
 pub struct TrieRefWitness<V: Clone + Send + Sync, A: Allocator>(TrieRefOwned<V, A>);
 
 impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyConditionalValues<'a, V> for TrieRefOwned<V, A> {
