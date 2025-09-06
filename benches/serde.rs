@@ -6,7 +6,11 @@ use pathmap::path_serialization::{deserialize_paths_, serialize_paths_};
 
 #[divan::bench()]
 fn big_logic_serialize_paths(bencher: Bencher) {
-  let file_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches").join("big_logic.metta.paths");
+  let data_dir = match std::env::var("BENCH_DATA_DIR") {
+      Ok(val) => std::path::PathBuf::from(val),
+      Err(_) => std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches"),
+  };
+  let file_path = data_dir.join("big_logic.metta.paths");
   let mut file = File::open(file_path).unwrap();
   let mut map = PathMap::new();
   let mut in_buffer = vec![];
