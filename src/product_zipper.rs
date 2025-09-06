@@ -345,7 +345,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 }
 
 /// A convenience trait to make where clauses for `ProductZipperG` less bulky
-pub trait ZipperReq<'trie, V>:
+trait ZipperReq<'trie, V>:
     Zipper + ZipperValues<V> + ZipperAbsolutePath + ZipperPathBuffer {}
 
 impl<'trie, V, Z> ZipperReq<'trie, V> for Z
@@ -363,8 +363,8 @@ where Z: Zipper + ZipperValues<V> + ZipperAbsolutePath + ZipperPathBuffer {}
 pub struct ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperReq<'trie, V>,
-        SecondaryZ: ZipperReq<'trie, V>,
+        PrimaryZ: Zipper + ZipperValues<V> + ZipperAbsolutePath + ZipperPathBuffer,
+        SecondaryZ: Zipper + ZipperValues<V> + ZipperAbsolutePath + ZipperPathBuffer,
 {
     factor_paths: Vec<usize>,
     primary: PrimaryZ,
@@ -375,8 +375,8 @@ pub struct ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
 impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperReq<'trie, V>,
-        SecondaryZ: ZipperReq<'trie, V>,
+        PrimaryZ: Zipper + ZipperValues<V> + ZipperAbsolutePath + ZipperPathBuffer,
+        SecondaryZ: Zipper + ZipperValues<V> + ZipperAbsolutePath + ZipperPathBuffer,
 {
     /// Creates a new `ProductZipper` from the provided zippers
     ///

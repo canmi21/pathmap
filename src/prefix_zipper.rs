@@ -32,7 +32,7 @@ impl PrefixPos {
 }
 
 /// A [Zipper] type that wrapps another `Zipper`, and allows an arbitrary path to prepend the
-/// wrapper's zipper's space
+/// wrapped zipper's space
 ///
 /// ```
 /// use pathmap::{PathMap, zipper::*};
