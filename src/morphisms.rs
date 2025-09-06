@@ -70,13 +70,7 @@ use crate::trie_node::TrieNodeODRc;
 use crate::zipper;
 use crate::zipper::*;
 
-#[cfg(not(miri))]
-use gxhash::HashMap;
-#[cfg(not(miri))]
-use gxhash::HashMapExt;
-
-#[cfg(miri)]
-use std::collections::HashMap;
+use crate::gxhash::{HashMap, HashMapExt};
 
 /// Provides methods to perform a catamorphism on types that can reference or contain a trie
 pub trait Catamorphism<V> {
@@ -797,7 +791,7 @@ fn into_cata_cached_body<'a, Z, V: 'a, W, E, AlgF, Cache, const JUMPING: bool>(
 // This is a naive implementation of caching/jumping cata
 // The code is left in for reference/readability, since the unrolled version
 // is very hard to read. It took several days to debug the unrolled version.
-#[cfg(false)]
+#[cfg(any())]
 fn into_cata_jumping_naive<'a, Z, V: 'a, W, E, AlgF, Cache, const JUMPING: bool>(
     z: &mut Z, alg_f: &mut AlgF
 ) -> Result<W, E>

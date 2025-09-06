@@ -148,7 +148,7 @@ fn count_shared_sse2(p: &[u8], q: &[u8]) -> usize {
 #[cfg(all( target_feature = "sse2", feature = "fuzzer"))]
 #[divan::bench()]
 fn common_prefix_sse2(bencher: Bencher) {
-    let pairs = setup();
+    let pairs = long_prefix_setup();
 
     pairs.iter().for_each(|(l, r)| {
         let l = unsafe { l.as_ref().unwrap() }; let r = unsafe { r.as_ref().unwrap() };
@@ -200,7 +200,7 @@ fn count_shared_avx2(p: &[u8], q: &[u8]) -> usize {
 #[cfg(all( target_feature = "avx2", feature = "fuzzer"))]
 #[divan::bench()]
 fn common_prefix_avx2(bencher: Bencher) {
-    let pairs = setup();
+    let pairs = long_prefix_setup();
 
     pairs.iter().for_each(|(l, r)| {
         let l = unsafe { l.as_ref().unwrap() }; let r = unsafe { r.as_ref().unwrap() };
@@ -251,7 +251,7 @@ fn count_shared_avx512<'a, 'b>(p: &'a [u8], q: &'b [u8]) -> usize {
 #[cfg(all( target_feature = "avx512f", feature = "fuzzer"))]
 #[divan::bench()]
 fn common_prefix_avx512(bencher: Bencher) {
-    let pairs = setup();
+    let pairs = long_prefix_setup();
 
     pairs.iter().for_each(|(l, r)| {
         let l = unsafe { l.as_ref().unwrap() }; let r = unsafe { r.as_ref().unwrap() };
@@ -276,8 +276,9 @@ fn common_prefix_avx512(bencher: Bencher) {
 // On neon it's ~15% faster than the native neon version!?
 // Adam: On x86 it matches AVX2, but falls behind ~40% on AVX512 with the full datapath
 #[cfg(feature = "nightly")]
-#[inline(always)]
-fn count_shared_simd(p: &[u8], q: &[u8]) -> usize {
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub extern "C" fn count_shared_simd(p: &[u8], q: &[u8]) -> usize {
     use std::simd::{u8x32, cmp::SimdPartialEq};
     unsafe {
         let pl = p.len();
@@ -313,7 +314,7 @@ fn count_shared_simd(p: &[u8], q: &[u8]) -> usize {
 #[cfg(all( feature = "nightly", feature = "fuzzer"))]
 #[divan::bench()]
 fn common_prefix_simd(bencher: Bencher) {
-    let pairs = setup();
+    let pairs = long_prefix_setup();
 
     pairs.iter().for_each(|(l, r)| {
         let l = unsafe { l.as_ref().unwrap() }; let r = unsafe { r.as_ref().unwrap() };
@@ -377,7 +378,7 @@ fn common_prefix_simd(bencher: Bencher) {
 // #[cfg(feature = "fuzzer")]
 // #[divan::bench()]
 // fn common_prefix_wide(bencher: Bencher) {
-//     let pairs = setup();
+//     let pairs = long_prefix_setup();
 
 //     pairs.iter().for_each(|(l, r)| {
 //         let l = unsafe { l.as_ref().unwrap() }; let r = unsafe { r.as_ref().unwrap() };

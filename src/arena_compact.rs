@@ -83,17 +83,12 @@ use crate::{
     zipper::{
         Zipper, ZipperValues, ZipperForking, ZipperAbsolutePath, ZipperIteration,
         ZipperMoving, ZipperPathBuffer, ZipperReadOnlyValues,
+        ZipperReadOnlyConditionalValues,
         ZipperConcretePriv, ZipperConcrete,
     },
 };
 
-#[cfg(not(miri))]
-use gxhash::{GxHasher, HashMap, HashMapExt};
-
-#[cfg(miri)]
-use xxhash_rust::xxh64::{Xxh64 as GxHasher};
-#[cfg(miri)]
-use std::collections::HashMap;
+use crate::gxhash::{GxHasher, HashMap, HashMapExt};
 
 /// The identifier of a node (branch node or line node)
 ///
@@ -1299,6 +1294,16 @@ where Storage: AsRef<[u8]>
         }
         self.origin_node_depth = self.stack[0].node_depth;
         self
+    }
+}
+
+impl<'tree, Storage> ZipperReadOnlyConditionalValues<'tree, ValueSlice> for ACTZipper<'tree, Storage>
+where Storage: AsRef<[u8]>
+{
+    type WitnessT = ();
+    fn witness<'w>(&self) -> Self::WitnessT {}
+    fn get_val_with_witness<'w>(&self, _witness: &'w Self::WitnessT) -> Option<&'w ValueSlice> where 'tree: 'w {
+        self.get_val()
     }
 }
 
