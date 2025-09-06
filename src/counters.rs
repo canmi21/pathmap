@@ -1,5 +1,5 @@
 
-use crate::trie_map::BytesTrieMap;
+use crate::PathMap;
 use crate::zipper::{*, zipper_priv::ZipperPriv};
 use crate::trie_node::TrieNode;
 
@@ -96,7 +96,7 @@ impl Counters {
             );
         }
     }
-    pub fn count_ocupancy<V: Clone + Send + Sync>(map: &BytesTrieMap<V>) -> Self {
+    pub fn count_ocupancy<V: Clone + Send + Sync>(map: &PathMap<V>) -> Self {
         let mut counters = Counters::new();
 
         counters.count_node(map.root().borrow(), 0);

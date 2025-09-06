@@ -12,43 +12,46 @@ use core::fmt::{Debug, Formatter};
 use std::collections::HashMap;
 
 use crate::utils::{ByteMask, find_prefix_overlap};
+use crate::alloc::Allocator;
 use crate::trie_node::*;
 use crate::ring::*;
 
 /// A borrowed reference to a payload with a key stored elsewhere, contained in 16 Bytes
 #[derive(Clone, Copy)]
-pub struct TinyRefNode<'a, V: Clone + Send + Sync> {
+pub struct TinyRefNode<'a, V: Clone + Send + Sync, A: Allocator> {
     /// bit 7 = used
     /// bit 6 = is_child
     /// bit 5 to bit 0 = key_len
     key_bytes: [MaybeUninit<u8>; 7],
     header: u8,
-    payload: &'a ValOrChildUnion<V>
+    payload: &'a ValOrChildUnion<V, A>,
+    pub(crate) alloc: A,
 }
 
-impl<V: Clone + Send + Sync> Debug for TinyRefNode<'_, V> {
+impl<V: Clone + Send + Sync, A: Allocator> Debug for TinyRefNode<'_, V, A> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let converted = self.clone().into_full().unwrap();
         write!(f, "TinyRefNode -> {converted:?}")
     }
 }
 
-impl<'a, V: Clone + Send + Sync> TinyRefNode<'a, V> {
+impl<'a, V: Clone + Send + Sync, A: Allocator> TinyRefNode<'a, V, A> {
 
-    pub fn new(is_child: bool, key: &[u8], payload: &'a ValOrChildUnion<V>) -> Self {
+    pub fn new_in(is_child: bool, key: &[u8], payload: &'a ValOrChildUnion<V, A>, alloc: A) -> Self {
         let mut new_node = Self {
             header: Self::header(is_child, key.len()),
             key_bytes: [MaybeUninit::uninit(); 7],
-            payload
+            payload,
+            alloc,
         };
         unsafe{ core::ptr::copy_nonoverlapping(key.as_ptr(), new_node.key_bytes.as_mut_ptr().cast(), key.len()); }
         new_node
     }
 
     /// Turn the TinyRefNode into a LineListNode by cloning the payload
-    pub fn into_list_node(&self) -> Option<crate::line_list_node::LineListNode<V>> {
+    pub fn into_list_node(&self) -> Option<crate::line_list_node::LineListNode<V, A>> {
         self.clone_payload().map(|payload| {
-            let mut new_node = crate::line_list_node::LineListNode::new();
+            let mut new_node = crate::line_list_node::LineListNode::new_in(self.alloc.clone());
             unsafe{ new_node.set_payload_owned::<0>(self.key(), payload); }
             debug_assert!(crate::line_list_node::validate_node(&new_node));
             new_node
@@ -57,7 +60,7 @@ impl<'a, V: Clone + Send + Sync> TinyRefNode<'a, V> {
 
     #[cfg(feature = "bridge_nodes")]
     /// Turn the TinyRefNode into a BridgeNode by cloning the payload
-    pub fn into_bridge_node(&self) -> Option<crate::bridge_node::BridgeNode<V>> {
+    pub fn into_bridge_node(&self) -> Option<crate::bridge_node::BridgeNode<V, A>> {
         let is_child = self.is_child_ptr();
         let payload: ValOrChildUnion<V> = if is_child {
             unsafe{ &*self.payload.child }.clone().into()
@@ -68,17 +71,17 @@ impl<'a, V: Clone + Send + Sync> TinyRefNode<'a, V> {
     }
 
     #[cfg(not(feature = "bridge_nodes"))]
-    pub fn into_full(&self) -> Option<crate::line_list_node::LineListNode<V>> {
+    pub fn into_full(&self) -> Option<crate::line_list_node::LineListNode<V, A>> {
         self.into_list_node()
     }
 
     #[cfg(feature = "bridge_nodes")]
-    pub fn into_full(&self) -> Option<crate::bridge_node::BridgeNode<V>> {
+    pub fn into_full(&self) -> Option<crate::bridge_node::BridgeNode<V, A>> {
         self.into_bridge_node()
     }
 
     /// Clones the payload from self
-    fn clone_payload(&self) -> Option<ValOrChild<V>> {
+    fn clone_payload(&self) -> Option<ValOrChild<V, A>> {
         if self.node_is_empty() {
             return None;
         } else {
@@ -119,7 +122,7 @@ impl<'a, V: Clone + Send + Sync> TinyRefNode<'a, V> {
     }
 }
 
-impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
+impl<'a, V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for TinyRefNode<'a, V, A> {
     fn node_key_overlap(&self, key: &[u8]) -> usize {
         find_prefix_overlap(self.key(), key)
     }
@@ -130,7 +133,7 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
             false
         }
     }
-    fn node_get_child(&self, key: &[u8]) -> Option<(usize, &TrieNodeODRc<V>)> {
+    fn node_get_child(&self, key: &[u8]) -> Option<(usize, &TrieNodeODRc<V, A>)> {
         if self.is_used_child() {
             let node_key = self.key();
             let key_len = node_key.len();
@@ -143,19 +146,9 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
         }
         None
     }
-    fn node_get_child_mut(&mut self, _key: &[u8]) -> Option<(usize, &mut TrieNodeODRc<V>)> { unreachable!() }
-    //GOAT, we probably don't need this interface, although it is fully implemented and working
-    // fn node_contains_children_exclusive(&self, keys: &[&[u8]]) -> bool {
-    //     if !self.is_used_child() {
-    //         return true //TinyRefNode can only have one item, so if it doesn't contain a child, then there is no excess item
-    //     }
-    //     keys.binary_search(&self.key()).is_ok()
-    // }
-    fn node_replace_child(&mut self, _key: &[u8], _new_node: TrieNodeODRc<V>) -> &mut dyn TrieNode<V> { unreachable!() }
-    fn node_get_payloads<'node, 'res>(&'node self, keys: &[(&[u8], bool)], results: &'res mut [(usize, PayloadRef<'node, V>)]) -> bool {
-        //GOAT, this code below is correct as far as I know, any will likely be useful in the future when we add additional
-        // node types.  But currently there is no path to call it.
-        // unreachable!();
+    fn node_get_child_mut(&mut self, _key: &[u8]) -> Option<(usize, &mut TrieNodeODRc<V, A>)> { unreachable!() }
+    fn node_replace_child(&mut self, _key: &[u8], _new_node: TrieNodeODRc<V, A>) { unreachable!() }
+    fn node_get_payloads<'node, 'res>(&'node self, keys: &[(&[u8], bool)], results: &'res mut [(usize, PayloadRef<'node, V, A>)]) -> bool {
         if self.node_is_empty() {
             return true
         }
@@ -191,13 +184,6 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
         }
         false
     }
-    //GOAT, we probably don't need this interface, although it is fully implemented and working
-    // fn node_contains_vals_exclusive(&self, keys: &[&[u8]]) -> bool {
-    //     if !self.is_used_val() {
-    //         return true //TinyRefNode can only have one item, so if it doesn't contain a val, then there is no excess item
-    //     }
-    //     keys.binary_search(&self.key()).is_ok()
-    // }
     fn node_get_val(&self, key: &[u8]) -> Option<&V> {
         if self.is_used_val() {
             let node_key = self.key();
@@ -210,15 +196,15 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
     }
     fn node_remove_val(&mut self, _key: &[u8]) -> Option<V> { unreachable!() }
     fn node_get_val_mut(&mut self, _key: &[u8]) -> Option<&mut V> { unreachable!() }
-    fn node_set_val(&mut self, key: &[u8], val: V) -> Result<(Option<V>, bool), TrieNodeODRc<V>> {
+    fn node_set_val(&mut self, key: &[u8], val: V) -> Result<(Option<V>, bool), TrieNodeODRc<V, A>> {
         let mut replacement_node = self.into_full().unwrap();
         replacement_node.node_set_val(key, val).unwrap_or_else(|_| panic!());
-        Err(TrieNodeODRc::new(replacement_node))
+        Err(TrieNodeODRc::new_in(replacement_node, self.alloc.clone()))
     }
-    fn node_set_branch(&mut self, key: &[u8], new_node: TrieNodeODRc<V>) -> Result<bool, TrieNodeODRc<V>> {
+    fn node_set_branch(&mut self, key: &[u8], new_node: TrieNodeODRc<V, A>) -> Result<bool, TrieNodeODRc<V, A>> {
         let mut replacement_node = self.into_full().unwrap();
         replacement_node.node_set_branch(key, new_node).unwrap_or_else(|_| panic!());
-        Err(TrieNodeODRc::new(replacement_node))
+        Err(TrieNodeODRc::new_in(replacement_node, self.alloc.clone()))
     }
     fn node_remove_all_branches(&mut self, _key: &[u8]) -> bool { unreachable!() }
     fn node_remove_unmasked_branches(&mut self, _key: &[u8], _mask: ByteMask) { unreachable!() }
@@ -227,8 +213,8 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
     }
     fn new_iter_token(&self) -> u128 { unreachable!() }
     fn iter_token_for_path(&self, _key: &[u8]) -> u128 { unreachable!() }
-    fn next_items(&self, _token: u128) -> (u128, &'a[u8], Option<&TrieNodeODRc<V>>, Option<&V>) { unreachable!() }
-    fn node_val_count(&self, cache: &mut HashMap<*const dyn TrieNode<V>, usize>) -> usize {
+    fn next_items(&self, _token: u128) -> (u128, &'a[u8], Option<&TrieNodeODRc<V, A>>, Option<&V>) { unreachable!() }
+    fn node_val_count(&self, cache: &mut HashMap<u64, usize>) -> usize {
         let temp_node = self.into_full().unwrap();
         temp_node.node_val_count(cache)
     }
@@ -245,10 +231,10 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
             None
         }
     }
-    fn nth_child_from_key(&self, _key: &[u8], _n: usize) -> (Option<u8>, Option<&dyn TrieNode<V>>) {
+    fn nth_child_from_key(&self, _key: &[u8], _n: usize) -> (Option<u8>, Option<TaggedNodeRef<'_, V, A>>) {
         panic!();
     }
-    fn first_child_from_key(&self, _key: &[u8]) -> (Option<&[u8]>, Option<&dyn TrieNode<V>>) {
+    fn first_child_from_key(&self, _key: &[u8]) -> (Option<&[u8]>, Option<TaggedNodeRef<'_, V, A>>) {
         panic!();
     }
     fn count_branches(&self, _key: &[u8]) -> usize {
@@ -257,22 +243,19 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
     fn node_branches_mask(&self, _key: &[u8]) -> ByteMask {
         panic!();
     }
-    fn is_leaf(&self, _key: &[u8]) -> bool {
+    fn prior_branch_key<'key>(&self, _key: &'key [u8]) -> &'key [u8] {
         panic!();
     }
-    fn prior_branch_key(&self, _key: &[u8]) -> &[u8] {
+    fn get_sibling_of_child(&self, _key: &[u8], _next: bool) -> (Option<u8>, Option<TaggedNodeRef<'_, V, A>>) {
         panic!();
     }
-    fn get_sibling_of_child(&self, _key: &[u8], _next: bool) -> (Option<u8>, Option<&dyn TrieNode<V>>) {
-        panic!();
-    }
-    fn get_node_at_key(&self, key: &[u8]) -> AbstractNodeRef<V> {
+    fn get_node_at_key(&self, key: &[u8]) -> AbstractNodeRef<'_, V, A> {
         //I don't think there is a set of circumstances that can give us an empty TinyRefNode
         debug_assert!(!self.node_is_empty());
 
         //Zero-length key means borrow this node
         if key.len() == 0 {
-            return AbstractNodeRef::BorrowedDyn(self)
+            return AbstractNodeRef::BorrowedDyn(self.as_tagged())
         }
 
         //Exact match with a path to a child node means return that node
@@ -284,56 +267,64 @@ impl<'a, V: Clone + Send + Sync> TrieNode<V> for TinyRefNode<'a, V> {
         //Otherwise check to see if we need to make a sub-node.
         if node_key.len() > key.len() && node_key.starts_with(key) {
             let new_key = &node_key[key.len()..];
-            let ref_node = TinyRefNode::new(self.is_child_ptr(), new_key, self.payload);
+            let ref_node = TinyRefNode::new_in(self.is_child_ptr(), new_key, self.payload, self.alloc.clone());
             return AbstractNodeRef::BorrowedTiny(ref_node)
         }
 
         //The key must specify a path the node doesn't contains
         AbstractNodeRef::None
     }
-    fn take_node_at_key(&mut self, _key: &[u8]) -> Option<TrieNodeODRc<V>> { unreachable!() }
-    fn pjoin_dyn(&self, other: &dyn TrieNode<V>) -> AlgebraicResult<TrieNodeODRc<V>> where V: Lattice {
-        //GOAT, I can streamline this quite a lot, but for now I'll just up-convert to a ListNode to test
+    fn take_node_at_key(&mut self, _key: &[u8]) -> Option<TrieNodeODRc<V, A>> { unreachable!() }
+    fn pjoin_dyn(&self, other: TaggedNodeRef<V, A>) -> AlgebraicResult<TrieNodeODRc<V, A>> where V: Lattice {
+        //TODO, I can streamline this quite a lot, but for now I'll just up-convert to a ListNode to test
         // the basic premise of the TinyRefNode
         self.into_full().unwrap().pjoin_dyn(other)
     }
-    fn join_into_dyn(&mut self, _other: TrieNodeODRc<V>) -> (AlgebraicStatus, Result<(), TrieNodeODRc<V>>) where V: Lattice { unreachable!() }
-    fn drop_head_dyn(&mut self, _byte_cnt: usize) -> Option<TrieNodeODRc<V>> where V: Lattice { unreachable!() }
-    fn pmeet_dyn(&self, other: &dyn TrieNode<V>) -> AlgebraicResult<TrieNodeODRc<V>> where V: Lattice {
-        //GOAT, is this worth bespoke code to save some cycles?
+    fn join_into_dyn(&mut self, _other: TrieNodeODRc<V, A>) -> (AlgebraicStatus, Result<(), TrieNodeODRc<V, A>>) where V: Lattice { unreachable!() }
+    fn drop_head_dyn(&mut self, _byte_cnt: usize) -> Option<TrieNodeODRc<V, A>> where V: Lattice { unreachable!() }
+    fn pmeet_dyn(&self, other: TaggedNodeRef<V, A>) -> AlgebraicResult<TrieNodeODRc<V, A>> where V: Lattice {
+        //TODO, is this worth bespoke code to save some cycles?
         self.into_full().unwrap().pmeet_dyn(other)
     }
-    fn psubtract_dyn(&self, other: &dyn TrieNode<V>) -> AlgebraicResult<TrieNodeODRc<V>> where V: DistributiveLattice {
-        //GOAT, is this worth bespoke code to save some cycles?
+    fn psubtract_dyn(&self, other: TaggedNodeRef<V, A>) -> AlgebraicResult<TrieNodeODRc<V, A>> where V: DistributiveLattice {
+        //TODO, is this worth bespoke code to save some cycles?
         self.into_full().unwrap().psubtract_dyn(other)
     }
-    fn prestrict_dyn(&self, other: &dyn TrieNode<V>) -> AlgebraicResult<TrieNodeODRc<V>> {
-        //GOAT, is this worth bespoke code to save some cycles?
+    fn prestrict_dyn(&self, other: TaggedNodeRef<V, A>) -> AlgebraicResult<TrieNodeODRc<V, A>> {
+        //TODO, is this worth bespoke code to save some cycles?
         self.into_full().unwrap().prestrict_dyn(other)
     }
-    fn clone_self(&self) -> TrieNodeODRc<V> {
-        TrieNodeODRc::new(self.clone())
+    fn clone_self(&self) -> TrieNodeODRc<V, A> {
+        TrieNodeODRc::new_in(self.clone(), self.alloc.clone())
     }
 }
 
-impl<V: Clone + Send + Sync> TrieNodeDowncast<V> for TinyRefNode<'_, V> {
+impl<V: Clone + Send + Sync, A: Allocator> TrieNodeDowncast<V, A> for TinyRefNode<'_, V, A> {
     #[inline]
     fn tag(&self) -> usize {
+        TINY_REF_NODE_TAG
+    }
+    #[inline]
+    fn as_tagged(&self) -> TaggedNodeRef<'_, V, A> {
+        TaggedNodeRef::from_tiny(self)
+    }
+    #[cfg(not(feature="slim_ptrs"))]
+    fn as_tagged_mut(&mut self) -> TaggedNodeRefMut<'_, V, A> {
         unreachable!()
     }
-    fn as_tagged(&self) -> TaggedNodeRef<V> {
-        TaggedNodeRef::TinyRefNode(self)
-    }
-    fn as_tagged_mut(&mut self) -> TaggedNodeRefMut<V> {
-        panic!()
-    }
-    fn convert_to_cell_node(&mut self) -> TrieNodeODRc<V> {
-        panic!();
+    fn convert_to_cell_node(&mut self) -> TrieNodeODRc<V, A> {
+        unreachable!()
     }
 }
 
-#[test]
-fn test_tiny_node() {
-    //Confirm TinyRefNode is 16 bytes
-    assert_eq!(std::mem::size_of::<TinyRefNode::<()>>(), 16);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::alloc::GlobalAlloc;
+
+    #[test]
+    fn test_tiny_node() {
+        //Confirm TinyRefNode is 16 bytes
+        assert_eq!(std::mem::size_of::<TinyRefNode::<(), GlobalAlloc>>(), 16);
+    }
 }

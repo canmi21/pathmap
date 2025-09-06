@@ -59,6 +59,10 @@ In the shallow graft-by-reference case, no recursive descent is needed.  When a 
 
 * Node regions have properties that determine the behavior of operations that create references (graft-like operations).  For example, a file-backed region could not reference a node in a volatile memory region, so a graft-like operation would force a copy.  On the other hand a volatile in-memory region could reference a node in a file region.
 
+It should probably be possible to inspect any node at runtime to determine its region.  To avoid bloating the node storage excessively, this would probably be accomplished using a global table of regions, and then we could either put a field on a NodeBlock or potentially use some of the space bits of the TrieNodeODRc pointer to specify which node_region a given node belongs to.
+
+In addition to nodes, it is also necessary to track node region associations for maps and zippers for several reasons. Primarily, it may be necessary to create new nodes in different regions from the source.  For example when making writable copies of nodes on a read-only medium.  Also the empty node pointer is a sentinel constant, and therefore not associated with any region.
+
 ### Types of Node Regions
 
 * A Transient Region does not track its nodes and thus does not have the ability to cleanup individual nodes.  It is used for temporary storage of nodes for intermediate operations.  Freeing a Transient Region can be done by dropping all of the backing memory.  **CAVEAT** Non-`Copy` value types will cause a problem with Transient Regions.  We either need to forbid non-`Copy` value types from Transient Regions, or engineer a values table that permits dropping of values.
@@ -76,6 +80,16 @@ In the shallow graft-by-reference case, no recursive descent is needed.  When a 
 | File      |           |           |           |
 
 In English: "Any region can depend on a file region (and reference its nodes).  A file region can only reference nodes within itself."
+
+### Node Regions and Allocators
+
+When the `nightly` feature is enabled, it is now possible to use PathMap with custom allocators.  In concept, a node region is an extension of the allocator concept, so the right design is probably to forego the `_in` flavors of the various methods that take an allocator and pass a node region to the PathMap methods instead.  Then a node region could be backed by a custom allocator.
+
+However, the pattern that is pervasive throughout the Rust stdlib, i.e. making the Allocator an optional type parameter with a default value, may not be quite right for node regions.  The Rust type system could enforce that a hybrid object isn't created; for example it could prevent the creation of a new map by joining together two maps with different allocators.  However, this use case is actually desirable for node regions, and therefore the region dependency needs to be maintained and checked at runtime.
+
+Mixing allocators within the same map, on the other hand, is likely to lead to nothing but pain & UB.  So if a region implied an allocator that would be a problem.  Currently the types are configures so it just isn't possible to perform operations that would cause nodes from different allocators to mingle.
+
+So, it's an open question what the relationship between allocators and regions needs to be.  The most sensible idea seems to me that allocators are checked at compile time, node regions are checked at runtime, and the type system would enforce that allocators are never mingled.  The alternative implementation would involve dispatching to allocators dynamically, which sounds like a terrible idea for many reasons.
 
 ## Proposal: Node Blocks
 

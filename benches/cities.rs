@@ -1,6 +1,6 @@
 
 use divan::{Divan, Bencher, black_box};
-use pathmap::trie_map::BytesTrieMap;
+use pathmap::PathMap;
 
 use std::fs::File;
 use std::io::BufReader;
@@ -90,9 +90,9 @@ fn cities_insert(bencher: Bencher) {
     let pairs = read_data();
 
     bencher.bench_local(|| {
-        let mut map = BytesTrieMap::new();
+        let mut map = PathMap::new();
         for (k, v) in pairs.iter() {
-            map.insert(k, v);
+            map.set_val_at(k, v);
         }
     });
 }
@@ -101,9 +101,9 @@ fn cities_insert(bencher: Bencher) {
 fn cities_get(bencher: Bencher) {
 
     let pairs = read_data();
-    let mut map = BytesTrieMap::new();
+    let mut map = PathMap::new();
     for (k, v) in pairs.iter() {
-        map.insert(k, *v);
+        map.set_val_at(k, *v);
     }
 
     // let counters = pathmap::counters::Counters::count_ocupancy(&map);
@@ -113,9 +113,9 @@ fn cities_get(bencher: Bencher) {
     let mut _map_v = 0;
     bencher.bench_local(|| {
         for (k, _v) in pairs.iter() {
-            *black_box(&mut _map_v) = *map.get(k).unwrap();
+            *black_box(&mut _map_v) = *map.get_val_at(k).unwrap();
             //Annoyingly, we can't check for the correct value because so many places share a name
-            //assert_eq!(map.get(k), Some(&v));
+            //assert_eq!(map.get_val_at(k), Some(&v));
         }
     });
 }
@@ -126,9 +126,9 @@ fn cities_get_act(bencher: Bencher) {
     use pathmap::arena_compact::ArenaCompactTree;
 
     let pairs = read_data();
-    let mut map = BytesTrieMap::new();
+    let mut map = PathMap::new();
     for (k, v) in pairs.iter() {
-        map.insert(k, *v);
+        map.set_val_at(k, *v);
     }
     let act = ArenaCompactTree::from_zipper(map.read_zipper(), |&v| v as u64);
     // let counters = pathmap::counters::Counters::count_ocupancy(&map);
@@ -138,9 +138,9 @@ fn cities_get_act(bencher: Bencher) {
     let mut _map_v = 0;
     bencher.bench_local(|| {
         for (k, _v) in pairs.iter() {
-            *black_box(&mut _map_v) = act.get(k).unwrap();
+            *black_box(&mut _map_v) = act.get_val_at(k).unwrap();
             //Annoyingly, we can't check for the correct value because so many places share a name
-            //assert_eq!(map.get(k), Some(&v));
+            //assert_eq!(map.get_val_at(k), Some(&v));
         }
     });
 }
@@ -149,10 +149,10 @@ fn cities_get_act(bencher: Bencher) {
 fn cities_val_count(bencher: Bencher) {
 
     let pairs = read_data();
-    let mut map = BytesTrieMap::new();
+    let mut map = PathMap::new();
     let mut unique_count = 0;
     for (k, v) in pairs.iter() {
-        if map.insert(k, *v).is_none() {
+        if map.set_val_at(k, *v).is_none() {
             unique_count += 1;
         }
     }
@@ -172,10 +172,10 @@ fn cities_val_count_act(bencher: Bencher) {
         zipper::ZipperMoving,
     };
     let pairs = read_data();
-    let mut map = BytesTrieMap::new();
+    let mut map = PathMap::new();
     let mut unique_count = 0;
     for (k, v) in pairs.iter() {
-        if map.insert(k, *v).is_none() {
+        if map.set_val_at(k, *v).is_none() {
             unique_count += 1;
         }
     }

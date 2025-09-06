@@ -32,4 +32,5 @@ GOAT: Multi-Threaded Map-Reduce
 
 - [Root Values in Maps & Zippers](./A.0001_map_root_values.md)
 - [Smart Ptr & Resource Mgmt Improvement](./A.0002_smart_ptr_upgrade.md)
+- [Lattice / Policy API Improvment](./A.0003_policy_API.md)
 

@@ -2,7 +2,7 @@ pub mod symbol_dump;
 use pathmap::{
     // morphisms::Catamorphism,
     // utils::{ByteMask},
-    trie_map::BytesTrieMap,
+    PathMap,
     arena_compact::ArenaCompactTree,
     // zipper::{Zipper, ZipperMoving, ZipperReadOnly}
 };
@@ -17,7 +17,7 @@ fn arena_create() -> Result<(), std::io::Error> {
     // let items = || items.iter().copied();
 
     let start = Instant::now();
-    let btm = BytesTrieMap::from_iter(items().map(|i| (i, ())));
+    let btm = PathMap::from_iter(items().map(|i| (i, ())));
     println!("built btm in {:.2?}", start.elapsed());
     // pathmap::alloc_tracking::read().print();
     // pathmap::alloc_tracking::reset();
@@ -60,7 +60,7 @@ fn arena_dump() -> Result<(), std::io::Error> {
     // let items = || items.iter().copied();
 
     let start = Instant::now();
-    let btm = BytesTrieMap::from_iter(items().map(|i| (i, ())));
+    let btm = PathMap::from_iter(items().map(|i| (i, ())));
     println!("built btm in {:.2?}", start.elapsed());
     // pathmap::alloc_tracking::read().print();
     // pathmap::alloc_tracking::reset();

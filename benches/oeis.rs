@@ -1,6 +1,6 @@
 use std::io::Read;
 use std::usize;
-use pathmap::trie_map::BytesTrieMap;
+use pathmap::PathMap;
 use pathmap::zipper::{Zipper, ZipperValues, ZipperMoving, ZipperWriting, ZipperCreation};
 use num::BigInt;
 use divan::{Divan, Bencher, black_box};
@@ -72,14 +72,14 @@ fn load_sequences() -> Vec<Vec<u8>> {
   sequences
 }
 
-fn build_map(sequences: &Vec<Vec<u8>>) -> BytesTrieMap<usize> {
-  let mut m = BytesTrieMap::new();
+fn build_map(sequences: &Vec<Vec<u8>>) -> PathMap<usize> {
+  let mut m = PathMap::new();
   let mut buildz = m.write_zipper_at_path(&[0]);
   for (i, s) in sequences.iter().enumerate() {
     if s.len() == 0 { continue }
     buildz.descend_to(&s[..]);
-    match buildz.value() {
-      None => { buildz.set_value(i); }
+    match buildz.val() {
+      None => { buildz.set_val(i); }
       Some(_v) => { /* keep the smallest integer sequence */ }
     }
     buildz.ascend(s.len());
@@ -88,7 +88,7 @@ fn build_map(sequences: &Vec<Vec<u8>>) -> BytesTrieMap<usize> {
   black_box(m)
 }
 
-fn drophead(m: &mut BytesTrieMap<usize>) {
+fn drophead(m: &mut PathMap<usize>) {
   const MAX_OFFSET: u8 = 10;
   let map_head = m.zipper_head();
   for i in 1..(MAX_OFFSET + 1) {
@@ -101,20 +101,20 @@ fn drophead(m: &mut BytesTrieMap<usize>) {
   drop(map_head);
 }
 
-fn count_contents(m: &BytesTrieMap<usize>) {
+fn count_contents(m: &PathMap<usize>) {
   for i in 0..(MAX_OFFSET + 1) {
     black_box(m.read_zipper_at_path(&[i]).val_count());
   }
 }
 
-fn query(m: &BytesTrieMap<usize>) {
+fn query(m: &PathMap<usize>) {
   const QSEQ: [u64; 6] = [1, 2, 3, 5, 8, 13];
   let mut qseq = encode_seq(QSEQ.into_iter().map(BigInt::from));
   qseq.insert(0, 0);
-  let mut q = BytesTrieMap::new();
+  let mut q = PathMap::new();
   for i in 0..(MAX_OFFSET + 1) {
     qseq[0] = i;
-    q.insert(&qseq[..], 0usize);
+    q.set_val_at(&qseq[..], 0usize);
   }
 
   let qresult = m.restrict(&q);

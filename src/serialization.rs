@@ -2,11 +2,38 @@
 
 use std::{any::type_name, hash::Hasher, io::{BufRead, BufReader, BufWriter, Read, Seek, Write}, path::PathBuf};
 
-use crate::{morphisms::Catamorphism, trie_map::BytesTrieMap, zipper::{ZipperMoving, ZipperWriting}};
+use crate::{morphisms::Catamorphism, PathMap, zipper::{ZipperMoving, ZipperWriting}};
 use crate::TrieValue;
 extern crate alloc;
 use alloc::collections::BTreeMap;
-use gxhash::{self, GxHasher};
+
+#[cfg(not(miri))]
+use gxhash::GxHasher;
+
+#[cfg(miri)]
+/// Just a simple XOR hasher so miri doesn't explode on all the tests that use GxHash
+struct GxHasher { state_lo: u64, state_hi: u64, }
+#[cfg(miri)]
+impl GxHasher {
+  pub fn with_seed(seed: u64) -> Self {
+    Self { state_lo: seed ^ 0xA5A5A5A5_A5A5A5A5, state_hi: !seed ^ 0x5A5A5A5A_5A5A5A5A, }
+  }
+  fn write_u8(&mut self, i: u8) {
+    self.state_lo = self.state_lo.wrapping_add(i as u64);
+    self.state_hi ^= (i as u64).rotate_left(11);
+    self.state_lo = self.state_lo.rotate_left(3);
+  }
+  fn write_u128(&mut self, i: u128) {
+    let low = i as u64;
+    let high = (i >> 64) as u64;
+    self.state_lo = self.state_lo.wrapping_add(low);
+    self.state_hi ^= high.rotate_left(17);
+    self.state_lo ^= high.rotate_left(9);
+  }
+  pub fn finish_u128(&self) -> u128 {
+    ((self.state_hi as u128) << 64) | self.state_lo as u128
+  }
+}
 
 macro_rules! hex { () => { b'A'..=b'F' | b'0'..=b'9'}; }
 
@@ -103,7 +130,7 @@ pub fn write_trie<C :Catamorphism<V> ,V: TrieValue>(
   let _ = std::fs::remove_file(&data_path);
 
   let mut data_file = std::fs::File::create_new(&data_path)?;
-  data_file.write_fmt(format_args!("{:?} :: {:?}\n", type_name::<BytesTrieMap<V>>(), memo.as_ref()))?;
+  data_file.write_fmt(format_args!("{:?} :: {:?}\n", type_name::<PathMap<V>>(), memo.as_ref()))?;
   let mut meta_file = std::fs::File::create(&meta_path)?;
 
   let pos = data_file.stream_position()?;
@@ -135,14 +162,14 @@ pub fn write_trie<C :Catamorphism<V> ,V: TrieValue>(
 
                             // with the exception of the hash, this is the basis of the "nil" node
                             let mut acc = Accumulator 
-                            { hash_idx    : (gxhash::GxHasher::with_seed(0).finish_u128(), ctx.count), // note we are not aumulating on this field, this is just a dummy
+                            { hash_idx    : (GxHasher::with_seed(0).finish_u128(), ctx.count), // note we are not aumulating on this field, this is just a dummy
                               max_len     : origin_path.len(),
                               val_count   : 0,
                               paths_count : 0,
                               jump_sub_slice
                             };
 
-                            let mut hasher = gxhash::GxHasher::with_seed(0); // the accumulation for the hash happens here
+                            let mut hasher = GxHasher::with_seed(0); // the accumulation for the hash happens here
 
                             for each in accumulators {
                               let Accumulator { mut hash_idx, max_len, val_count, paths_count, jump_sub_slice } = core::mem::replace(each, Ok(Accumulator::zeroed()))?;
@@ -368,7 +395,7 @@ fn write_node(
   debug_assert_eq!( context.entry.get(&value_hash), Some(&value_idx) );
   debug_assert_eq!( context.entry.get(&cont_hash),  Some(&cont_idx)  );
 
-  let mut hasher = gxhash::GxHasher::with_seed(0);
+  let mut hasher = GxHasher::with_seed(0);
   hasher.write_u8(tag as u8);
   hasher.write_u128(value_hash);
   hasher.write_u128(cont_hash);
@@ -426,7 +453,7 @@ fn hash_to_hex_string(h : u128)->String
 }
 
 // this being true means we need to add the nil hash to the map
-#[cfg(test)]#[test] fn gxhash_finish_zero_is_zero() { core::assert!(gxhash::GxHasher::with_seed(0).finish_u128() != 0) }
+#[cfg(test)]#[test] fn gxhash_finish_zero_is_zero() { core::assert!(GxHasher::with_seed(0).finish_u128() != 0) }
 
 type ChildMask = [u64;4];
 
@@ -681,7 +708,7 @@ fn offset_and_childmask_zero_compressor(
 // /////////////////
 
 /// deserialize the serialized pathmap
-pub fn deserialize_file<V: TrieValue>(file_path : impl AsRef<std::path::Path>, de : impl Fn(&[u8])->V)-> Result<BytesTrieMap<V>, std::io::Error> {
+pub fn deserialize_file<V: TrieValue>(file_path : impl AsRef<std::path::Path>, de : impl Fn(&[u8])->V)-> Result<PathMap<V>, std::io::Error> {
   let f = std::fs::File::open(file_path.as_ref())?;
   let mut reader = BufReader::new(f);
 
@@ -701,7 +728,7 @@ pub fn deserialize_file<V: TrieValue>(file_path : impl AsRef<std::path::Path>, d
     Value(V),
     ChildMask(ChildMask),
     Branches(std::ops::Range<usize>),
-    Node(BytesTrieMap<V>),
+    Node(PathMap<V>),
   }
 
   #[cfg(debug_assertions)]
@@ -819,7 +846,7 @@ pub fn deserialize_file<V: TrieValue>(file_path : impl AsRef<std::path::Path>, d
                              let Deserialized::Path(path) = &deserialized[path_idx] else { return Err(std::io::Error::other("Malformed serialized ByteTrie, expected path")); };
                              let Deserialized::Node(node) = &deserialized[node_idx] else { return Err(std::io::Error::other("Malformed serialized ByteTrie, expected node")); };
 
-                             let mut path_node = BytesTrieMap::new();
+                             let mut path_node = PathMap::new();
 
                              let mut wz        = path_node.write_zipper();
                              wz.descend_to(&paths_buffer[path.start..path.end]);
@@ -841,7 +868,7 @@ pub fn deserialize_file<V: TrieValue>(file_path : impl AsRef<std::path::Path>, d
                              let Deserialized::Node(node)   = &deserialized[node_idx] else { return Err(std::io::Error::other("Malformed serialized ByteTrie, expected node")); };
 
                              let mut value_node = node.clone();
-                             value_node.insert(&[], value.clone());
+                             value_node.set_val_at(&[], value.clone());
 
                              deserialized.push(Deserialized::Node(value_node));
                            } 
@@ -859,7 +886,7 @@ pub fn deserialize_file<V: TrieValue>(file_path : impl AsRef<std::path::Path>, d
 
                              core::debug_assert_eq!(mask.into_iter().copied().map(u64::count_ones).sum::<u32>() as usize, branches.len());
 
-                             let mut branch_node = BytesTrieMap::new();
+                             let mut branch_node = PathMap::new();
                              let mut wz = branch_node.write_zipper();
 
                              for (byte, &idx) in iter.into_iter().zip(branches) {
@@ -1000,509 +1027,516 @@ mod test {
       arr
     };
 
-    let mut trie = BytesTrieMap::<Arc<[u8]>>::new();
+    let mut trie = PathMap::<Arc<[u8]>>::new();
 
     let as_arc = |bs : &[u8]| alloc::sync::Arc::<[u8]>::from(bs);
-    trie.insert(b"a", as_arc(b""));
-    trie.insert(b"abc", as_arc(b""));
+    trie.set_val_at(b"a", as_arc(b""));
+    trie.set_val_at(b"abc", as_arc(b""));
 
-    trie.insert(b"ab", as_arc(b""));
-    trie.insert(b"abcd", as_arc(b""));
-
-
-    trie.insert(b"ab", as_arc(b""));
-    trie.insert(b"abc", as_arc(b""));
-    trie.insert(b"abd", as_arc(b""));
+    trie.set_val_at(b"ab", as_arc(b""));
+    trie.set_val_at(b"abcd", as_arc(b""));
 
 
-
-    trie.insert(b"", as_arc(b""));
-    trie.insert(b"ab", as_arc(b""));
-
-    trie.insert(b"abce", as_arc(b""));
-    trie.insert(b"abcf", as_arc(b""));
-
-
-    trie.insert(b"", as_arc(b""));
-    trie.insert(b"a", as_arc(b""));
-    trie.insert(b"b", as_arc(b""));   
-    trie.insert(b"axb", as_arc(b""));  
-    trie.insert(b"axbxc", as_arc(b"")); 
-    trie.insert(b"axbxd", as_arc(b"")); 
-    trie.insert(b"axc", as_arc(b"")); 
-    trie.insert(b"axb", as_arc(b"")); 
-    trie.insert(b"axbf", as_arc(b"")); 
-    trie.insert(b"axbe", as_arc(b"")); 
-    trie.insert(b"axbexy", as_arc(b"")); 
-    trie.insert(b"axbexyb", as_arc(b"")); 
-    trie.insert(b"axbxxxxxxxxxxxxxxxxxxd", as_arc(b"")); 
-    trie.insert(b"axbxexz", as_arc(b"")); 
-    trie.insert(b"axbexyzccca", as_arc(b"")); 
-    trie.insert(b"axbexyz", as_arc(b"")); 
-
-    trie.insert(b"", as_arc(b"abc"));
+    trie.set_val_at(b"ab", as_arc(b""));
+    trie.set_val_at(b"abc", as_arc(b""));
+    trie.set_val_at(b"abd", as_arc(b""));
 
 
 
-    trie.insert(b"a", as_arc(b""));
-    trie.insert(b"ab", as_arc(b""));
-    trie.insert(b"b", as_arc(b""));
+    trie.set_val_at(b"", as_arc(b""));
+    trie.set_val_at(b"ab", as_arc(b""));
+
+    trie.set_val_at(b"abce", as_arc(b""));
+    trie.set_val_at(b"abcf", as_arc(b""));
 
 
-    trie.insert(b"desf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"desF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"desG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"desH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"desI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"desJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"desK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"desM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"abesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"abesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"abesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"abesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"abesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"abesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"abesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"abesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"abcd", as_arc(b"xyz"));
-    trie.insert(b"abce", as_arc(b"xyz"));
-    trie.insert(b"abcf", as_arc(b"xyz"));
-    trie.insert(b"abcg", as_arc(b"xyz"));
-    trie.insert(b"agbcd", as_arc(b"xyz"));
-    trie.insert(b"agbce", as_arc(b"xyz"));
-    trie.insert(b"agbcf", as_arc(b"xyz"));
-    trie.insert(b"agbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"", as_arc(b""));
+    trie.set_val_at(b"a", as_arc(b""));
+    trie.set_val_at(b"b", as_arc(b""));   
+    trie.set_val_at(b"axb", as_arc(b""));  
+    trie.set_val_at(b"axbxc", as_arc(b"")); 
+    trie.set_val_at(b"axbxd", as_arc(b"")); 
+    trie.set_val_at(b"axc", as_arc(b"")); 
+    trie.set_val_at(b"axb", as_arc(b"")); 
+    trie.set_val_at(b"axbf", as_arc(b"")); 
+    trie.set_val_at(b"axbe", as_arc(b"")); 
+    trie.set_val_at(b"axbexy", as_arc(b"")); 
+    trie.set_val_at(b"axbexyb", as_arc(b"")); 
+    trie.set_val_at(b"axbxxxxxxxxxxxxxxxxxxd", as_arc(b"")); 
+    trie.set_val_at(b"axbxexz", as_arc(b"")); 
+    trie.set_val_at(b"axbexyzccca", as_arc(b"")); 
+    trie.set_val_at(b"axbexyz", as_arc(b"")); 
 
-
-    trie.insert(b"dxxxesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"dxxxesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"dxxxesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"dxxxesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"dxxxesI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"dxxxesJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"dxxxesK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"dxxxesM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"axxxbesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"axxxbesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"axxxbesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"axxxbesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"axxxbesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"axxxbesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"axxxbesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"axxxbesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"axxxbcd", as_arc(b"xyz"));
-    trie.insert(b"axxxbce", as_arc(b"xyz"));
-    trie.insert(b"axxxbcf", as_arc(b"xyz"));
-    trie.insert(b"axxxbcg", as_arc(b"xyz"));
-    trie.insert(b"axxxgbcd", as_arc(b"xyz"));
-    trie.insert(b"axxxgbce", as_arc(b"xyz"));
-    trie.insert(b"axxxgbcf", as_arc(b"xyz"));
-    trie.insert(b"axxxgbcg", as_arc(b"xyz"));
-
-
-    trie.insert(b"123dzxesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123dzxesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123dzxesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123dzxesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123dzxesI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123dzxesJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123dzxesK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123dzxesM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123azxbesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123azxbesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123azxbesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123azxbesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"123azxbesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"123azxbesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"123azxbesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"123azxbesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"123azxbcd", as_arc(b"xyz"));
-    trie.insert(b"123azxbce", as_arc(b"xyz"));
-    trie.insert(b"123azxbcf", as_arc(b"xyz"));
-    trie.insert(b"123azxbcg", as_arc(b"xyz"));
-    trie.insert(b"123azxgbcd", as_arc(b"xyz"));
-    trie.insert(b"123azxgbce", as_arc(b"xyz"));
-    trie.insert(b"123azxgbcf", as_arc(b"xyz"));
-    trie.insert(b"123azxgbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"", as_arc(b"abc"));
 
 
 
+    trie.set_val_at(b"a", as_arc(b""));
+    trie.set_val_at(b"ab", as_arc(b""));
+    trie.set_val_at(b"b", as_arc(b""));
 
 
-    trie.insert(b"", as_arc(b""));
-    trie.insert(b"ab", as_arc(b""));
-    trie.insert(b"abce", as_arc(b""));
-    trie.insert(b"abcf", as_arc(b""));
+    trie.set_val_at(b"desf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"desF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"desG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"desH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"desI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"desJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"desK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"desM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"abesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"abesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"abesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"abesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"abesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"abesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"abesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"abesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"abcd", as_arc(b"xyz"));
+    trie.set_val_at(b"abce", as_arc(b"xyz"));
+    trie.set_val_at(b"abcf", as_arc(b"xyz"));
+    trie.set_val_at(b"abcg", as_arc(b"xyz"));
+    trie.set_val_at(b"agbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"agbce", as_arc(b"xyz"));
+    trie.set_val_at(b"agbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"agbcg", as_arc(b"xyz"));
 
 
-    trie.insert(b"", as_arc(b""));
-    trie.insert(b"a", as_arc(b""));  
-    trie.insert(b"b", as_arc(b""));  
-    trie.insert(b"axb", as_arc(b"")); 
-    trie.insert(b"axbxc", as_arc(b""));
-    trie.insert(b"axbxd", as_arc(b""));
-    trie.insert(b"axc", as_arc(b""));
-    trie.insert(b"axb", as_arc(b""));
-    trie.insert(b"axbf", as_arc(b""));
-    trie.insert(b"axbe", as_arc(b""));
-    trie.insert(b"axbexy", as_arc(b""));
-    trie.insert(b"axbexyb", as_arc(b""));
-    trie.insert(b"axbxxxxxxxxxxxxxxxxxxd", as_arc(b""));
-    trie.insert(b"axbxexz", as_arc(b""));
-    trie.insert(b"axbexyzccca", as_arc(b""));
-    trie.insert(b"axbexyz", as_arc(b""));
-
-    trie.insert(b"a", as_arc(b""));
-    trie.insert(b"ab", as_arc(b""));
-    trie.insert(b"b", as_arc(b""));
-
-
-    trie.insert(b"57desf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57desF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57desG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57desH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57desI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57desJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57desK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57desM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57abesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57abesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57abesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57abesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57abesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57abesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57abesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57abesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57abcd", as_arc(b"xyz"));
-    trie.insert(b"57abce", as_arc(b"xyz"));
-    trie.insert(b"57abcf", as_arc(b"xyz"));
-    trie.insert(b"57abcg", as_arc(b"xyz"));
-    trie.insert(b"57agbcd", as_arc(b"xyz"));
-    trie.insert(b"57agbce", as_arc(b"xyz"));
-    trie.insert(b"57agbcf", as_arc(b"xyz"));
-    trie.insert(b"57agbcg", as_arc(b"xyz"));
-    trie.insert(b"57dxxxesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57dxxxesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57dxxxesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57dxxxesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57dxxxesI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57dxxxesJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57dxxxesK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57dxxxesM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57axxxbesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57axxxbesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57axxxbesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57axxxbesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57axxxbesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57axxxbesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57axxxbesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57axxxbesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57axxxbcd", as_arc(b"xyz"));
-    trie.insert(b"57axxxbce", as_arc(b"xyz"));
-    trie.insert(b"57axxxbcf", as_arc(b"xyz"));
-    trie.insert(b"57axxxbcg", as_arc(b"xyz"));
-    trie.insert(b"57axxxgbcd", as_arc(b"xyz"));
-    trie.insert(b"57axxxgbce", as_arc(b"xyz"));
-    trie.insert(b"57axxxgbcf", as_arc(b"xyz"));
-    trie.insert(b"57axxxgbcg", as_arc(b"xyz"));
-    trie.insert(b"57123dzxesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123dzxesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123dzxesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123dzxesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123dzxesI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123dzxesJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123dzxesK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123dzxesM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123azxbesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123azxbesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123azxbesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123azxbesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57123azxbesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57123azxbesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57123azxbesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57123azxbesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57123azxbcd", as_arc(b"xyz"));
-    trie.insert(b"57123azxbce", as_arc(b"xyz"));
-    trie.insert(b"57123azxbcf", as_arc(b"xyz"));
-    trie.insert(b"57123azxbcg", as_arc(b"xyz"));
-    trie.insert(b"57123azxgbcd", as_arc(b"xyz"));
-    trie.insert(b"57123azxgbce", as_arc(b"xyz"));
-    trie.insert(b"57123azxgbcf", as_arc(b"xyz"));
-    trie.insert(b"57123azxgbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"dxxxesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"dxxxesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"dxxxesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"dxxxesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"dxxxesI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"dxxxesJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"dxxxesK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"dxxxesM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"axxxbesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"axxxbesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"axxxbesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"axxxbesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"axxxbesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"axxxbesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"axxxbesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"axxxbesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"axxxbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"axxxbce", as_arc(b"xyz"));
+    trie.set_val_at(b"axxxbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"axxxbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"axxxgbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"axxxgbce", as_arc(b"xyz"));
+    trie.set_val_at(b"axxxgbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"axxxgbcg", as_arc(b"xyz"));
 
 
-
-
-    trie.insert(b"fgsfdgsfdgfds57desf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57desF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57desG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57desH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57desI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57desJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57desK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57desM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57abesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57abesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57abesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57abesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57abesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57abesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57abesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57abesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57abcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57abce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57abcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57abcg", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57agbcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57agbce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57agbcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57agbcg", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57dxxxesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57dxxxesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57dxxxesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57dxxxesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57dxxxesI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57dxxxesJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57dxxxesK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57dxxxesM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57axxxbcg", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57axxxgbcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57axxxgbce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57axxxgbcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57axxxgbcg", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57123dzxesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123dzxesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123dzxesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123dzxesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123dzxesI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123dzxesJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123dzxesK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123dzxesM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57123azxbcg", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57123azxgbcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57123azxgbce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57123azxgbcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdgsfdgfds57123azxgbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"123dzxesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123dzxesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123dzxesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123dzxesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123dzxesI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123dzxesJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123dzxesK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123dzxesM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123azxbesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123azxbesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123azxbesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123azxbesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"123azxbesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"123azxbesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"123azxbesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"123azxbesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"123azxbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"123azxbce", as_arc(b"xyz"));
+    trie.set_val_at(b"123azxbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"123azxbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"123azxgbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"123azxgbce", as_arc(b"xyz"));
+    trie.set_val_at(b"123azxgbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"123azxgbcg", as_arc(b"xyz"));
 
 
 
 
 
+    trie.set_val_at(b"", as_arc(b""));
+    trie.set_val_at(b"ab", as_arc(b""));
+    trie.set_val_at(b"abce", as_arc(b""));
+    trie.set_val_at(b"abcf", as_arc(b""));
 
 
-    trie.insert(b"57gfdgsfgfdgfsdggsdesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdesI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdesJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdesK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdesM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbcd", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbce", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbcf", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdbcg", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdgbcd", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdgbce", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdgbcf", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdgbcg", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxesI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxesJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxesK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxesM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbcd", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbce", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbcf", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxbcg", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxgbcd", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxgbce", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxgbcf", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsdxxxgbcg", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23dzxesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23dzxesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23dzxesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23dzxesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23dzxesI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23dzxesJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23dzxesK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23dzxesM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbcd", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbce", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbcf", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxbcg", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxgbcd", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxgbce", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxgbcf", as_arc(b"xyz"));
-    trie.insert(b"57gfdgsfgfdgfsdggsd23azxgbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"", as_arc(b""));
+    trie.set_val_at(b"a", as_arc(b""));  
+    trie.set_val_at(b"b", as_arc(b""));  
+    trie.set_val_at(b"axb", as_arc(b"")); 
+    trie.set_val_at(b"axbxc", as_arc(b""));
+    trie.set_val_at(b"axbxd", as_arc(b""));
+    trie.set_val_at(b"axc", as_arc(b""));
+    trie.set_val_at(b"axb", as_arc(b""));
+    trie.set_val_at(b"axbf", as_arc(b""));
+    trie.set_val_at(b"axbe", as_arc(b""));
+    trie.set_val_at(b"axbexy", as_arc(b""));
+    trie.set_val_at(b"axbexyb", as_arc(b""));
+    trie.set_val_at(b"axbxxxxxxxxxxxxxxxxxxd", as_arc(b""));
+    trie.set_val_at(b"axbxexz", as_arc(b""));
+    trie.set_val_at(b"axbexyzccca", as_arc(b""));
+    trie.set_val_at(b"axbexyz", as_arc(b""));
+
+    trie.set_val_at(b"a", as_arc(b""));
+    trie.set_val_at(b"ab", as_arc(b""));
+    trie.set_val_at(b"b", as_arc(b""));
 
 
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57desf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57desF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57desG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57desH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57desI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57desJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57desK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57desM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57abcg", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57agbcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57agbce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57agbcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57agbcg", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbcg", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxgbcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxgbce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxgbcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxgbcg", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesI", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesJ", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesK", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesM", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesf", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesF", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesG", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesH", as_arc(b"lmnopqrstuv"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesI", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesJ", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesK", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesM", as_arc(b"lmnopqrstu"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbcg", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxgbcd", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxgbce", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxgbcf", as_arc(b"xyz"));
-    trie.insert(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxgbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"57desf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57desF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57desG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57desH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57desI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57desJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57desK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57desM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57abesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57abesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57abesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57abesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57abesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57abesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57abesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57abesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57abcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57abce", as_arc(b"xyz"));
+    trie.set_val_at(b"57abcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57abcg", as_arc(b"xyz"));
+    trie.set_val_at(b"57agbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57agbce", as_arc(b"xyz"));
+    trie.set_val_at(b"57agbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57agbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"57dxxxesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57dxxxesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57dxxxesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57dxxxesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57dxxxesI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57dxxxesJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57dxxxesK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57dxxxesM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57axxxbesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57axxxbesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57axxxbesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57axxxbesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57axxxbesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57axxxbesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57axxxbesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57axxxbesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57axxxbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57axxxbce", as_arc(b"xyz"));
+    trie.set_val_at(b"57axxxbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57axxxbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"57axxxgbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57axxxgbce", as_arc(b"xyz"));
+    trie.set_val_at(b"57axxxgbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57axxxgbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"57123dzxesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123dzxesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123dzxesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123dzxesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123dzxesI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123dzxesJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123dzxesK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123dzxesM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123azxbesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123azxbesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123azxbesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123azxbesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57123azxbesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57123azxbesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57123azxbesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57123azxbesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57123azxbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57123azxbce", as_arc(b"xyz"));
+    trie.set_val_at(b"57123azxbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57123azxbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"57123azxgbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57123azxgbce", as_arc(b"xyz"));
+    trie.set_val_at(b"57123azxgbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57123azxgbcg", as_arc(b"xyz"));
+
+
+
+
+    trie.set_val_at(b"fgsfdgsfdgfds57desf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57desF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57desG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57desH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57desI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57desJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57desK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57desM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57abcg", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57agbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57agbce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57agbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57agbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57dxxxesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57dxxxesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57dxxxesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57dxxxesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57dxxxesI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57dxxxesJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57dxxxesK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57dxxxesM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxgbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxgbce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxgbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57axxxgbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123dzxesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123dzxesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123dzxesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123dzxesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123dzxesI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123dzxesJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123dzxesK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123dzxesM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxgbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxgbce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxgbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdgsfdgfds57123azxgbcg", as_arc(b"xyz"));
+
+
+
+
+
+
+
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdesI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdesJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdesK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdesM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbce", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdgbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdgbce", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdgbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdgbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxesI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxesJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxesK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxesM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbce", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxgbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxgbce", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxgbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsdxxxgbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23dzxesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23dzxesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23dzxesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23dzxesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23dzxesI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23dzxesJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23dzxesK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23dzxesM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbce", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxgbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxgbce", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxgbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"57gfdgsfgfdgfsdggsd23azxgbcg", as_arc(b"xyz"));
+
+
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57desf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57desF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57desG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57desH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57desI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57desJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57desK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57desM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57abcg", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57agbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57agbce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57agbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57agbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57dxxxesM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxgbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxgbce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxgbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57axxxgbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesI", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesJ", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesK", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123dzxesM", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesf", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesF", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesG", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesH", as_arc(b"lmnopqrstuv"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesI", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesJ", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesK", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbesM", as_arc(b"lmnopqrstu"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxbcg", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxgbcd", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxgbce", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxgbcf", as_arc(b"xyz"));
+    trie.set_val_at(b"fgsfdfdsafssfdsfsdgsfdgfds57123azxgbcg", as_arc(b"xyz"));
 
 
     for l in 0..LEN {
-      trie.insert(&ARR[..l], as_arc(&ARR[..l]));
-      if l >= 1 {trie.insert(&ARR[1..l], as_arc(&ARR[..15]));};
+      trie.set_val_at(&ARR[..l], as_arc(&ARR[..l]));
+      if l >= 1 {trie.set_val_at(&ARR[1..l], as_arc(&ARR[..15]));};
     }
     for l in 0..LEN {
-      trie.insert(&ARR[l..], as_arc(&ARR[..l]));
-      if l <= LEN {trie.insert(&ARR[l..LEN], as_arc(&ARR[..25]));};
+      trie.set_val_at(&ARR[l..], as_arc(&ARR[..l]));
+      if l <= LEN {trie.set_val_at(&ARR[l..LEN], as_arc(&ARR[..25]));};
     }
     for l in 0..LEN {
-      trie.insert(&ARR[l..], as_arc(&ARR[..LEN]));
+      trie.set_val_at(&ARR[l..], as_arc(&ARR[..LEN]));
     }
 
     // trace(trie.clone());
 
     let trie_clone = trie.clone();
 
-    let path = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join(".tmp");
-    let _ = std::fs::create_dir(&path);
+    match std::env::var("CARGO_MANIFEST_DIR") {
+      Ok(manifest_dir) => {
+        let path = std::path::PathBuf::from(manifest_dir).join(".tmp");
+        let _ = std::fs::create_dir(&path);
 
-    let serialized =  write_trie(
-      format!("(file : \"{}\", module : \"{}\", line : \"{}\")", file!(), module_path!(), line!()),
-      trie.clone(),
-      |bs, v|{ v.extend_from_slice(bs); ValueSlice::Encode(
-        v
-      )}, &path
-    ).unwrap();
+        let serialized =  write_trie(
+          format!("(file : \"{}\", module : \"{}\", line : \"{}\")", file!(), module_path!(), line!()),
+          trie.clone(),
+          |bs, v|{ v.extend_from_slice(bs); ValueSlice::Encode(
+            v
+          )}, &path
+        ).unwrap();
 
-    let read = std::fs::File::open(serialized.zeroes_compressed_data_path).unwrap();
-    dbg_hex_line_numbers(&read, &path).unwrap();
+        let read = std::fs::File::open(serialized.zeroes_compressed_data_path).unwrap();
+        dbg_hex_line_numbers(&read, &path).unwrap();
 
-    let de_path = path.join(ZERO_COMPRESSED_HEX_DATA_FILENAME);
-    let de = deserialize_file(&de_path, |b|as_arc(b)).unwrap();
+        let de_path = path.join(ZERO_COMPRESSED_HEX_DATA_FILENAME);
+        let de = deserialize_file(&de_path, |b|as_arc(b)).unwrap();
 
-    let [src,de_] = [string_pathmap_as_btree_dbg(trie_clone), string_pathmap_as_btree_dbg(de)];
-    // println!("src : {src:#?}\n de_ : {de_:#?}");
+        let [src,de_] = [string_pathmap_as_btree_dbg(trie_clone), string_pathmap_as_btree_dbg(de)];
+        // println!("src : {src:#?}\n de_ : {de_:#?}");
 
-    core::assert!(src == de_);
-
+        core::assert!(src == de_);
+      }
+      _ => {
+        #[cfg(not(miri))]
+        panic!("Test should be running under Cargo")
+      }
+    }
   }
 
   // for doing test equality check
-  fn string_pathmap_as_btree_dbg(map : BytesTrieMap<Arc<[u8]>>)->BTreeMap<String,String> {
+  fn string_pathmap_as_btree_dbg(map : PathMap<Arc<[u8]>>)->BTreeMap<String,String> {
     let mut map_ = BTreeMap::new();
 
     map.into_cata_jumping_side_effect(|_bytemask, _accs, _jump_len, v, o| {
@@ -1524,7 +1558,7 @@ mod test {
 // we could consider making some of the following public later
 
 // for debugging
-fn _trace<V: TrieValue>(trie : BytesTrieMap<V>) {
+fn _trace<V: TrieValue>(trie : PathMap<V>) {
   let counter = core::sync::atomic::AtomicUsize::new(0);
   trie.into_cata_jumping_side_effect(|bytemask, accs, jump_len, v, o| {
     let n = counter.fetch_add(1, core::sync::atomic::Ordering::SeqCst);

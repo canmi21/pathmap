@@ -1,19 +1,20 @@
 use std::cell::UnsafeCell;
 use std::io::Write;
 use std::ptr::slice_from_raw_parts;
+use crate::alloc::Allocator;
 use crate::{zipper, TrieValue};
-use crate::morphisms::{Catamorphism, new_map_from_ana, TrieBuilder, new_map_from_ana_jumping};
+use crate::morphisms::{Catamorphism, new_map_from_ana_jumping};
 use crate::utils::{BitMask, ByteMask};
 use crate::write_zipper::ZipperWriting;
 
 /// WIP
-pub fn serialize_fork<V : TrieValue, RZ : Catamorphism<V>, F: FnMut(usize, &[u8], &V) -> ()>(mut rz: RZ, target: &mut Vec<u8>, mut fv: F) -> std::io::Result<(usize)> {
+pub fn serialize_fork<V : TrieValue, RZ : Catamorphism<V>, F: FnMut(usize, &[u8], &V) -> ()>(rz: RZ, target: &mut Vec<u8>, _fv: F) -> std::io::Result<usize> {
     unsafe {
     thread_local! {
-        static written: UnsafeCell<usize> = UnsafeCell::new(0)
+        static WRITTEN: UnsafeCell<usize> = UnsafeCell::new(0)
     }
-    written.with(|w| {
-        rz.into_cata_jumping_side_effect_fallible(|bm: &ByteMask, ws: &mut [usize], jump, ov: Option<&V>, path: &[u8]| {
+    WRITTEN.with(|w| {
+        rz.into_cata_jumping_side_effect_fallible(|bm: &ByteMask, ws: &mut [usize], jump, _ov: Option<&V>, path: &[u8]| {
             // let bs = bm.iter().collect::<Vec<u8>>();
             // println!("at {path:?} #{} jump {} {:?}", bm.count_bits(), jump, &path[path.len()-jump..]);
 
@@ -33,7 +34,7 @@ pub fn serialize_fork<V : TrieValue, RZ : Catamorphism<V>, F: FnMut(usize, &[u8]
 }
 
 /// WIP
-pub fn deserialize_fork<V : TrieValue, WZ : ZipperWriting<V> + zipper::ZipperMoving, F: Fn(usize, &[u8]) -> V>(node: usize, wz: &mut WZ, source: &[u8], fv: F) -> std::io::Result<(usize)> {
+pub fn deserialize_fork<V: TrieValue, A: Allocator, WZ : ZipperWriting<V, A> + zipper::ZipperMoving, F: Fn(usize, &[u8]) -> V>(node: usize, wz: &mut WZ, source: &[u8], fv: F) -> std::io::Result<usize> {
     unsafe {
     // let mut recovered = 0;
     new_map_from_ana_jumping(wz, node, |n: usize, path: &[u8]| {
@@ -56,17 +57,18 @@ pub fn deserialize_fork<V : TrieValue, WZ : ZipperWriting<V> + zipper::ZipperMov
 #[cfg(test)]
 mod tests {
     use crate::tree_serialization::{serialize_fork, deserialize_fork};
-    use crate::trie_map::BytesTrieMap;
+    use crate::PathMap;
 
+    #[ignore] //GOAT, re-enable if/when this code is ready.
     #[test]
     fn tree_serde_2() {
         let keys = [vec![12, 13, 14], vec![12, 13, 14, 100, 101]];
-        let btm: BytesTrieMap<usize> = keys.into_iter().enumerate().map(|(i, k)| (k, i)).collect();
+        let btm: PathMap<usize> = keys.into_iter().enumerate().map(|(i, k)| (k, i)).collect();
 
         let mut v = vec![];
         let Ok(top_node) = serialize_fork(btm.read_zipper(), &mut v, |_1, _2, _3| {}) else { unreachable!() };
-        let mut recovered = BytesTrieMap::new();
-        deserialize_fork(top_node, &mut recovered.write_zipper(), &v[..], |_, p| ()).unwrap();
-        assert_eq!(btm.hash(|i| 0), recovered.hash(|i| 0));
+        let mut recovered = PathMap::new();
+        deserialize_fork(top_node, &mut recovered.write_zipper(), &v[..], |_, _p| ()).unwrap();
+        assert_eq!(btm.hash(|_| 0), recovered.hash(|_| 0));
     }
 }

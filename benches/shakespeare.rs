@@ -1,6 +1,6 @@
 
 use divan::{Divan, Bencher, black_box};
-use pathmap::trie_map::BytesTrieMap;
+use pathmap::PathMap;
 
 use std::fs::File;
 use std::io::prelude::*;
@@ -60,9 +60,9 @@ fn shakespeare_words_insert(bencher: Bencher) {
     let strings = read_data(true);
 
     bencher.bench_local(|| {
-        let mut map = BytesTrieMap::new();
+        let mut map = PathMap::new();
         for (v, k) in strings.iter().enumerate() {
-            map.insert(k, v);
+            map.set_val_at(k, v);
         }
     });
 }
@@ -71,9 +71,9 @@ fn shakespeare_words_insert(bencher: Bencher) {
 fn shakespeare_words_get(bencher: Bencher) {
 
     let strings = read_data(true);
-    let mut map = BytesTrieMap::new();
+    let mut map = PathMap::new();
     for (v, k) in strings.iter().enumerate() {
-        map.insert(k, v);
+        map.set_val_at(k, v);
     }
 
     // let counters = pathmap::counters::Counters::count_ocupancy(&map);
@@ -83,9 +83,9 @@ fn shakespeare_words_get(bencher: Bencher) {
     let mut _map_v = 0;
     bencher.bench_local(|| {
         for k in strings.iter() {
-            *black_box(&mut _map_v) = *map.get(k).unwrap();
+            *black_box(&mut _map_v) = *map.get_val_at(k).unwrap();
             //Annoyingly, we can't check for the correct value because so many places share a name
-            //assert_eq!(map.get(k), Some(&v));
+            //assert_eq!(map.get_val_at(k), Some(&v));
         }
     });
 }
@@ -94,10 +94,10 @@ fn shakespeare_words_get(bencher: Bencher) {
 fn shakespeare_words_val_count(bencher: Bencher) {
 
     let strings = read_data(true);
-    let mut map = BytesTrieMap::new();
+    let mut map = PathMap::new();
     let mut unique_count = 0;
     for (v, k) in strings.iter().enumerate() {
-        if map.insert(k, v).is_none() {
+        if map.set_val_at(k, v).is_none() {
             unique_count += 1;
         }
     }
@@ -115,9 +115,9 @@ fn shakespeare_sentences_insert(bencher: Bencher) {
     let strings = read_data(false);
 
     bencher.bench_local(|| {
-        let mut map = BytesTrieMap::new();
+        let mut map = PathMap::new();
         for (v, k) in strings.iter().enumerate() {
-            map.insert(k, v);
+            map.set_val_at(k, v);
         }
     });
 }
@@ -126,9 +126,9 @@ fn shakespeare_sentences_insert(bencher: Bencher) {
 fn shakespeare_sentences_get(bencher: Bencher) {
 
     let strings = read_data(false);
-    let mut map = BytesTrieMap::new();
+    let mut map = PathMap::new();
     for (v, k) in strings.iter().enumerate() {
-        map.insert(k, v);
+        map.set_val_at(k, v);
     }
 
     // let counters = pathmap::counters::Counters::count_ocupancy(&map);
@@ -138,9 +138,9 @@ fn shakespeare_sentences_get(bencher: Bencher) {
     let mut _map_v = 0;
     bencher.bench_local(|| {
         for k in strings.iter() {
-            *black_box(&mut _map_v) = *map.get(k).unwrap();
+            *black_box(&mut _map_v) = *map.get_val_at(k).unwrap();
             //Annoyingly, we can't check for the correct value because so many places share a name
-            //assert_eq!(map.get(k), Some(&v));
+            //assert_eq!(map.get_val_at(k), Some(&v));
         }
     });
 }
@@ -149,10 +149,10 @@ fn shakespeare_sentences_get(bencher: Bencher) {
 fn shakespeare_sentences_val_count(bencher: Bencher) {
 
     let strings = read_data(false);
-    let mut map = BytesTrieMap::new();
+    let mut map = PathMap::new();
     let mut unique_count = 0;
     for (v, k) in strings.iter().enumerate() {
-        if map.insert(k, v).is_none() {
+        if map.set_val_at(k, v).is_none() {
             unique_count += 1;
         }
     }
@@ -164,7 +164,6 @@ fn shakespeare_sentences_val_count(bencher: Bencher) {
     assert_eq!(sink, unique_count);
 }
 
-
 #[cfg(feature="arena_compact")]
 #[divan::bench()]
 fn shakespeare_sentences_val_count_act(bencher: Bencher) {
@@ -173,10 +172,10 @@ fn shakespeare_sentences_val_count_act(bencher: Bencher) {
         zipper::ZipperMoving,
     };
     let strings = read_data(false);
-    let mut map = BytesTrieMap::new();
+    let mut map = PathMap::new();
     let mut unique_count = 0;
     for (v, k) in strings.iter().enumerate() {
-        if map.insert(k, v).is_none() {
+        if map.set_val_at(k, v).is_none() {
             unique_count += 1;
         }
     }

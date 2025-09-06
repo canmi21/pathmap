@@ -1,6 +1,8 @@
 
 use crate::ring::*;
 
+pub mod ints;
+
 /// A 256-bit type containing a bit for every possible value in a byte
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 #[repr(transparent)]
@@ -328,10 +330,6 @@ impl Lattice for ByteMask {
     fn pmeet(&self, other: &Self) -> AlgebraicResult<Self> {
         self.0.pmeet(&other.0).map(|mask| Self(mask))
     }
-    #[inline]
-    fn bottom() -> Self {
-        Self::new()
-    }
 }
 
 impl DistributiveLattice for ByteMask {
@@ -526,10 +524,6 @@ impl Lattice for [u64; 4] {
         let result = [self[0] & other[0], self[1] & other[1], self[2] & other[2], self[3] & other[3]];
         bitmask_algebraic_result(result, self, other)
     }
-    #[inline]
-    fn bottom() -> Self {
-        empty_mask()
-    }
 }
 
 //GOAT, This should be generalized to bit sets of other widths
@@ -640,6 +634,54 @@ fn next_bit_test2() {
     assert_eq!(None, test_mask.next_bit(117));
 }
 
+// =======================================================================================
+// Path Utility Functions.  (currently just `find_prefix_overlap`)
+// =======================================================================================
+
+// GOAT!  UGH!  It turned out that having scalar paths aren't enough faster to justify having them
+// Probably on account of the extra branching causing misprediction
+// This code should be deleted eventually, but maybe keep it for a while while we discuss
+//
+// /// Returns the number of characters shared between two slices
+// #[inline]
+// pub fn find_prefix_overlap(a: &[u8], b: &[u8]) -> usize {
+//     let len = a.len().min(b.len());
+
+//     match len {
+//         0 => 0,
+//         1 => (unsafe{ a.get_unchecked(0) == b.get_unchecked(0) } as usize),
+//         2 => { 
+//             let a_word = unsafe{ core::ptr::read_unaligned(a.as_ptr() as *const u16) };
+//             let b_word = unsafe{ core::ptr::read_unaligned(b.as_ptr() as *const u16) };
+//             let cmp = !(a_word ^ b_word); // equal bytes will be 0xFF
+//             let cnt = cmp.trailing_ones();
+//             cnt as usize / 8
+//         },
+//         3 | 4 | 5 | 6 | 7 | 8 => {
+//             //GOAT, we need to do a check to make sure we don't over-read a page
+//             let a_word = unsafe{ core::ptr::read_unaligned(a.as_ptr() as *const u64) };
+//             let b_word = unsafe{ core::ptr::read_unaligned(b.as_ptr() as *const u64) };
+//             let cmp = !(a_word ^ b_word); // equal bytes will be 0xFF
+//             let cnt = cmp.trailing_ones();
+//             let result = cnt as usize / 8;
+//             result.min(len)
+//         },
+//         _ => count_shared_neon(a, b),
+//     }
+// }
+
+// GOAT!  AGH!! Even this is much slower, even on the zipfian distribution where 70% of the pairs have 0 overlap!!!
+//
+// /// Returns the number of characters shared between two slices
+// #[inline]
+// pub fn find_prefix_overlap(a: &[u8], b: &[u8]) -> usize {
+//     if a.len() != 0 && b.len() != 0 && unsafe{ a.get_unchecked(0) == b.get_unchecked(0) } {
+//         count_shared_neon(a, b)
+//     } else {
+//         0
+//     }
+// }
+
 #[cfg(not(feature = "nightly"))]
 #[allow(unused)]
 pub(crate) use core::convert::{identity as likely, identity as unlikely};
@@ -668,7 +710,7 @@ fn count_shared_cold(a: &[u8], b: &[u8]) -> usize {
     count_shared_reference(a, b)
 }
 
-#[cfg(target_feature="avx2")]
+#[cfg(all(target_feature="avx2", not(miri)))]
 #[inline(always)]
 fn count_shared_avx2(p: &[u8], q: &[u8]) -> usize {
     use core::arch::x86_64::*;
@@ -696,13 +738,13 @@ fn count_shared_avx2(p: &[u8], q: &[u8]) -> usize {
 }
 
 /// Returns the number of characters shared between two slices
-#[cfg(target_feature="avx2")]
+#[cfg(all(target_feature="avx2", not(miri)))]
 #[inline]
 pub fn find_prefix_overlap(a: &[u8], b: &[u8]) -> usize {
     count_shared_avx2(a, b)
 }
 
-#[cfg(all(not(feature = "nightly"), target_arch = "aarch64", target_feature = "neon"))]
+#[cfg(all(not(feature = "nightly"), target_arch = "aarch64", target_feature = "neon", not(miri)))]
 #[inline(always)]
 fn count_shared_neon(p: &[u8], q: &[u8]) -> usize {
     use core::arch::aarch64::*;
@@ -746,7 +788,7 @@ fn count_shared_neon(p: &[u8], q: &[u8]) -> usize {
     }
 }
 
-#[cfg(feature = "nightly")]
+#[cfg(all(feature = "nightly", not(miri)))]
 #[inline(always)]
 fn count_shared_simd(p: &[u8], q: &[u8]) -> usize {
     use std::simd::{u8x32, cmp::SimdPartialEq};
@@ -776,22 +818,23 @@ fn count_shared_simd(p: &[u8], q: &[u8]) -> usize {
         }
     }
 }
+
 /// Returns the number of characters shared between two slices
-#[cfg(all(not(feature = "nightly"), target_arch = "aarch64", target_feature = "neon"))]
+#[cfg(all(not(feature = "nightly"), target_arch = "aarch64", target_feature = "neon", not(miri)))]
 #[inline]
 pub fn find_prefix_overlap(a: &[u8], b: &[u8]) -> usize {
     count_shared_neon(a, b)
 }
 
 /// Returns the number of characters shared between two slices
-#[cfg(all(feature = "nightly", target_arch = "aarch64", target_feature = "neon"))]
+#[cfg(all(feature = "nightly", target_arch = "aarch64", target_feature = "neon", not(miri)))]
 #[inline]
 pub fn find_prefix_overlap(a: &[u8], b: &[u8]) -> usize {
     count_shared_simd(a, b)
 }
 
 /// Returns the number of characters shared between two slices
-#[cfg(all(not(target_feature="avx2"), not(target_feature="neon")))]
+#[cfg(any(all(not(target_feature="avx2"), not(target_feature="neon")), miri))]
 #[inline]
 pub fn find_prefix_overlap(a: &[u8], b: &[u8]) -> usize {
     count_shared_reference(a, b)

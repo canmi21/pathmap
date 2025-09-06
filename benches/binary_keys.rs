@@ -2,7 +2,7 @@
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use divan::{Divan, Bencher, black_box};
 
-use pathmap::trie_map::BytesTrieMap;
+use pathmap::PathMap;
 use pathmap::zipper::*;
 
 fn main() {
@@ -37,9 +37,9 @@ fn binary_insert(bencher: Bencher, n: u64) {
 
     //Benchmark the insert operation
     let out = bencher.with_inputs(|| {
-        BytesTrieMap::new()
+        PathMap::new()
     }).bench_local_values(|mut map| {
-        for i in 0..n { black_box(&mut map).insert(&keys[i as usize], i); }
+        for i in 0..n { black_box(&mut map).set_val_at(&keys[i as usize], i); }
         map //Return the map so we don't drop it inside the timing loop
     });
     divan::black_box_drop(out)
@@ -50,13 +50,13 @@ fn binary_get(bencher: Bencher, n: u64) {
 
     let keys = make_keys(n as usize, 1);
 
-    let mut map: BytesTrieMap<u64> = BytesTrieMap::new();
-    for i in 0..n { map.insert(&keys[i as usize], i); }
+    let mut map: PathMap<u64> = PathMap::new();
+    for i in 0..n { map.set_val_at(&keys[i as usize], i); }
 
     //Benchmark the get operation
     bencher.bench_local(|| {
         for i in 0..n {
-            assert_eq!(map.get(&keys[i as usize]), Some(&i));
+            assert_eq!(map.get_val_at(&keys[i as usize]), Some(&i));
         }
     });
 }
@@ -66,8 +66,8 @@ fn binary_val_count_bench(bencher: Bencher, n: u64) {
 
     let keys = make_keys(n as usize, 1);
 
-    let mut map: BytesTrieMap<u64> = BytesTrieMap::new();
-    for i in 0..n { map.insert(&keys[i as usize], i); }
+    let mut map: PathMap<u64> = PathMap::new();
+    for i in 0..n { map.set_val_at(&keys[i as usize], i); }
 
     //Benchmark the time taken to count the number of values in the map
     let mut sink = 0;
@@ -78,18 +78,33 @@ fn binary_val_count_bench(bencher: Bencher, n: u64) {
 }
 
 #[divan::bench(args = [50, 100, 200, 400, 800, 1600])]
+fn binary_drop_head(bencher: Bencher, n: u64) {
+
+    let keys = make_keys(n as usize, 1);
+
+    bencher.with_inputs(|| {
+        let mut map: PathMap<u64> = PathMap::new();
+        for i in 0..n { map.set_val_at(&keys[i as usize], i); }
+        map
+    }).bench_local_values(|mut map| {
+        let mut wz = map.write_zipper();
+        wz.drop_head(5);
+    });
+}
+
+#[divan::bench(args = [50, 100, 200, 400, 800, 1600])]
 fn binary_meet(bencher: Bencher, n: u64) {
     let overlap = 0.5;
     let o = ((1. - overlap) * n as f64) as u64;
 
     let keys = make_keys((n+o) as usize, 1);
 
-    let mut l: BytesTrieMap<u64> = BytesTrieMap::new();
-    for i in 0..n { l.insert(&keys[i as usize], i); }
-    let mut r: BytesTrieMap<u64> = BytesTrieMap::new();
-    for i in o..(n+o) { r.insert(&keys[i as usize], i); }
+    let mut l: PathMap<u64> = PathMap::new();
+    for i in 0..n { l.set_val_at(&keys[i as usize], i); }
+    let mut r: PathMap<u64> = PathMap::new();
+    for i in o..(n+o) { r.set_val_at(&keys[i as usize], i); }
 
-    let mut intersection: BytesTrieMap<u64> = BytesTrieMap::new();
+    let mut intersection: PathMap<u64> = PathMap::new();
     bencher.bench_local(|| {
         *black_box(&mut intersection) = l.meet(black_box(&r));
     });
@@ -99,7 +114,7 @@ fn binary_meet(bencher: Bencher, n: u64) {
 fn binary_k_path_iter(bencher: Bencher, n: u64) {
 
     let keys = make_keys(n as usize, 1);
-    let map: BytesTrieMap<usize> = keys.iter().enumerate().map(|(n, s)| (s, n)).collect();
+    let map: PathMap<usize> = keys.iter().enumerate().map(|(n, s)| (s, n)).collect();
 
     //Benchmark the zipper's iterator
     bencher.bench_local(|| {
@@ -121,7 +136,7 @@ fn binary_k_path_iter(bencher: Bencher, n: u64) {
 fn binary_zipper_iter(bencher: Bencher, n: u64) {
 
     let keys = make_keys(n as usize, 1);
-    let map: BytesTrieMap<usize> = keys.iter().enumerate().map(|(n, s)| (s, n)).collect();
+    let map: PathMap<usize> = keys.iter().enumerate().map(|(n, s)| (s, n)).collect();
 
     //Benchmark the zipper's iterator
     bencher.bench_local(|| {
@@ -142,13 +157,13 @@ fn binary_join(bencher: Bencher, n: u64) {
 
     let keys = make_keys((n+o) as usize, 1);
 
-    let mut vnl = BytesTrieMap::new();
-    let mut vnr = BytesTrieMap::new();
-    for i in 0..n { vnl.insert(&keys[i as usize], i); }
-    for i in o..(n+o) { vnr.insert(&keys[i as usize], i); }
+    let mut vnl = PathMap::new();
+    let mut vnr = PathMap::new();
+    for i in 0..n { vnl.set_val_at(&keys[i as usize], i); }
+    for i in o..(n+o) { vnr.set_val_at(&keys[i as usize], i); }
 
     //Benchmark the join operation
-    let mut j: BytesTrieMap<u64> = BytesTrieMap::new();
+    let mut j: PathMap<u64> = PathMap::new();
     bencher.bench_local(|| {
         *black_box(&mut j) = vnl.join(black_box(&vnr));
     });

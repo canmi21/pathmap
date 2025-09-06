@@ -4,17 +4,9 @@
 
 use divan::{Bencher, Divan};
 use pathmap::utils::find_prefix_overlap;
-use rand::prelude::StdRng;
-use rand_distr::{Exp, Triangular};
-use pathmap::fuzzer::*;
-use rand::SeedableRng;
-use rand_distr::Distribution;
-use std::marker::PhantomData;
-use std::process::Termination;
-
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 const PAGE_SIZE: usize = 4096;
-const TO_TEST: usize = 1000000;
 
 #[cfg(not(feature = "nightly"))]
 #[allow(unused)]
@@ -23,6 +15,7 @@ use core::convert::{identity as likely, identity as unlikely};
 #[allow(unused)]
 use core::intrinsics::{likely, unlikely};
 
+#[allow(dead_code)]
 #[inline(always)]
 unsafe fn same_page<const VECTOR_SIZE: usize>(slice: &[u8]) -> bool {
     let address = slice.as_ptr() as usize;
@@ -32,23 +25,30 @@ unsafe fn same_page<const VECTOR_SIZE: usize>(slice: &[u8]) -> bool {
     offset_within_page < PAGE_SIZE - VECTOR_SIZE
 }
 
+#[allow(dead_code)]
 #[cold]
 fn count_shared_cold(a: &[u8], b: &[u8]) -> usize {
     count_shared_reference(a, b)
 }
 
-fn setup() -> Vec<(*const [u8], *const [u8])> {
+#[cfg(feature = "fuzzer")]
+fn long_prefix_setup() -> Vec<(*const [u8], *const [u8])> {
+    const TO_TEST: usize = 1000000;
+
+    use rand_distr::{Exp, Triangular, Distribution};
+    use pathmap::fuzzer::*;
+
     let max_len_sqrt = 20;
     let rng = StdRng::from_seed([0; 32]);
     let rng_ = StdRng::from_seed([!0; 32]);
     let path_fuzzer = Repeated {
-        lengthd: Mapped{ d: Triangular::new(0f32, max_len_sqrt as f32,  8f32).unwrap(), f: |x| (x*x) as usize, pd: PhantomData::default() },
+        lengthd: Mapped{ d: Triangular::new(0f32, max_len_sqrt as f32,  8f32).unwrap(), f: |x| (x*x) as usize, pd: core::marker::PhantomData },
         itemd: Categorical { elements: { let mut v = vec![]; for i in 0..256 { v.push(i as u8) }; v },
-            ed: Mapped { d: Exp::new(0.9f32).unwrap(), f: |x| (x as usize).min(255), pd: PhantomData::default() } }, pd: Default::default() };
+            ed: Mapped { d: Exp::new(0.9f32).unwrap(), f: |x| (x as usize).min(255), pd: core::marker::PhantomData } }, pd: Default::default() };
 
     // let pairs = path_fuzzer.clone().sample_iter(rng).zip(path_fuzzer.clone().sample_iter(rng_)).take(TO_TEST).map(|(x, y)| (x.leak() as *const [u8], y.leak() as *const [u8])).collect::<Vec<_>>();
     let mut vec = Vec::with_capacity(TO_TEST*(max_len_sqrt*max_len_sqrt + 1));
-    let pairs = path_fuzzer.clone().sample_iter(rng).zip(path_fuzzer.clone().sample_iter(rng_)).take(TO_TEST).map(|(x, y)| {
+    let pairs = path_fuzzer.clone().sample_iter(rng).zip(path_fuzzer.clone().sample_iter(rng_)).take(TO_TEST).map(|(x, _y)| {
         let vl0 = vec.len();
         vec.extend_from_slice(&x[..]);
         let vl1 = vec.len();
@@ -65,9 +65,10 @@ fn setup() -> Vec<(*const [u8], *const [u8])> {
 // Should exactly match one of the other benchmarks that is running here
 // ****************************************************************************************************
 
+#[cfg(feature = "fuzzer")]
 #[divan::bench()]
-fn common_prefix_default(bencher: Bencher) {
-    let pairs = setup();
+fn long_prefix_default(bencher: Bencher) {
+    let pairs = long_prefix_setup();
 
     pairs.iter().for_each(|(l, r)| {
         let l = unsafe { l.as_ref().unwrap() }; let r = unsafe { r.as_ref().unwrap() };
@@ -94,9 +95,10 @@ fn count_shared_reference(p: &[u8], q: &[u8]) -> usize {
         .take_while(|(x, y)| x == y).count()
 }
 
+#[cfg(feature = "fuzzer")]
 #[divan::bench()]
-fn common_prefix_reference(bencher: Bencher) {
-    let pairs = setup(); 
+fn long_prefix_reference(bencher: Bencher) {
+    let pairs = long_prefix_setup(); 
 
     pairs.iter().for_each(|(l, r)| {
         let l = unsafe { l.as_ref().unwrap() }; let r = unsafe { r.as_ref().unwrap() };
@@ -143,7 +145,7 @@ fn count_shared_sse2(p: &[u8], q: &[u8]) -> usize {
     }
 }
 
-#[cfg(target_feature = "sse2")]
+#[cfg(all( target_feature = "sse2", feature = "fuzzer"))]
 #[divan::bench()]
 fn common_prefix_sse2(bencher: Bencher) {
     let pairs = setup();
@@ -195,7 +197,7 @@ fn count_shared_avx2(p: &[u8], q: &[u8]) -> usize {
     }
 }
 
-#[cfg(target_feature = "avx2")]
+#[cfg(all( target_feature = "avx2", feature = "fuzzer"))]
 #[divan::bench()]
 fn common_prefix_avx2(bencher: Bencher) {
     let pairs = setup();
@@ -246,7 +248,7 @@ fn count_shared_avx512<'a, 'b>(p: &'a [u8], q: &'b [u8]) -> usize {
     }
 }
 
-#[cfg(target_feature = "avx512f")]
+#[cfg(all( target_feature = "avx512f", feature = "fuzzer"))]
 #[divan::bench()]
 fn common_prefix_avx512(bencher: Bencher) {
     let pairs = setup();
@@ -308,7 +310,7 @@ fn count_shared_simd(p: &[u8], q: &[u8]) -> usize {
     }
 }
 
-#[cfg(feature = "nightly")]
+#[cfg(all( feature = "nightly", feature = "fuzzer"))]
 #[divan::bench()]
 fn common_prefix_simd(bencher: Bencher) {
     let pairs = setup();
@@ -372,6 +374,7 @@ fn common_prefix_simd(bencher: Bencher) {
 //     }
 // }
 
+// #[cfg(feature = "fuzzer")]
 // #[divan::bench()]
 // fn common_prefix_wide(bencher: Bencher) {
 //     let pairs = setup();
@@ -390,6 +393,137 @@ fn common_prefix_simd(bencher: Bencher) {
 //         });
 //     });
 // }
+
+// ****************************************************************************************************
+// short_keys benchmark
+// ****************************************************************************************************
+
+/// Make a bunch of key pairs, that share some amount of prefix
+fn make_short_keys(count: usize, key_len_range: std::ops::Range<usize>, rand_seed: u64) -> Vec<(usize, Vec<u8>, Vec<u8>)> {
+    let mut rng = StdRng::seed_from_u64(rand_seed);
+    (0..count).map(|_| {
+        let key_len = rng.random_range(key_len_range.clone());
+        let same_until: usize = rng.random_range(0..key_len);
+        short_key_pair(&mut rng, key_len, same_until)
+    }).collect()
+}
+
+/// Make keys that have a "zipfian" distribution of key lengths
+fn make_zipf_keys(count: usize, key_len: usize, rand_seed: u64, zipf_ratio: f64) -> Vec<(usize, Vec<u8>, Vec<u8>)> {
+    let mut rng = StdRng::seed_from_u64(rand_seed);
+    let ratio_to_minus_n = 1.0 - zipf_ratio.powi(-(key_len as i32));
+    (0..count).map(|_| {
+        let sample: f64 = rng.random();
+        let inner = 1.0 - sample * ratio_to_minus_n;
+        let k = (-inner.ln() / zipf_ratio.ln()).ceil() as usize;
+        short_key_pair(&mut rng, key_len, k-1)
+    }).collect()
+}
+
+fn short_key_pair(rng: &mut StdRng, key_len: usize, same_until: usize) -> (usize, Vec<u8>, Vec<u8>) {
+    let mut a_key = Vec::with_capacity(key_len);
+    let mut b_key = Vec::with_capacity(key_len);
+    for _ in 0..same_until {
+        let byte: u8 = rng.random();
+        a_key.push(byte);
+        b_key.push(byte)
+    }
+    for _ in same_until..key_len {
+        let a_byte: u8 = rng.random();
+        a_key.push(a_byte);
+        let mut b_byte: u8 = rng.random();
+        while b_byte == a_byte { b_byte = rng.random(); }
+        b_key.push(b_byte);
+    }
+    (same_until, a_key, b_key)
+}
+
+const NUM_KEYS: usize = 1_000_000;
+
+#[divan::bench()]
+fn short_prefix_len_lte8(bencher: Bencher) {
+    let pairs = make_short_keys(NUM_KEYS, 1..9, 42);
+
+    pairs.iter().for_each(|(val, l, r)| {
+        let result = find_prefix_overlap(l, r);
+        assert_eq!(result, *val);
+    });
+
+    bencher.bench_local(|| {
+        pairs.iter().for_each(|(_, l, r)| {
+            let result = find_prefix_overlap(l, r);
+            std::hint::black_box(result);
+        });
+    });
+}
+
+#[divan::bench()]
+fn short_prefix_len_lte4(bencher: Bencher) {
+    let pairs = make_short_keys(NUM_KEYS, 1..5, 42);
+
+    pairs.iter().for_each(|(val, l, r)| {
+        let result = find_prefix_overlap(l, r);
+        assert_eq!(result, *val);
+    });
+
+    bencher.bench_local(|| {
+        pairs.iter().for_each(|(_, l, r)| {
+            let result = find_prefix_overlap(l, r);
+            std::hint::black_box(result);
+        });
+    });
+}
+
+#[divan::bench()]
+fn short_prefix_len_lte2(bencher: Bencher) {
+    let pairs = make_short_keys(NUM_KEYS, 1..3, 42);
+
+    pairs.iter().for_each(|(val, l, r)| {
+        let result = find_prefix_overlap(l, r);
+        assert_eq!(result, *val);
+    });
+
+    bencher.bench_local(|| {
+        pairs.iter().for_each(|(_, l, r)| {
+            let result = find_prefix_overlap(l, r);
+            std::hint::black_box(result);
+        });
+    });
+}
+
+#[divan::bench()]
+fn short_prefix_len_eq1(bencher: Bencher) {
+    let pairs = make_short_keys(NUM_KEYS, 1..2, 42);
+
+    pairs.iter().for_each(|(val, l, r)| {
+        let result = find_prefix_overlap(l, r);
+        assert_eq!(result, *val);
+    });
+
+    bencher.bench_local(|| {
+        pairs.iter().for_each(|(_, l, r)| {
+            let result = find_prefix_overlap(l, r);
+            std::hint::black_box(result);
+        });
+    });
+}
+
+#[divan::bench()]
+fn short_prefix_zipf_16(bencher: Bencher) {
+    let pairs = make_zipf_keys(NUM_KEYS, 16, 42, 1.5);
+
+    pairs.iter().for_each(|(val, l, r)| {
+        let result = find_prefix_overlap(l, r);
+        assert_eq!(result, *val);
+    });
+
+    bencher.bench_local(|| {
+        pairs.iter().for_each(|(_, l, r)| {
+            let result = find_prefix_overlap(l, r);
+            std::hint::black_box(result);
+        });
+    });
+}
 
 fn main() {
     // Run registered benchmarks.

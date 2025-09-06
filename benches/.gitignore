@@ -1,3 +1,4 @@
 .DS_Store
 cities5000.txt
 shakespeare.txt
+__pycache__
