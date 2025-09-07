@@ -63,6 +63,7 @@ impl Clone for ZipperTracker<TrackingRead> {
     }
 }
 
+#[cfg(feature = "zipper_tracking")]
 impl<M: TrackingMode> ZipperTracker<M> {
     /// Returns the path that the tracker is guarding
     pub fn path(&self) -> &[u8] {

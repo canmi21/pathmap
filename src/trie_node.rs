@@ -1,6 +1,7 @@
 
 use core::hint::unreachable_unchecked;
 use core::mem::ManuallyDrop;
+use core::ptr::NonNull;
 use std::collections::HashMap;
 use dyn_clone::*;
 use local_or_heap::LocalOrHeap;
@@ -640,7 +641,7 @@ fn pmeet_generic_recursive_reset<'trie, const MAX_PAYLOAD_CNT: usize, V, A: Allo
 
 pub enum AbstractNodeRef<'a, V: Clone + Send + Sync, A: Allocator> {
     None,
-    BorrowedDyn(TaggedNodeRef<'a, V, A>),
+    BorrowedDyn(TaggedNodeRef<'a, V, A>), //GOAT eliminate this variant!
     BorrowedRc(&'a TrieNodeODRc<V, A>),
     BorrowedTiny(TinyRefNode<'a, V, A>),
     OwnedRc(TrieNodeODRc<V, A>)
@@ -666,7 +667,13 @@ impl<'a, V: Clone + Send + Sync, A: Allocator> AbstractNodeRef<'a, V, A> {
         match self {
             AbstractNodeRef::None => None,
             AbstractNodeRef::BorrowedDyn(node) => Some(node.clone_self()),
-            AbstractNodeRef::BorrowedRc(rc) => Some(rc.clone()),
+            AbstractNodeRef::BorrowedRc(rc) => {
+                if !rc.as_tagged().node_is_empty() {
+                    Some(rc.clone())
+                } else {
+                    None
+                }
+            },
             AbstractNodeRef::BorrowedTiny(tiny) => tiny.into_full().map(|list_node| TrieNodeODRc::new_in(list_node, tiny.alloc)),
             AbstractNodeRef::OwnedRc(rc) => Some(rc)
         }
@@ -700,6 +707,7 @@ pub(crate) const TINY_REF_NODE_TAG: usize = 4;
 
 pub(crate) use tagged_node_ref::TaggedNodeRef;
 pub(crate) use tagged_node_ref::TaggedNodeRefMut;
+pub(crate) use tagged_node_ref::TaggedNodePtr;
 
 #[cfg(not(feature = "slim_dispatch"))]
 mod tagged_node_ref {
@@ -852,6 +860,17 @@ mod tagged_node_ref {
                 Self::CellByteNode(node) => TaggedNodeRef::CellByteNode(node),
             }
         }
+        /// Convert a `TaggedNodeRefMut` into a [TaggedNodeRef] so const methods may be called.
+        ///
+        /// NOTE: This should be a zero-cost conversation.
+        #[inline]
+        pub fn cast(self) -> TaggedNodeRef<'a, V, A> {
+            match self {
+                Self::DenseByteNode(node) => TaggedNodeRef::DenseByteNode(node),
+                Self::LineListNode(node) => TaggedNodeRef::LineListNode(node),
+                Self::CellByteNode(node) => TaggedNodeRef::CellByteNode(node),
+            }
+        }
         #[cfg(feature = "slim_ptrs")]
         #[inline]
         pub(super) fn from_slim_ptr(ptr: super::slim_node_ptr::SlimNodePtr<V, A>) -> Self {
@@ -892,6 +911,57 @@ mod tagged_node_ref {
             match self {
                 Self::CellByteNode(node) => node,
                 _ => unsafe { unreachable_unchecked() }
+            }
+        }
+    }
+
+    /// A ptr mirror of [TaggedNodeRefMut]
+    #[derive(Clone)]
+    pub enum TaggedNodePtr<V: Clone + Send + Sync, A: Allocator> {
+        DenseByteNode(NonNull<DenseByteNode<V, A>>),
+        LineListNode(NonNull<LineListNode<V, A>>),
+        #[cfg(feature = "bridge_nodes")]
+        BridgeNode(NonNull<BridgeNode<V, A>>),
+        CellByteNode(NonNull<CellByteNode<V, A>>),
+    }
+    impl<V: Clone + Send + Sync, A: Allocator> Copy for TaggedNodePtr<V, A> {}
+
+    impl<V: Clone + Send + Sync, A: Allocator> From<TaggedNodeRefMut<'_, V, A>> for TaggedNodePtr<V, A> {
+        #[inline]
+        fn from(src: TaggedNodeRefMut<'_, V, A>) -> Self {
+            match src {
+                TaggedNodeRefMut::DenseByteNode(node) => Self::DenseByteNode(node.into()),
+                TaggedNodeRefMut::LineListNode(node) => Self::LineListNode(node.into()),
+                #[cfg(feature = "bridge_nodes")]
+                TaggedNodeRefMut::BridgeNode(node) => Self::BridgeNode(node.into()),
+                TaggedNodeRefMut::CellByteNode(node) => Self::CellByteNode(node.into()),
+            }
+        }
+    }
+
+    impl<V: Clone + Send + Sync, A: Allocator> TaggedNodePtr<V, A> {
+        /// Returns a [TaggedNodeRefMut] from the `TaggedNodePtr`.  It is unsafe because the
+        /// caller must provide a valid lifetime and ensure no aliasing is possible
+        #[inline]
+        pub unsafe fn into_tagged_mut<'a>(self: TaggedNodePtr<V, A>) -> TaggedNodeRefMut<'a, V, A> {
+            match self {
+                TaggedNodePtr::DenseByteNode(mut node) => TaggedNodeRefMut::DenseByteNode(unsafe{ node.as_mut() }),
+                TaggedNodePtr::LineListNode(mut node) => TaggedNodeRefMut::LineListNode(unsafe{ node.as_mut() }),
+                #[cfg(feature = "bridge_nodes")]
+                TaggedNodePtr::BridgeNode(mut node) => TaggedNodeRefMut::BridgeNode(unsafe{ node.as_mut() }),
+                TaggedNodePtr::CellByteNode(mut node) => TaggedNodeRefMut::CellByteNode(unsafe{ node.as_mut() }),
+            }
+        }
+        /// Returns a [TaggedNodeRef] from the `TaggedNodePtr`.  It is unsafe because the
+        /// caller must provide a valid lifetime
+        #[inline]
+        pub unsafe fn as_tagged<'a>(self: &TaggedNodePtr<V, A>) -> TaggedNodeRef<'a, V, A> {
+            match self {
+                TaggedNodePtr::DenseByteNode(node) => TaggedNodeRef::DenseByteNode(unsafe{ node.as_ref() }),
+                TaggedNodePtr::LineListNode(node) => TaggedNodeRef::LineListNode(unsafe{ node.as_ref() }),
+                #[cfg(feature = "bridge_nodes")]
+                TaggedNodePtr::BridgeNode(node) => TaggedNodeRef::BridgeNode(unsafe{ node.as_ref() }),
+                TaggedNodePtr::CellByteNode(node) => TaggedNodeRef::CellByteNode(unsafe{ node.as_ref() }),
             }
         }
     }
@@ -2326,6 +2396,14 @@ mod slim_node_ptr {
         }
     }
 
+    impl<V: Clone + Send + Sync, A: Allocator> PartialEq<SlimNodePtr<V, A>> for SlimNodePtr<V, A> {
+        #[inline]
+        fn eq(&self, rhs: &SlimNodePtr<V, A>) -> bool {
+            self.ptr_eq(rhs)
+        }
+    }
+    impl<V: Clone + Send + Sync, A: Allocator> Eq for SlimNodePtr<V, A> { }
+
     impl<V: Clone + Send + Sync, A: Allocator> SlimNodePtr<V, A> {
         #[allow(unused)]
         #[inline]
@@ -2430,6 +2508,7 @@ mod slim_node_ptr {
     /// The pointer must be of the correct type, otherwise you're basically unsafely casting the pointer.
     ///
     /// You must use the same settings as you packed the pointer with. The pointer must be packed into the lower bits
+    #[inline]
     fn unpack<T: Sized>(packed: *mut T, a: u8, s: bool, v: u8) -> *mut T {
         // Mask off all the stolen bits to get the pointer data.
         let asv = asv_mask(a, s, v);
@@ -2468,6 +2547,14 @@ mod opaque_dyn_rc_trie_node {
         ptr: SlimNodePtr<V, A>,
         alloc: MaybeUninit<A>,
     }
+
+    impl<V: Clone + Send + Sync, A: Allocator> PartialEq<TrieNodeODRc<V, A>> for TrieNodeODRc<V, A> {
+        #[inline]
+        fn eq(&self, rhs: &TrieNodeODRc<V, A>) -> bool {
+            self.ptr == rhs.ptr
+        }
+    }
+    impl<V: Clone + Send + Sync, A: Allocator> Eq for TrieNodeODRc<V, A> { }
 
     impl<V: Clone + Send + Sync, A: Allocator> Clone for TrieNodeODRc<V, A> {
         /// Increases the node refcount.  See the implementation of Arc::clone in the stdlib
@@ -2671,8 +2758,9 @@ mod opaque_dyn_rc_trie_node {
             let (ptr, _tag) = self.ptr.get_raw_parts();
             unsafe{ &*ptr }.load(Acquire) as usize
         }
+        /// Ensures that we hold the only reference to a node, by cloning it if necessary
         #[inline]
-        pub(crate) fn make_mut(&mut self) -> TaggedNodeRefMut<'_, V, A> {
+        pub(crate) fn make_unique(&mut self) {
             let (ptr, _tag) = self.ptr.get_raw_parts();
 
             if unsafe{ &*ptr }.compare_exchange(1, 0, Acquire, Relaxed).is_err() {
@@ -2686,6 +2774,10 @@ mod opaque_dyn_rc_trie_node {
                 // We were the sole reference so bump back up the  ref count.
                 unsafe{ &*ptr }.store(1, Release);
             }
+        }
+        #[inline]
+        pub(crate) fn make_mut(&mut self) -> TaggedNodeRefMut<'_, V, A> {
+            self.make_unique();
 
             // We are now clear to copy the inner pointer because our reference was either unique
             // to begin with, or became unique upon cloning the contents.
@@ -2845,5 +2937,45 @@ impl<V: DistributiveLattice + Clone + Send + Sync, A: Allocator> DistributiveLat
                 }
             }
         }
+    }
+}
+
+/// Test to make sure slim_ptrs are good with provenance under miri
+#[cfg(test)]
+mod tests {
+    use crate::alloc::{GlobalAlloc, global_alloc};
+    use crate::line_list_node::LineListNode;
+    use crate::trie_node::TrieNodeODRc;
+    use crate::PathMap;
+    use crate::zipper::*;
+
+    #[test]
+    fn slim_ptrs_test1() {
+        let map = PathMap::<()>::new();
+        let z1 = map.read_zipper();
+        let z2 = map.read_zipper();
+        drop(z1);
+        drop(z2);
+    }
+
+    #[test]
+    fn slim_ptrs_test2() {
+        let mut map = PathMap::<()>::new();
+        let zh = map.zipper_head();
+        let rz = zh.read_zipper_at_borrowed_path(b"A").unwrap();
+        let wz = zh.write_zipper_at_exclusive_path(b"Z").unwrap();
+        drop(rz);
+        drop(wz);
+        drop(zh);
+    }
+
+    /// A very basic test of TrieNodeODRc, that doesn't involve the complexity of Zippers or ZipperHead
+    #[test]
+    fn slim_ptrs_test3() {
+        let node = LineListNode::<(), GlobalAlloc>::new_in(global_alloc());
+        let mut node_ref = TrieNodeODRc::new_in(node, global_alloc());
+        let cloned = node_ref.clone();
+        node_ref.make_unique();
+        drop(cloned);
     }
 }

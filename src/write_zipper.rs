@@ -1,5 +1,6 @@
 
 use maybe_dangling::MaybeDangling;
+use core::ptr::NonNull;
 
 use crate::alloc::{Allocator, GlobalAlloc};
 use crate::utils::ByteMask;
@@ -306,11 +307,11 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     fn ascend_until_branch(&mut self) -> bool { self.z.ascend_until_branch() }
 }
 
-impl<'a, 'path, V: Clone + Send + Sync, A: Allocator + 'a> zipper_priv::ZipperPriv for WriteZipperTracked<'a, 'path, V, A> {
+impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> zipper_priv::ZipperPriv for WriteZipperTracked<'a, 'path, V, A> {
     type V = V;
     type A = A;
     fn get_focus(&self) -> AbstractNodeRef<'_, Self::V, Self::A> { self.z.get_focus() }
-    fn try_borrow_focus(&self) -> Option<TaggedNodeRef<'_, Self::V, Self::A>> { self.z.try_borrow_focus() }
+    fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>> { self.z.try_borrow_focus() }
 }
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperPathBuffer for WriteZipperTracked<'a, 'path, V, A> {
@@ -347,13 +348,13 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperTr
     /// The returned read zipper will have the same root and focus as the the consumed write zipper.
     pub fn into_read_zipper(mut self) -> ReadZipperTracked<'a, 'static, V, A> {
         let tracker = self._tracker.take().unwrap().into_reader();
-        let root_node = self.z.focus_stack.take_root().unwrap().as_tagged();
+        let root_node = self.z.focus_stack.take_root().unwrap();
         let root_path = &self.z.key.prefix_buf[..self.z.key.origin_path.len()];
         let descended_path = &self.z.key.prefix_buf[self.z.key.origin_path.len()..];
         let root_val = core::mem::take(&mut self.z.root_val);
         let root_val = root_val.and_then(|root_val| unsafe{ (&*root_val).as_ref() });
 
-        let mut new_zipper = ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, root_path, root_path.len(), self.z.key.root_key_start, root_val, self.z.alloc.clone(), tracker);
+        let mut new_zipper = ReadZipperTracked::new_with_node_and_cloned_path_in(root_node, false, root_path, root_path.len(), self.z.key.root_key_start, root_val, self.z.alloc.clone(), Some(tracker));
         new_zipper.descend_to(descended_path);
         new_zipper
     }
@@ -458,11 +459,11 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     fn ascend_until_branch(&mut self) -> bool { self.z.ascend_until_branch() }
 }
 
-impl<'a, 'k, V: Clone + Send + Sync, A: Allocator + 'a> zipper_priv::ZipperPriv for WriteZipperUntracked<'a, 'k, V, A> {
+impl<'a, 'k, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> zipper_priv::ZipperPriv for WriteZipperUntracked<'a, 'k, V, A> {
     type V = V;
     type A = A;
     fn get_focus(&self) -> AbstractNodeRef<'_, Self::V, Self::A> { self.z.get_focus() }
-    fn try_borrow_focus(&self) -> Option<TaggedNodeRef<'_, Self::V, Self::A>> { self.z.try_borrow_focus() }
+    fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>> { self.z.try_borrow_focus() }
 }
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperPathBuffer for WriteZipperUntracked<'a, 'path, V, A> {
@@ -521,18 +522,12 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperU
     ///
     /// The returned read zipper will have the same root and focus as the the consumed write zipper.
     pub fn into_read_zipper(mut self) -> ReadZipperUntracked<'a, 'static, V, A> {
-        #[cfg(debug_assertions)]
-        let tracker = self._tracker.take().map(|tracker| tracker.into_reader());
-        let root_node = self.z.focus_stack.take_root().unwrap().as_tagged();
+        let root_node = self.z.focus_stack.take_root().unwrap();
         let root_path = &self.z.key.prefix_buf[..self.z.key.origin_path.len()];
         let descended_path = &self.z.key.prefix_buf[self.z.key.origin_path.len()..];
         let root_val = core::mem::take(&mut self.z.root_val);
         let root_val = root_val.and_then(|root_val| unsafe{ (&*root_val).as_ref() });
 
-        #[cfg(debug_assertions)]
-        let mut new_zipper = ReadZipperUntracked::new_with_node_and_cloned_path_in(root_node, root_path, root_path.len(), self.z.key.root_key_start, root_val, self.z.alloc.clone(), tracker);
-
-        #[cfg(not(debug_assertions))]
         let mut new_zipper = ReadZipperUntracked::new_with_node_and_cloned_path_in(root_node, root_path, root_path.len(), self.z.key.root_key_start, root_val, self.z.alloc.clone());
         new_zipper.descend_to(descended_path);
         new_zipper
@@ -639,11 +634,11 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperMoving for WriteZipperO
     fn ascend_until_branch(&mut self) -> bool { self.z.ascend_until_branch() }
 }
 
-impl<V: Clone + Send + Sync, A: Allocator> zipper_priv::ZipperPriv for WriteZipperOwned<V, A> {
+impl<V: Clone + Send + Sync + Unpin, A: Allocator> zipper_priv::ZipperPriv for WriteZipperOwned<V, A> {
     type V = V;
     type A = A;
     fn get_focus(&self) -> AbstractNodeRef<'_, Self::V, Self::A> { self.z.get_focus() }
-    fn try_borrow_focus(&self) -> Option<TaggedNodeRef<'_, Self::V, Self::A>> { self.z.try_borrow_focus() }
+    fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>> { self.z.try_borrow_focus() }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperPathBuffer for WriteZipperOwned<V, A> {
@@ -822,7 +817,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zipper for Wri
     fn path_exists(&self) -> bool {
         let key = self.key.node_key();
         if key.len() > 0 {
-            self.focus_stack.top().unwrap().reborrow().node_contains_partial_key(key)
+            self.focus_stack.top().unwrap().node_contains_partial_key(key)
         } else {
             true
         }
@@ -836,20 +831,20 @@ impl<'trie, V: Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zipper for Wri
                 None => false
             }
         } else {
-            self.focus_stack.top().unwrap().reborrow().node_contains_val(key)
+            self.focus_stack.top().unwrap().node_contains_val(key)
         }
     }
     fn child_count(&self) -> usize {
         let focus_node = self.focus_stack.top().unwrap();
-        node_count_branches_recursive(focus_node.reborrow(), self.key.node_key())
+        node_count_branches_recursive(focus_node, self.key.node_key())
     }
     fn child_mask(&self) -> ByteMask {
         let focus_node = self.focus_stack.top().unwrap();
         let node_key = self.key.node_key();
         if node_key.len() == 0 {
-            return focus_node.reborrow().node_branches_mask(b"")
+            return focus_node.node_branches_mask(b"")
         }
-        match focus_node.reborrow().node_get_child(node_key) {
+        match focus_node.node_get_child(node_key) {
             Some((consumed_bytes, child_node)) => {
                 let child_node = child_node.as_tagged();
                 if node_key.len() >= consumed_bytes {
@@ -858,7 +853,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zipper for Wri
                     ByteMask::EMPTY
                 }
             },
-            None => focus_node.reborrow().node_branches_mask(node_key)
+            None => focus_node.node_branches_mask(node_key)
         }
     }
 }
@@ -869,7 +864,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin, A: Allocator + 'trie> ZipperForking<
         let new_root_val = self.val();
         let path = self.origin_path();
 
-        read_zipper_core::ReadZipperCore::new_with_node_and_path_in(self.focus_stack.top().unwrap().reborrow(), path, path.len(), self.key.node_key_start(), new_root_val, self.alloc.clone())
+        read_zipper_core::ReadZipperCore::new_with_node_and_path_in(self.focus_parent(), false, path, path.len(), self.key.node_key_start(), new_root_val, self.alloc.clone())
     }
 }
 
@@ -896,7 +891,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     }
 
     fn reset(&mut self) {
-        self.focus_stack.to_bottom();
+        self.focus_stack.to_root();
         self.key.prefix_buf.truncate(self.key.origin_path.len());
         self.key.prefix_idx.clear();
     }
@@ -924,7 +919,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
         self.descend_to_internal();
         let node_key = self.key.node_key();
         if node_key.len() > 0 {
-            self.focus_stack.top().unwrap().reborrow().node_contains_partial_key(node_key)
+            self.focus_stack.top().unwrap().node_contains_partial_key(node_key)
         } else {
             true
         }
@@ -989,21 +984,29 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     }
 }
 
-impl<'a, 'k, V: Clone + Send + Sync, A: Allocator + 'a> zipper_priv::ZipperPriv for WriteZipperCore<'a, 'k, V, A> {
+impl<'a, 'k, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> zipper_priv::ZipperPriv for WriteZipperCore<'a, 'k, V, A> {
     type V = V;
     type A = A;
     fn get_focus(&self) -> AbstractNodeRef<'_, Self::V, Self::A> {
-        self.focus_stack.top().unwrap().reborrow().get_node_at_key(self.key.node_key())
+        let node_key = self.key.node_key();
+        if node_key.len() > 0 {
+            self.focus_stack.top().unwrap().get_node_at_key(node_key)
+        } else {
+            debug_assert!(self.at_root());
+            unsafe{ AbstractNodeRef::BorrowedRc(self.focus_stack.root_unchecked()) }
+        }
     }
-    fn try_borrow_focus(&self) -> Option<TaggedNodeRef<'_, Self::V, Self::A>> {
+    fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>> {
         let node_key = self.key.node_key();
         if node_key.len() == 0 {
-            Some(self.focus_stack.top().unwrap().reborrow())
+            debug_assert!(self.at_root());
+            debug_assert_eq!(self.focus_stack.depth(), 1);
+            Some(unsafe{ self.focus_stack.root_unchecked() })
         } else {
-            match self.focus_stack.top().unwrap().reborrow().node_get_child(node_key) {
+            match self.focus_stack.top().unwrap().node_get_child(node_key) {
                 Some((consumed_bytes, child_node)) => {
                     debug_assert_eq!(consumed_bytes, node_key.len());
-                    Some(child_node.as_tagged())
+                    Some(child_node)
                 },
                 None => None
             }
@@ -1043,8 +1046,7 @@ impl <'a, V: Clone + Send + Sync + Unpin, A: Allocator> WriteZipperCore<'a, 'sta
     }
     /// See [WriteZipperUntracked::new_with_node_and_path_internal]
     pub(crate) fn new_with_node_and_cloned_path_internal_in(root_node: &'a mut TrieNodeODRc<V, A>, root_val: Option<&'a mut Option<V>>, path: &[u8], root_key_start: usize, alloc: A) -> Self {
-        let mut focus_stack = MutNodeStack::new(root_node);
-        focus_stack.advance_from_root();
+        let focus_stack = MutNodeStack::new(root_node);
         debug_assert!((path.len()-root_key_start == 0) != (root_val.is_none())); //We must have either a node_path or a root_val, but never both
         Self {
             key: KeyFields::new_cloned_path(path, root_key_start),
@@ -1065,8 +1067,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     }
     /// See [WriteZipperUntracked::new_with_node_and_path_internal]
     pub(crate) fn new_with_node_and_path_internal_in(root_node: &'a mut TrieNodeODRc<V, A>, root_val: Option<&'a mut Option<V>>, path: &'path [u8], root_key_start: usize, alloc: A) -> Self {
-        let mut focus_stack = MutNodeStack::new(root_node);
-        focus_stack.advance_from_root();
+        let focus_stack = MutNodeStack::new(root_node);
         debug_assert!((path.len()-root_key_start == 0) != (root_val.is_none())); //We must have either a node_path or a root_val, but never both
         Self {
             key: KeyFields::new(path, root_key_start),
@@ -1115,19 +1116,16 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     ///
     /// This is called for the ZipperHead's root, the first time a ReadZipper is created in a ZipperHead,
     /// to isolate the part of the trie that is below the ZipperHead from the part of the trie above it.
-    pub(crate) fn splitting_borrow_focus(&mut self) -> (TaggedNodeRef<'_, V, A>, Option<&V>) {
-        let self_ptr: *mut Self = self;
-        let node = match (*self).try_borrow_focus() {
+    pub(crate) fn splitting_borrow_focus(&mut self) -> (*const TrieNodeODRc<V, A>, Option<NonNull<V>>) {
+        let node = match self.try_borrow_focus() {
             Some(root) => root,
             None => {
-                //SAFETY: This is another "We need Polonius" case.  We're finished with the borrow if we get here.
-                let self_ref = unsafe{ &mut *self_ptr };
-                self_ref.split_at_focus();
-                (*self).try_borrow_focus().unwrap()
+                self.split_at_focus();
+                self.try_borrow_focus().unwrap()
             },
         };
         let val = self.val();
-        (node, val)
+        (node, val.map(|v| v.into()))
     }
 
     /// Internal method to ensure the focus begins at its own node, splitting the node if necessary
@@ -1153,6 +1151,26 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         if sub_branch_added {
             self.mend_root();
             self.descend_to_internal();
+        }
+    }
+
+    /// Similar to [WriteZipperCore::try_borrow_focus], but it may reset the focus_stack to an
+    /// undescended root state.  This is currently only called by [prepare_exclusive_write_path]
+    pub(crate) fn try_borrow_focus_mut(&mut self) -> Option<&mut TrieNodeODRc<V, A>> {
+        let node_key = self.key.node_key();
+        if node_key.len() == 0 {
+            debug_assert!(self.at_root());
+            debug_assert_eq!(self.focus_stack.depth(), 1);
+            self.focus_stack.to_root();
+            self.focus_stack.root_mut()
+        } else {
+            match self.focus_stack.top_mut().unwrap().node_into_child_mut(node_key) {
+                Some((consumed_bytes, child_node)) => {
+                    debug_assert_eq!(consumed_bytes, node_key.len());
+                    Some(child_node)
+                },
+                None => None
+            }
         }
     }
 
@@ -1183,11 +1201,24 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     //     self.key.prefix_buf.len() > key_start || self.at_root()
     // }
 
+    /// Returns the parent and path from which the top of the focus_stack can be re-acquired
+    fn focus_parent(&self) -> &TrieNodeODRc<V, A> {
+        let parent_key = self.key.parent_key();
+        if parent_key.len() == 0 {
+            return unsafe{ self.focus_stack.root_unchecked() }
+        }
+
+        let parent_node = self.focus_stack.before_top_unchecked();
+        let (key_len, node) = parent_node.node_get_child(parent_key).unwrap();
+        debug_assert_eq!(key_len, parent_key.len());
+        node
+    }
+
     /// See [ZipperValues::val]
     pub fn val(&self) -> Option<&V> {
         let node_key = self.key.node_key();
         if node_key.len() > 0 {
-            self.focus_stack.top().unwrap().reborrow().node_get_val(node_key)
+            self.focus_stack.top().unwrap().node_get_val(node_key)
         } else {
             debug_assert!(self.at_root());
             self.root_val.as_ref().and_then(|val| unsafe{&**val}.as_ref())
@@ -1197,7 +1228,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     pub fn get_val_mut(&mut self) -> Option<&mut V> {
         let node_key = self.key.node_key();
         if node_key.len() > 0 {
-            self.focus_stack.top_mut().unwrap().node_get_val_mut(node_key)
+            self.focus_stack.top_mut().unwrap().node_into_val_ref_mut(node_key)
         } else {
             debug_assert!(self.at_root());
             self.root_val.as_mut().and_then(|val| unsafe{&mut **val}.as_mut())
@@ -1255,7 +1286,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             let root_val_ref = self.root_val.as_mut().unwrap();
             return core::mem::take(unsafe{&mut **root_val_ref})
         }
-        let focus_node = self.focus_stack.top_mut().unwrap();
+        let mut focus_node = self.focus_stack.top_mut().unwrap();
         if let Some(result) = focus_node.node_remove_val(self.key.node_key()) {
             if focus_node.reborrow().node_is_empty() {
                 self.prune_path();
@@ -1314,7 +1345,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         let src = read_zipper.get_focus();
         let self_focus = self.get_focus();
         if src.is_none() {
-            if self_focus.is_none() {
+            if self_focus.is_none() || self_focus.as_tagged().node_is_empty() {
                 return AlgebraicStatus::None
             } else {
                 return AlgebraicStatus::Identity
@@ -1621,7 +1652,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     pub fn remove_branches(&mut self) -> bool {
         let node_key = self.key.node_key();
         if node_key.len() > 0 {
-            let focus_node = self.focus_stack.top_mut().unwrap();
+            let mut focus_node = self.focus_stack.top_mut().unwrap();
             if focus_node.node_remove_all_branches(node_key) {
                 if focus_node.reborrow().node_is_empty() {
                     self.prune_path();
@@ -1632,13 +1663,12 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             }
         } else {
             debug_assert_eq!(self.focus_stack.depth(), 1);
-            if self.focus_stack.top().unwrap().reborrow().node_is_empty() {
+            if self.focus_stack.top().unwrap().node_is_empty() {
                 return false
             } else {
                 self.focus_stack.to_root();
                 let stack_root = self.focus_stack.root_mut().unwrap();
                 *stack_root = TrieNodeODRc::new_allocated_in(0, 0, self.alloc.clone());
-                self.focus_stack.advance_from_root();
                 true
             }
         }
@@ -1664,7 +1694,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     }
     /// See [WriteZipper::remove_unmasked_branches]
     pub fn remove_unmasked_branches(&mut self, mask: ByteMask) {
-        let focus_node = self.focus_stack.top_mut().unwrap();
+        let mut focus_node = self.focus_stack.top_mut().unwrap();
         let node_key = self.key.node_key();
         if node_key.len() > 0 {
             match focus_node.node_get_child_mut(node_key) {
@@ -1694,7 +1724,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     /// Internal method, Removes and returns the node at the zipper's focus.  This method may leave behind a dangling path
     #[inline]
     fn take_focus(&mut self) -> Option<TrieNodeODRc<V, A>> {
-        let focus_node = self.focus_stack.top_mut().unwrap();
+        let mut focus_node = self.focus_stack.top_mut().unwrap();
         let node_key = self.key.node_key();
         if node_key.len() == 0 {
             debug_assert!(self.at_root());
@@ -1702,7 +1732,6 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             self.focus_stack.backtrack();
             let stack_root = self.focus_stack.root_mut().unwrap();
             core::mem::swap(stack_root, &mut replacement_node);
-            self.focus_stack.advance_from_root();
             if !replacement_node.as_tagged().node_is_empty() {
                 Some(replacement_node)
             } else {
@@ -1762,7 +1791,6 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
                     self.focus_stack.to_root();
                     let stack_root = self.focus_stack.root_mut().unwrap();
                     *stack_root = src;
-                    self.focus_stack.advance_from_root();
                 }
             },
             None => { self.remove_branches(); }
@@ -1778,11 +1806,11 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         RetryF: FnOnce(&mut TaggedNodeRefMut<'_, V, A>, &[u8]) -> R,
     {
         let key = self.key.node_key();
-        match node_f(self.focus_stack.top_mut().unwrap(), key) {
+        match node_f(&mut self.focus_stack.top_mut().unwrap(), key) {
             Ok(result) => result,
             Err(replacement_node) => {
                 replace_top_node(&mut self.focus_stack, &self.key, replacement_node);
-                retry_f(self.focus_stack.top_mut().unwrap(), key)
+                retry_f(&mut self.focus_stack.top_mut().unwrap(), key)
             },
         }
     }
@@ -1794,7 +1822,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     pub(crate) fn prune_path(&mut self) {
         //We need to make sure this path actually exists before trying to prune it, otherwise we may end
         // up pruning the next upstream branch by mistake
-        if !self.focus_stack.top().unwrap().reborrow().node_is_empty() && !self.path_exists() {
+        if !self.focus_stack.top().unwrap().node_is_empty() && !self.path_exists() {
             return
         }
 
@@ -1818,7 +1846,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             let node_key = &temp_path[node_key_start..];
 
             //This mirrors the logic of `ascend_within_node`, but using our alternative path buffer
-            let branch_key = self.focus_stack.top().unwrap().reborrow().prior_branch_key(node_key);
+            let branch_key = self.focus_stack.top().unwrap().prior_branch_key(node_key);
             let new_len = self.key.origin_path.len().max(node_key_start + branch_key.len());
             ascended = true;
             temp_path = &temp_path[..new_len];
@@ -1838,7 +1866,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             let mut node_key_start = self.key.node_key_start();
             let node_key = &temp_path[node_key_start..];
             let focus_node = self.focus_stack.top().unwrap();
-            if node_count_branches_recursive(focus_node.reborrow(), node_key) > 1 || focus_node.reborrow().node_contains_val(node_key) {
+            if node_count_branches_recursive(focus_node, node_key) > 1 || focus_node.node_contains_val(node_key) {
                 if just_popped {
                     let mut node_path = &path_buf[node_key_start..];
                     Self::descend_step_internal(&mut self.focus_stack, &mut self.key.prefix_idx, &mut node_path, &mut node_key_start);
@@ -1850,7 +1878,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
 
         //At this point, the zipper's node stack reflects the position it would be after `ascend_until`
         if ascended {
-            let focus_node = self.focus_stack.top_mut().unwrap();
+            let mut focus_node = self.focus_stack.top_mut().unwrap();
             let node_key_start = self.key.node_key_start();
             // We want the byte immediately after the current `node_key`
             let next_node_key_byte = &path_buf[node_key_start..temp_path.len()+1];
@@ -1877,7 +1905,6 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
                     self.key.root_key_start += root_slice.len() - key.len();
                 }
                 self.focus_stack.replace_root(node);
-                self.focus_stack.advance_from_root();
             }
         }
     }
@@ -1901,7 +1928,6 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         }
 
         //Step until we get to the end of the key or find a leaf node
-        self.focus_stack.advance_if_empty();
         while Self::descend_step_internal(&mut self.focus_stack, &mut self.key.prefix_idx, &mut key, &mut key_start) { }
     }
 
@@ -1934,7 +1960,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     /// Internal method used to impement `ascend_until` when ascending within a node
     #[inline]
     fn ascend_within_node(&mut self) {
-        let branch_key = self.focus_stack.top().unwrap().reborrow().prior_branch_key(self.key.node_key());
+        let branch_key = self.focus_stack.top().unwrap().prior_branch_key(self.key.node_key());
         let new_len = self.key.origin_path.len().max(self.key.node_key_start() + branch_key.len());
         self.key.prefix_buf.truncate(new_len);
     }
@@ -1945,48 +1971,38 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
 pub(crate) fn replace_top_node<'cursor, V: Clone + Send + Sync, A: Allocator + 'cursor>(focus_stack: &mut MutNodeStack<'cursor, V, A>,
     key: &KeyFields, replacement_node: TrieNodeODRc<V, A>)
 {
-    focus_stack.backtrack();
-    match focus_stack.top_mut() {
-        Some(parent_node) => {
-            let parent_key = key.parent_key();
-            parent_node.node_replace_child(parent_key, replacement_node);
-            focus_stack.advance(|node| node.node_get_child_mut(parent_key).map(|(_, child_node)| child_node.make_mut()));
-        },
-        None => {
-            let stack_root = focus_stack.root_mut().unwrap();
-            *stack_root = replacement_node;
-            focus_stack.advance_from_root();
-        }
+    if focus_stack.depth() > 1 {
+        focus_stack.backtrack();
+        let mut parent_node = unsafe{ focus_stack.top_mut().unwrap_unchecked() };
+        let parent_key = key.parent_key();
+        parent_node.node_replace_child(parent_key, replacement_node);
+        focus_stack.advance(|node| node.node_get_child_mut(parent_key).map(|(_, child_node)| child_node.make_mut()));
+    } else {
+        let stack_root = focus_stack.root_mut().unwrap();
+        *stack_root = replacement_node;
     }
 }
 
 /// An internal function to replace the node at a the top of the focus stack
 #[inline]
 pub(crate) fn swap_top_node<'cursor, V: Clone + Send + Sync, A: Allocator + 'cursor, F>(focus_stack: &mut MutNodeStack<'cursor, V, A>,
-    key: &KeyFields, func: F, alloc: A)
-    where F: FnOnce(TrieNodeODRc<V, A>) -> Option<TrieNodeODRc<V, A>>
+    key: &KeyFields, func: F)
+    where F: FnOnce(TrieNodeODRc<V, A>) -> TrieNodeODRc<V, A>
 {
-    focus_stack.backtrack();
-    match focus_stack.top_mut() {
-        Some(parent_node) => {
-            let parent_key = key.parent_key();
-            let existing_node = parent_node.take_node_at_key(parent_key).unwrap();
-            match func(existing_node) {
-                Some(replacement_node) => { parent_node.node_set_branch(parent_key, replacement_node).unwrap(); },
-                None => {},
-            }
-            focus_stack.advance(|node| node.node_get_child_mut(parent_key).map(|(_, child_node)| child_node.make_mut()));
-        },
-        None => {
-            let stack_root = focus_stack.root_mut().unwrap();
-            let mut temp_node = TrieNodeODRc::new_allocated_in(0, 0, alloc);
-            core::mem::swap(&mut temp_node, stack_root);
-            match func(temp_node) {
-                Some(replacement_node) => { *stack_root = replacement_node; },
-                None => { },
-            }
-            focus_stack.advance_from_root();
-        }
+    if focus_stack.depth() > 1 {
+        focus_stack.backtrack();
+        let mut parent_node = unsafe{ focus_stack.top_mut().unwrap_unchecked() };
+        let parent_key = key.parent_key();
+        let existing_node = parent_node.take_node_at_key(parent_key).unwrap();
+        let replacement_node = func(existing_node);
+        parent_node.node_set_branch(parent_key, replacement_node).unwrap();
+        focus_stack.advance(|node| node.node_get_child_mut(parent_key).map(|(_, child_node)| child_node.make_mut()));
+    } else {
+        let stack_root = focus_stack.root_mut().unwrap();
+        let mut temp_node = TrieNodeODRc::new_empty();
+        core::mem::swap(&mut temp_node, stack_root);
+        let replacement_node = func(temp_node);
+        *stack_root = replacement_node;
     }
 }
 
@@ -2102,6 +2118,8 @@ impl<'k> KeyFields<'k> {
         self.prefix_buf.len() - self.prefix_idx.last().map(|i| *i).unwrap_or(self.origin_path.len())
     }
     /// Internal method returning the key that leads to `self.focus_node` within the parent
+    ///
+    /// See corresponding function [read_zipper_core::ReadZipperCore::parent_key] for more context
     #[inline]
     pub(crate) fn parent_key(&self) -> &[u8] {
         if self.prefix_buf.len() > 0 {
@@ -2112,7 +2130,7 @@ impl<'k> KeyFields<'k> {
             };
             &self.prefix_buf[key_start..self.node_key_start()]
         } else {
-            unreachable!()
+            &[]
         }
     }
 }
@@ -2125,31 +2143,58 @@ use mut_node_stack::MutNodeStack;
 mod mut_node_stack {
     use smallvec::{SmallVec, smallvec};
     use core::ptr::NonNull;
+    use core::marker::PhantomData;
     use crate::alloc::Allocator;
-    use super::{TaggedNodeRefMut, TrieNodeODRc};
+    use super::{TaggedNodeRef, TaggedNodeRefMut, TaggedNodePtr, TrieNodeODRc};
 
     /// See [mutcursor::MutCursorRootedVec] for discussion about behavior
     pub struct MutNodeStack<'a, V: Clone + Send + Sync, A: Allocator> {
         root: Option<NonNull<TrieNodeODRc<V, A>>>,
-        stack: SmallVec<[TaggedNodeRefMut<'a, V, A>; 1]>,
+        //GOAT, TODO get ridda small_vec.  I don't think it does anything for us anymore because we recreate the root TaggedNodeRefMut as needed
+        stack: SmallVec<[TaggedNodePtr<V, A>; 1]>,
+        phantom: PhantomData<TaggedNodeRefMut<'a, V, A>>
     }
 
     impl<'a, V: Clone + Send + Sync, A: Allocator + 'a> MutNodeStack<'a, V, A> {
         #[inline]
         pub fn new(root: &'a mut TrieNodeODRc<V, A>) -> Self {
-            Self { root: Some(NonNull::from(root)), stack: smallvec![] }
+            Self { root: Some(NonNull::from(root)), stack: smallvec![], phantom: PhantomData }
         }
         #[inline]
-        pub fn top(&self) -> Option<&TaggedNodeRefMut<'a, V, A>> {
-            self.stack.last()
+        pub fn top(&self) -> Option<TaggedNodeRef<'_, V, A>> {
+            match self.stack.last() {
+                Some(top) => Some(unsafe{ top.as_tagged() }),
+                None => unsafe{ self.root.map(|mut ptr| ptr.as_mut().make_mut().cast()) }
+            }
+        }
+        ///GOAT, This is going to make miri mad.  This is used in the creation of a ReadZipper, forked
+        /// from this WriteZipper.  Ideally we'd ascend the zipper up a level, do the forking, and re-descend,
+        /// however we don't have a mutable borrow of the source zipper in `fork_read_zipper`, which leads here.
+        ///While this method can cause UB and must be fixed, fixing it is a pain and I'm going to hold off until
+        /// the change to the TrieNode contract moves root values inside nodes
+        ///
+        ///GOAT update... Why can't we just use the same logic as `get_focus`??
+        pub fn before_top_unchecked(&self) -> TaggedNodeRef<'a, V, A> {
+            if self.stack.len() >= 2 {
+                let before_last = self.stack.len() - 2;
+                unsafe{ self.stack[before_last].as_tagged() }
+            } else {
+                unsafe{ self.root.unwrap().as_mut().make_mut().cast() }
+            }
         }
         #[inline]
         pub fn into_top(mut self) -> Option<TaggedNodeRefMut<'a, V, A>> {
-            self.stack.pop()
+            match self.stack.pop() {
+                Some(node_ptr) => unsafe{ Some(node_ptr.into_tagged_mut()) },
+                None => unsafe{ self.root.map(|mut ptr| ptr.as_mut().make_mut()) }
+            }
         }
         #[inline]
-        pub fn top_mut(&mut self) -> Option<&mut TaggedNodeRefMut<'a, V, A>> {
-            self.stack.last_mut()
+        pub fn top_mut(&mut self) -> Option<TaggedNodeRefMut<'_, V, A>> {
+            match self.stack.last() {
+                Some(node_ptr) => unsafe{ Some(node_ptr.into_tagged_mut()) },
+                None => unsafe{ self.root.map(|mut ptr| ptr.as_mut().make_mut()) }
+            }
         }
         #[inline]
         pub fn root_mut(&mut self) -> Option<&mut TrieNodeODRc<V, A>> {
@@ -2158,6 +2203,11 @@ mod mut_node_stack {
             } else {
                 None
             }
+        }
+        #[inline]
+        pub unsafe fn root_unchecked(&self) -> &TrieNodeODRc<V, A> {
+            debug_assert_eq!(self.stack.len(), 0);
+            self.root.map(|root| unsafe{ root.as_ref() }).unwrap()
         }
         #[inline]
         pub fn take_root(&mut self) -> Option<&'a mut TrieNodeODRc<V, A>> {
@@ -2174,25 +2224,8 @@ mod mut_node_stack {
             self.stack.clear();
         }
         #[inline]
-        pub fn to_bottom(&mut self) {
-            self.stack.truncate(1);
-        }
-        #[inline]
         pub fn depth(&self) -> usize {
-            self.stack.len()
-        }
-        #[inline]
-        pub fn advance_from_root(&mut self) {
-            self.to_root();
-            let tagged = unsafe{ self.root.unwrap().as_mut() }.make_mut();
-            self.stack.push(tagged)
-        }
-        #[inline]
-        pub fn advance_if_empty(&mut self) {
-            if self.stack.len() == 0 {
-                let tagged = unsafe{ self.root.unwrap().as_mut() }.make_mut();
-                self.stack.push(tagged)
-            }
+            self.stack.len() + 1
         }
         #[inline]
         pub fn advance<'r, F>(&mut self, step_f: F) -> bool
@@ -2200,15 +2233,16 @@ mod mut_node_stack {
             'a: 'r,
             F: FnOnce(&'r mut TaggedNodeRefMut<'a, V, A>) -> Option<TaggedNodeRefMut<'a, V, A>>,
         {
-            debug_assert!(self.stack.len() > 0); //If this fails then "Cursor at root. Must call `advance_from_root` before `advance`"
+            let mut old_top_ref = self.top_mut().unwrap();
 
             //SAFETY: The `MutNodeStack` type ensures that the mutably borrowed stack frames aren't
             // accessible.  See the `mutcursor` crate for a more thorough discussion on this pattern
             // and why it's safe.
-            let old_top = unsafe{ core::mem::transmute( self.top_mut().unwrap_unchecked())};
-            match step_f(old_top) {
+            let borrowed_top = unsafe{ core::mem::transmute(&mut old_top_ref) };
+
+            match step_f(borrowed_top) {
                 Some(new_ref) => {
-                    self.stack.push(new_ref);
+                    self.stack.push(new_ref.into());
                     true
                 },
                 None => false
@@ -2220,7 +2254,7 @@ mod mut_node_stack {
         }
         #[inline]
         pub fn try_backtrack_node(&mut self) {
-            if self.stack.len() > 1 {
+            if self.stack.len() > 0 {
                 self.backtrack()
             }
         }
@@ -2233,7 +2267,8 @@ mod tests {
     use crate::ring::AlgebraicStatus;
     use crate::trie_map::*;
     use crate::utils::ByteMask;
-    use crate::zipper::*;
+    use crate::zipper::{*, zipper_priv::*};
+    use crate::trie_node::*;
     use crate::alloc::GlobalAlloc;
 
     #[test]
@@ -2254,7 +2289,7 @@ mod tests {
 
         let mut zipper = map.read_zipper_at_path(b"in\0");
         for i in 0usize..32 {
-            zipper.descend_to(i.to_be_bytes());
+            assert_eq!(zipper.descend_to(i.to_be_bytes()), true);
             assert_eq!(*zipper.get_val().unwrap(), i);
             zipper.reset();
         }
@@ -2367,7 +2402,8 @@ mod tests {
             let mut sanity_counter = 0;
             let mut writer_z = unsafe{ zipper_head.write_zipper_at_exclusive_path_unchecked(b"out\0") };
             let mut reader_z = unsafe{ zipper_head.read_zipper_at_path_unchecked(b"in\0") };
-            while let Some(val) = reader_z.to_next_get_val() {
+            let witness = reader_z.witness();
+            while let Some(val) = reader_z.to_next_get_val_with_witness(&witness) {
                 writer_z.descend_to(reader_z.path());
                 writer_z.set_val(*val * 65536);
                 writer_z.reset();
@@ -3396,6 +3432,50 @@ mod tests {
         assert_eq!(rz.path_exists(), true);
         assert_eq!(rz.child_count(), 1);
         assert_eq!(rz.child_mask(), ByteMask::from(49));
+    }
+
+    /// Tests [`ZipperPriv::get_focus`] and [`ZipperPriv::try_borrow_focus`] internal APIs on [`WriteZipperCore`]
+    #[test]
+    fn write_zipper_focus_nodes() {
+        let mut map = PathMap::<()>::new();
+        map.set_val_at(b"one.val", ());
+        map.set_val_at(b"one.two.val", ());
+        map.set_val_at(b"one.two.three.val", ());
+        map.set_val_at(b"one.two.three.four.val", ());
+
+        //Test descending a read zipper
+        let mut wz = map.write_zipper();
+        wz.descend_to(b"one.");
+
+        //We should be at a node boundary, as long as this part of the path got encoded as a PairNode (or a ByteNode)
+        let node = wz.try_borrow_focus().unwrap();
+        assert_eq!(node.as_tagged().count_branches(&[]), 2);
+        let expected_mask: ByteMask = [b't', b'v'].into_iter().collect();
+        assert_eq!(node.as_tagged().node_branches_mask(&[]), expected_mask);
+        assert!(matches!(wz.get_focus(), AbstractNodeRef::BorrowedRc(_))); //Make sure we get the ODRc
+        drop(wz);
+
+        //Test creating a read zipper at the location, using `read_zipper_at_path`
+        let wz = map.write_zipper_at_path(b"one.two.");
+
+        //We should be at a node boundary, as long as this part of the path got encoded as a PairNode (or a ByteNode)
+        let node = wz.try_borrow_focus().unwrap();
+        assert_eq!(node.as_tagged().count_branches(&[]), 2);
+        let expected_mask: ByteMask = [b't', b'v'].into_iter().collect();
+        assert_eq!(node.as_tagged().node_branches_mask(&[]), expected_mask);
+        assert!(matches!(wz.get_focus(), AbstractNodeRef::BorrowedRc(_))); //Make sure we get the ODRc
+        drop(wz);
+
+        //Test creating a read zipper from a ZipperHead
+        let zh = map.zipper_head();
+        let wz = zh.write_zipper_at_exclusive_path(b"one.two.three.").unwrap();
+
+        // We should be at a node boundary, as long as this part of the path got encoded as a PairNode (or a ByteNode)
+        let node = wz.try_borrow_focus().unwrap();
+        assert_eq!(node.as_tagged().count_branches(&[]), 2);
+        let expected_mask: ByteMask = [b'f', b'v'].into_iter().collect();
+        assert_eq!(node.as_tagged().node_branches_mask(&[]), expected_mask);
+        assert!(matches!(wz.get_focus(), AbstractNodeRef::BorrowedRc(_))); //Make sure we get the ODRc
     }
 
     crate::zipper::zipper_moving_tests::zipper_moving_tests!(write_zipper,

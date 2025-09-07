@@ -3,7 +3,10 @@ use libz_ng_sys::*;
 use crate::PathMap;
 use crate::TrieValue;
 use crate::alloc::Allocator;
-use crate::zipper::{ZipperReadOnlyConditionalIteration, ZipperWriting};
+use crate::zipper::{
+  ZipperReadOnlyConditionalIteration,
+  ZipperWriting,
+};
 
 #[cfg(feature="nightly")]
 #[path="path_serialization_nightly.rs"]
@@ -24,7 +27,12 @@ pub struct DeserializationStats {
   pub path_count : usize
 }
 
-pub fn serialize_paths_<'a, V : TrieValue, RZ : ZipperReadOnlyConditionalIteration<'a, V>, W: std::io::Write>(rz: RZ, target: &mut W) -> std::io::Result<SerializationStats> {
+pub fn serialize_paths_<'a, V, W, RZ>(rz: RZ, target: &mut W) -> std::io::Result<SerializationStats>
+  where
+    V: TrieValue,
+    RZ: ZipperReadOnlyConditionalIteration<'a, V>,
+    W: std::io::Write
+{
   serialize_paths(rz, target, |_, _, _| {})
 }
 

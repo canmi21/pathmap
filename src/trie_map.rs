@@ -6,11 +6,7 @@ use crate::trie_node::*;
 use crate::zipper::*;
 use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
 
-#[cfg(not(miri))]
-use gxhash::gxhash128;
-
-#[cfg(miri)]
-fn gxhash128(data: &[u8], _seed: i64) -> u128 { xxhash_rust::const_xxh3::xxh3_128(data) }
+use crate::gxhash::gxhash128;
 
 //GOAT-old-names
 #[deprecated]
@@ -116,7 +112,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
     /// Internal method to ensure there is a valid node at the root of the map
     #[inline]
     pub(crate) fn ensure_root(&self) {
-        let root_ref = unsafe{ &mut *self.root.get() };
+        let root_ref = unsafe{ &*self.root.get() };
         if root_ref.is_some() {
             return
         }
@@ -189,24 +185,17 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
     }
 
     /// Creates a new [TrieRef], referring to a position from the root of the `PathMap`
-    pub fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'_, V, A> {
+    pub fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRefBorrowed<'_, V, A> {
         self.ensure_root();
         let path = path.as_ref();
-        trie_ref_at_path_in(self.root().unwrap().as_tagged(), self.root_val(), &[], path, self.alloc.clone())
+        TrieRefBorrowed::new_with_key_and_path_in(self.root().unwrap(), self.root_val(), &[], path, self.alloc.clone())
     }
 
     /// Creates a new read-only [Zipper], starting at the root of a `PathMap`
     pub fn read_zipper<'a>(&'a self) -> ReadZipperUntracked<'a, 'static, V, A> {
         self.ensure_root();
         let root_val = unsafe{ &*self.root_val.get() }.as_ref();
-        #[cfg(debug_assertions)]
-        {
-            ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap().as_tagged(), &[], 0, root_val, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap().as_tagged(), &[], 0, root_val, self.alloc.clone())
-        }
+        ReadZipperUntracked::new_with_node_and_path_internal_in(self.root().unwrap(), &[], 0, root_val, self.alloc.clone())
     }
 
     /// Creates a new read-only [Zipper], with the specified path from the root of the map; This method is much more
@@ -218,14 +207,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
             true => unsafe{ &*self.root_val.get() }.as_ref(),
             false => None
         };
-        #[cfg(debug_assertions)]
-        {
-            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap().as_tagged(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap().as_tagged(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone())
-        }
+        ReadZipperUntracked::new_with_node_and_path_in(self.root().unwrap(), path.as_ref(), path.len(), 0, root_val, self.alloc.clone())
     }
 
     /// Creates a new read-only [Zipper], with the `path` specified from the root of the map
@@ -236,14 +218,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
             true => unsafe{ &*self.root_val.get() }.as_ref(),
             false => None
         };
-        #[cfg(debug_assertions)]
-        {
-            ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap().as_tagged(), path, path.len(), 0, root_val, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap().as_tagged(), path, path.len(), 0, root_val, self.alloc.clone())
-        }
+        ReadZipperUntracked::new_with_node_and_cloned_path_in(self.root().unwrap(), path, path.len(), 0, root_val, self.alloc.clone())
     }
 
     /// Creates a new [write zipper](ZipperWriting) starting at the root of the `PathMap`
@@ -356,8 +331,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         zipper.set_val(v)
     }
 
-    /// Deprecated alias for [Self::set_val_at]
-    #[deprecated] //GOAT-old-names
+    /// Alias for [Self::set_val_at], so `PathMap` "feels" like other Rust collections
     pub fn insert<K: AsRef<[u8]>>(&mut self, k: K, v: V) -> Option<V> {
         self.set_val_at(k, v)
     }
@@ -375,8 +349,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         zipper.remove_val()
     }
 
-    /// Deprecated alias for [Self::remove_val_at]
-    #[deprecated] //GOAT-old-names
+    /// Alias for [Self::remove_val_at], so `PathMap` "feels" like other Rust collections
     pub fn remove<K: AsRef<[u8]>>(&mut self, path: K) -> Option<V> {
         self.remove_val_at(path)
     }
@@ -395,8 +368,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         zipper.get_val()
     }
 
-    /// Deprecated alias for [Self::get_val_at]
-    #[deprecated] //GOAT-old-names
+    /// Alias for [Self::get_val_at], so `PathMap` "feels" like other Rust collections
     pub fn get<K: AsRef<[u8]>>(&self, path: K) -> Option<&V> {
         self.get_val_at(path)
     }
@@ -412,6 +384,11 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         let root_node = self.root.get_mut().as_mut().unwrap();
         let (node_key, node) = node_along_path_mut(root_node, path, true);
         node.as_tagged_mut().node_into_val_ref_mut(node_key)
+    }
+
+    /// Alias for [Self::get_val_mut_at], so `PathMap` "feels" like other Rust collections
+    pub fn get_mut<K: AsRef<[u8]>>(&mut self, path: K) -> Option<&mut V> {
+        self.get_val_mut_at(path)
     }
 
     /// Returns a mutable reference to the value at the specified `path`, inserting the result
@@ -1198,7 +1175,8 @@ mod tests {
 
         let expected = [3, 5, 4];
         let mut i = 0;
-        while let Some(val) = zipper.to_next_get_val() {
+        let witness = zipper.witness();
+        while let Some(val) = zipper.to_next_get_val_with_witness(&witness) {
             assert_eq!(*val, expected[i]);
             i += 1;
         }
