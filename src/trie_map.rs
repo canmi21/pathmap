@@ -331,8 +331,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         zipper.set_val(v)
     }
 
-    /// Deprecated alias for [Self::set_val_at]
-    #[deprecated] //GOAT-old-names
+    /// Alias for [Self::set_val_at], so `PathMap` "feels" like other Rust collections
     pub fn insert<K: AsRef<[u8]>>(&mut self, k: K, v: V) -> Option<V> {
         self.set_val_at(k, v)
     }
@@ -350,8 +349,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         zipper.remove_val()
     }
 
-    /// Deprecated alias for [Self::remove_val_at]
-    #[deprecated] //GOAT-old-names
+    /// Alias for [Self::remove_val_at], so `PathMap` "feels" like other Rust collections
     pub fn remove<K: AsRef<[u8]>>(&mut self, path: K) -> Option<V> {
         self.remove_val_at(path)
     }
@@ -370,8 +368,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         zipper.get_val()
     }
 
-    /// Deprecated alias for [Self::get_val_at]
-    #[deprecated] //GOAT-old-names
+    /// Alias for [Self::get_val_at], so `PathMap` "feels" like other Rust collections
     pub fn get<K: AsRef<[u8]>>(&self, path: K) -> Option<&V> {
         self.get_val_at(path)
     }
@@ -387,6 +384,11 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         let root_node = self.root.get_mut().as_mut().unwrap();
         let (node_key, node) = node_along_path_mut(root_node, path, true);
         node.as_tagged_mut().node_into_val_ref_mut(node_key)
+    }
+
+    /// Alias for [Self::get_val_mut_at], so `PathMap` "feels" like other Rust collections
+    pub fn get_mut<K: AsRef<[u8]>>(&mut self, path: K) -> Option<&mut V> {
+        self.get_val_mut_at(path)
     }
 
     /// Returns a mutable reference to the value at the specified `path`, inserting the result
