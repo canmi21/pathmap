@@ -793,7 +793,7 @@ impl<'a, V, Z> ZipperReadOnlyConditionalIteration<'a, V> for &mut Z where Z: Zip
 impl<'a, V: Clone + Send + Sync + 'a, Z, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for &mut Z where Z: ZipperReadOnlySubtries<'a, V, A>, Self: ZipperReadOnlyPriv<'a, V, A> + ZipperSubtries<V, A> {
     type TrieRefT = <Z as ZipperReadOnlySubtries<'a, V, A>>::TrieRefT;
     fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT { (**self).trie_ref_at_path(path) }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT { (**self).trie_ref_at_path_unchecked(path) }
+    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT { unsafe{ (**self).trie_ref_at_path_unchecked(path) } }
 }
 
 impl<Z> ZipperConcrete for &mut Z where Z: ZipperConcrete, Self: ZipperConcretePriv {
@@ -808,7 +808,7 @@ impl<V: Clone + Send + Sync, Z, A: Allocator> ZipperPriv for &mut Z where Z: Zip
 }
 
 impl<Z> ZipperPathBuffer for &mut Z where Z: ZipperPathBuffer {
-    unsafe fn origin_path_assert_len(&self, len: usize) -> &[u8] { (**self).origin_path_assert_len(len) }
+    unsafe fn origin_path_assert_len(&self, len: usize) -> &[u8] { unsafe{ (**self).origin_path_assert_len(len) } }
     fn prepare_buffers(&mut self) { (**self).prepare_buffers() }
     fn reserve_buffers(&mut self, path_len: usize, stack_depth: usize) { (**self).reserve_buffers(path_len, stack_depth) }
 }
@@ -2881,7 +2881,7 @@ impl<'a> SliceOrLen<'a> {
     pub unsafe fn as_slice_unchecked(&self) -> &'a[u8] {
         match self {
             Self::Slice(slice) => slice,
-            Self::Len(_) => core::hint::unreachable_unchecked()
+            Self::Len(_) => unsafe{ core::hint::unreachable_unchecked() }
         }
     }
     #[inline]

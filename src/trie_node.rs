@@ -452,10 +452,10 @@ impl<V: Clone + Send + Sync, A: Allocator> From<ValOrChild<V, A>> for ValOrChild
 }
 impl<V: Clone + Send + Sync, A: Allocator> ValOrChildUnion<V, A> {
     pub unsafe fn into_val(self) -> V {
-        LocalOrHeap::into_inner(ManuallyDrop::into_inner(self.val))
+        LocalOrHeap::into_inner(ManuallyDrop::into_inner(unsafe{ self.val }))
     }
     pub unsafe fn into_child(self) -> TrieNodeODRc<V, A> {
-        ManuallyDrop::into_inner(self.child)
+        ManuallyDrop::into_inner(unsafe{ self.child })
     }
 }
 
@@ -823,7 +823,7 @@ mod tagged_node_ref {
         pub unsafe fn as_tiny_unchecked(&self) -> &'a TinyRefNode<'a, V, A> {
             match self {
                 Self::TinyRefNode(node) => node,
-                _ => unreachable_unchecked()
+                _ => unsafe{ unreachable_unchecked() }
             }
         }
     }

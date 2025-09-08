@@ -311,8 +311,8 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
     #[inline]
     pub(crate) unsafe fn key_unchecked<const SLOT: usize>(&self) -> &[u8] {
         match SLOT {
-            0 => core::slice::from_raw_parts(self.key_bytes.as_ptr().cast(), self.key_len_0()),
-            1 => {
+            0 => unsafe{ core::slice::from_raw_parts(self.key_bytes.as_ptr().cast(), self.key_len_0()) },
+            1 => unsafe{
                 let ptr = self.key_bytes.as_ptr().cast::<u8>().add(self.key_len_0());
                 core::slice::from_raw_parts(ptr, self.key_len_1())
             },
@@ -322,24 +322,24 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
     #[inline]
     unsafe fn child_in_slot<const SLOT: usize>(&self) -> &TrieNodeODRc<V, A> {
         match SLOT {
-            0 => &*self.val_or_child0.child,
-            1 => &*self.val_or_child1.child,
+            0 => unsafe{ &*self.val_or_child0.child },
+            1 => unsafe{ &*self.val_or_child1.child },
             _ => unreachable!()
         }
     }
     #[inline]
     unsafe fn child_in_slot_mut<const SLOT: usize>(&mut self) -> &mut TrieNodeODRc<V, A> {
         match SLOT {
-            0 => &mut *self.val_or_child0.child,
-            1 => &mut *self.val_or_child1.child,
+            0 => unsafe{ &mut *self.val_or_child0.child },
+            1 => unsafe{ &mut *self.val_or_child1.child },
             _ => unreachable!()
         }
     }
     #[inline]
     unsafe fn val_in_slot<const SLOT: usize>(&self) -> &V {
         match SLOT {
-            0 => &**self.val_or_child0.val,
-            1 => &**self.val_or_child1.val,
+            0 => unsafe{ &**self.val_or_child0.val },
+            1 => unsafe{ &**self.val_or_child1.val },
             _ => unreachable!()
         }
     }
@@ -454,11 +454,11 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
 impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
     #[inline]
     unsafe fn set_child_0(&mut self, key: &[u8], child: TrieNodeODRc<V, A>) {
-        self.set_payload_0(key, true, ValOrChildUnion{ child: ManuallyDrop::new(child) });
+        unsafe{ self.set_payload_0(key, true, ValOrChildUnion{ child: ManuallyDrop::new(child) }); }
     }
     #[inline]
     unsafe fn set_child_1(&mut self, key: &[u8], child: TrieNodeODRc<V, A>) {
-        self.set_payload_1(key, true, ValOrChildUnion{ child: ManuallyDrop::new(child) });
+        unsafe{ self.set_payload_1(key, true, ValOrChildUnion{ child: ManuallyDrop::new(child) }); }
     }
     /// Splits the key in slot_0 at `idx` (exclusive.  ie. the length of the key)
     fn split_0(&mut self, idx: usize) where V: Clone {
@@ -539,7 +539,7 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
     #[inline]
     unsafe fn set_payload_0(&mut self, key: &[u8], is_child_ptr: bool, payload: ValOrChildUnion<V, A>) {
         debug_assert!(key.len() <= KEY_BYTES_CNT);
-        core::ptr::copy_nonoverlapping(key.as_ptr(), self.key_bytes.as_mut_ptr().cast(), key.len());
+        unsafe{ core::ptr::copy_nonoverlapping(key.as_ptr(), self.key_bytes.as_mut_ptr().cast(), key.len()); }
         self.val_or_child0 = payload;
         self.header = Self::header0(is_child_ptr, key.len());
         if key.len() == KEY_BYTES_CNT {
@@ -550,8 +550,8 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
     unsafe fn set_payload_1(&mut self, key: &[u8], is_child_ptr: bool, payload: ValOrChildUnion<V, A>) {
         let key_0_used_cnt = self.key_len_0();
         debug_assert!(key.len() <= KEY_BYTES_CNT - key_0_used_cnt);
-        let dst_ptr = self.key_bytes.as_mut_ptr().cast::<u8>().add(key_0_used_cnt);
-        core::ptr::copy_nonoverlapping(key.as_ptr(), dst_ptr, key.len());
+        let dst_ptr = unsafe{ self.key_bytes.as_mut_ptr().cast::<u8>().add(key_0_used_cnt) };
+        unsafe{ core::ptr::copy_nonoverlapping(key.as_ptr(), dst_ptr, key.len()); }
         self.val_or_child1 = payload;
         self.header |= Self::header1(is_child_ptr, key.len());
     }
@@ -559,12 +559,12 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
     pub(crate) unsafe fn set_payload_owned<const SLOT: usize>(&mut self, key: &[u8], payload: ValOrChild<V, A>) where V: Clone {
         match SLOT {
             0 => match payload {
-                ValOrChild::Child(child) => self.set_payload_0(key, true, ValOrChildUnion{ child: ManuallyDrop::new(child) }),
-                ValOrChild::Val(val) => self.set_payload_0(key, false, ValOrChildUnion{ val: ManuallyDrop::new(LocalOrHeap::new(val)) })
+                ValOrChild::Child(child) => unsafe{ self.set_payload_0(key, true, ValOrChildUnion{ child: ManuallyDrop::new(child) }) },
+                ValOrChild::Val(val) => unsafe{ self.set_payload_0(key, false, ValOrChildUnion{ val: ManuallyDrop::new(LocalOrHeap::new(val)) }) }
             },
             1 => match payload {
-                ValOrChild::Child(child) => { self.set_payload_1_no_overflow(key, true, ValOrChildUnion{ child: ManuallyDrop::new(child) }); },
-                ValOrChild::Val(val) => { self.set_payload_1_no_overflow(key, false, ValOrChildUnion{ val: ManuallyDrop::new(LocalOrHeap::new(val)) }); }
+                ValOrChild::Child(child) => unsafe{ self.set_payload_1_no_overflow(key, true, ValOrChildUnion{ child: ManuallyDrop::new(child) }); },
+                ValOrChild::Val(val) => unsafe{ self.set_payload_1_no_overflow(key, false, ValOrChildUnion{ val: ManuallyDrop::new(LocalOrHeap::new(val)) }); }
             },
             _ => unreachable!()
         }
@@ -583,15 +583,15 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
             debug_assert!(child_node_key.len() > 0);
             debug_assert!(child_node_key.len() <= KEY_BYTES_CNT);
             let mut child_node = Self::new_in(self.alloc.clone());
-            child_node.set_payload_0(child_node_key, is_child_ptr, payload);
+            unsafe{ child_node.set_payload_0(child_node_key, is_child_ptr, payload); }
             let mut next_node = TrieNodeODRc::new_in(child_node, self.alloc.clone());
             for idx in (1..node_cnt).rev() {
                 let mut child_node = Self::new_in(self.alloc.clone());
                 let child_node_key = &key[(idx*KEY_BYTES_CNT)..((idx+1)*KEY_BYTES_CNT)];
-                child_node.set_child_0(child_node_key, next_node);
+                unsafe{ child_node.set_child_0(child_node_key, next_node); }
                 next_node = TrieNodeODRc::new_in(child_node, self.alloc.clone());
             }
-            self.set_child_0(&key[..KEY_BYTES_CNT], next_node);
+            unsafe{ self.set_child_0(&key[..KEY_BYTES_CNT], next_node); }
             true
         }
     }
@@ -610,7 +610,7 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
             } else {
                 //We need to recursively create a new node to hold the remaining part of the key
                 let mut child_node = Self::new_in(self.alloc.clone());
-                child_node.set_payload_0_no_overflow(&key[remaining_key_bytes..], is_child_ptr, payload);
+                unsafe{ child_node.set_payload_0_no_overflow(&key[remaining_key_bytes..], is_child_ptr, payload); }
                 unsafe{ self.set_child_1(&key[..remaining_key_bytes], TrieNodeODRc::new_in(child_node, self.alloc.clone())); }
                 true
             }
@@ -620,7 +620,7 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
             self.split_0(KEY_BYTES_CNT / 2);
 
             //Try again to add the new value to self, now that we've cleared some space
-            self.set_payload_1_no_overflow(key, is_child_ptr, payload);
+            unsafe{ self.set_payload_1_no_overflow(key, is_child_ptr, payload); }
             true
         }
     }
@@ -641,7 +641,7 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
             } else {
                 //We need to recursively create at least one new node to hold the remaining part of the key
                 let mut child_node = Self::new_in(self.alloc.clone());
-                child_node.set_payload_0_no_overflow(&key[remaining_key_bytes..], is_child_ptr, payload);
+                unsafe{ child_node.set_payload_0_no_overflow(&key[remaining_key_bytes..], is_child_ptr, payload); }
                 (&key[..remaining_key_bytes], true, ValOrChildUnion{ child: ManuallyDrop::new(TrieNodeODRc::new_in(child_node, self.alloc.clone())) }, true)
             };
             let new_key_len = new_key.len();
@@ -674,7 +674,7 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
             //If there is a single slot that is occupied but the key consumes the full node, then arbitrarily
             // chop the existing key in half to make room, and then try again
             self.split_0(KEY_BYTES_CNT / 2);
-            self.set_payload_0_shift_existing(key, is_child_ptr, payload);
+            unsafe{ self.set_payload_0_shift_existing(key, is_child_ptr, payload); }
             true
         }
     }

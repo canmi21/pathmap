@@ -310,14 +310,14 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> ByteNode<Cf, A>
     pub unsafe fn get_unchecked(&self, k: u8) -> &Cf {
         let ix = self.mask.index_of(k) as usize;
         // println!("pos ix {} {} {:b}", pos, ix, self.mask);
-        self.values.get_unchecked(ix)
+        unsafe{ self.values.get_unchecked(ix) }
     }
 
     #[inline]
     unsafe fn get_unchecked_mut(&mut self, k: u8) -> &mut Cf {
         let ix = self.mask.index_of(k) as usize;
         // println!("pos ix {} {} {:b}", pos, ix, self.mask);
-        self.values.get_unchecked_mut(ix)
+        unsafe{ self.values.get_unchecked_mut(ix) }
     }
 
     #[inline]

@@ -1,7 +1,7 @@
 [package]
 name = "pathmap"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 rust-version = "1.88"
 description = "A key-value store with prefix compression, structural sharing, and powerful algebraic operations"
 exclude = ["benches/", "pathmap-book/", ".*"]
@@ -22,7 +22,7 @@ memmap2 = { version="0.9.5", optional = true }
 
 [features]
 default = ["graft_root_vals", "slim_ptrs"]
-nightly = [] # Uses features in the nightly tool chain for better performance
+nightly = [] # Uses features in the nightly tool chain for better performance, and the allocator and coroutine APIs
 jemalloc = ["dep:tikv-jemallocator"] # Enables [jemalloc](https://jemalloc.net/) as the default allocator.  This dramatically improves scaling for write-heavy workloads and is generally recommended.  The only reason it is not the default is to avoid interference with the host application allocator.
 zipper_tracking = [] #Exports the zipper_tracking module publicly
 all_dense_nodes = [] # Exclusively use the DenseByteNode type, which generally performs worse but is useful for compatibility and perf comparisons.
