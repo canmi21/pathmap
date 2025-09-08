@@ -205,8 +205,8 @@ fn sparse_all_dense_cursor(bencher: Bencher, n: u64) {
 
     let mut r = StdRng::seed_from_u64(1);
     let keys: Vec<Vec<u8>> = (0..n).into_iter().map(|_| {
-        let len = (r.gen::<u8>() % 18) + 3; //length between 3 and 20 chars
-        (0..len).into_iter().map(|_| r.gen::<u8>()).collect()
+        let len = (r.random::<u8>() % 18) + 3; //length between 3 and 20 chars
+        (0..len).into_iter().map(|_| r.random::<u8>()).collect()
     }).collect();
     let map: PathMap<usize> = keys.iter().enumerate().map(|(n, s)| (s, n)).collect();
 
