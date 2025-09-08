@@ -114,7 +114,7 @@ pub mod alloc;
 pub mod viz;
 
 pub mod serialization;
-pub mod path_serialization;
+pub mod paths_serialization;
 pub mod tree_serialization;
 
 mod trie_node;

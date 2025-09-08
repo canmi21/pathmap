@@ -18,10 +18,10 @@ use crate::zipper::{
 };
 
 #[cfg(feature="nightly")]
-#[path="path_serialization_nightly.rs"]
-mod path_serialization_nightly;
+#[path="paths_serialization_nightly.rs"]
+mod paths_serialization_nightly;
 #[cfg(feature="nightly")]
-pub use path_serialization_nightly::*;
+pub use paths_serialization_nightly::*;
 
 /// Statistics from a `serialize` operation
 #[derive(Debug, Clone, Copy)]
