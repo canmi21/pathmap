@@ -1,7 +1,9 @@
 use super::*;
 
+/// Returns a coroutine to incrementally serialize into `.paths` data and write to `target`
+///
+/// Passing `None` signals the end of input.
 /// Warning: the size of the individual path serialization can be double exponential in the size of the PathMap
-/// Returns the target output, total serialized bytes (uncompressed), and total number of paths
 pub fn path_serialize_sink<'p, W: std::io::Write>(target: &mut W) -> impl std::ops::Coroutine<Option<&'p [u8]>, Yield=(), Return=std::io::Result<SerializationStats>> {
   #[coroutine] move |i: Option<&'p [u8]>| {
     const CHUNK: usize = 4096; // not tuned yet
