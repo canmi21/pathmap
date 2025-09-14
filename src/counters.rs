@@ -1,7 +1,6 @@
-
 use crate::PathMap;
 use crate::zipper::{*, zipper_priv::ZipperPriv};
-use crate::trie_node::TrieNode;
+use crate::trie_node::{TaggedNodeRef, TrieNode};
 
 /// Example usage of counters
 ///
@@ -96,17 +95,17 @@ impl Counters {
             );
         }
     }
-    pub fn count_ocupancy<V: Clone + Send + Sync>(map: &PathMap<V>) -> Self {
+    pub fn count_ocupancy<V: Clone + Send + Sync + Unpin>(map: &PathMap<V>) -> Self {
         let mut counters = Counters::new();
 
-        counters.count_node(map.root().borrow(), 0);
+        counters.count_node(map.root().unwrap().as_tagged(), 0);
 
         let mut zipper = map.read_zipper();
         while zipper.to_next_step() {
             let depth = zipper.path().len();
 
             counters.run_counter_update(depth);
-            if let Some(focus_node) = zipper.get_focus().try_borrow() {
+            if let Some(focus_node) = zipper.get_focus().try_as_tagged() {
                 counters.count_node(focus_node, depth);
             } else {
                 counters.end_run(depth-1);
@@ -115,22 +114,22 @@ impl Counters {
 
         counters
     }
-    fn count_node<V: Clone + Send + Sync>(&mut self, node: &dyn TrieNode<V>, depth: usize) {
-        if let Some(node) = node.as_tagged().as_dense() {
-            if node.item_count() != 1 {
+    fn count_node<V: Clone + Send + Sync, A : crate::alloc::Allocator>(&mut self, node: TaggedNodeRef<V, A>, depth: usize) {
+        if let Some(dbn) = node.as_dense() {
+            if dbn.item_count() != 1 {
                 self.end_run(depth);
             }
             self.increment_common_counters(node, depth);
             self.total_dense_byte_nodes_by_depth[depth] += 1;
         }
-        if let Some(node) = node.as_tagged().as_list() {
-            if node.item_count() != 1 {
+        if let Some(lln) = node.as_list() {
+            if lln.item_count() != 1 {
                 self.end_run(depth);
             }
             self.increment_common_counters(node, depth);
             self.total_list_nodes_by_depth[depth] += 1;
 
-            let (key0, key1) = node.get_both_keys();
+            let (key0, key1) = lln.get_both_keys();
             self.total_slot0_length_by_depth[depth] += key0.len();
             if key1.len() > 0 {
                 self.slot1_occupancy_count_by_depth[depth] += 1;
@@ -154,7 +153,7 @@ impl Counters {
             self.list_node_single_byte_keys_by_depth.resize(depth+1, 0);
         }
     }
-    fn increment_common_counters<V: Clone>(&mut self, node: &dyn TrieNode<V>, depth: usize) {
+    fn increment_common_counters<V: Clone + Send + Sync, A : crate::alloc::Allocator>(&mut self, node: TaggedNodeRef<V, A>, depth: usize) {
         self.resize_all_historgrams(depth);
         let child_item_count = node.item_count();
         self.total_nodes_by_depth[depth] += 1;
@@ -186,11 +185,11 @@ impl Counters {
     }
 }
 
-pub fn print_traversal<'a, V: 'a + Clone, Z: ZipperIteration<'a, V> + Clone>(zipper: &Z) {
+pub fn print_traversal<'a, V: 'a + Clone + Unpin, Z: ZipperIteration + Clone>(zipper: &Z) {
     let mut zipper = zipper.clone();
 
     println!("{:?}", zipper.path());
-    while let Some(_v) = zipper.to_next_val() {
+    while zipper.to_next_val() {
         println!("{:?}", zipper.path());
     }
 }
