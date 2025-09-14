@@ -132,8 +132,20 @@ pub(crate) trait TrieNode<V: Clone + Send + Sync, A: Allocator>: TrieNodeDowncas
     ///
     /// Returns `Some(val)` with the value that was removed, otherwise returns `None`
     ///
+    /// If `prune` is `true` this method will prune dangling paths within the node, otherwise
+    /// it will keep the dangling path.
     /// WARNING: This method may leave the node empty
-    fn node_remove_val(&mut self, key: &[u8]) -> Option<V>;
+    fn node_remove_val(&mut self, key: &[u8], prune: bool) -> Option<V>;
+
+    /// Removes a dangling path exactly specified by `key`, from the node.  Returns the number of path
+    /// bytes that comprised the dangling path, or 0 if no path was removed.
+    ///
+    /// Does nothing and returns 0 if `key` specifies a non-dagling or non-existent path.
+    /// This method will not affect dangling paths other than those specified by `key`.
+    /// This method may leave the node empty.
+    /// This method should never be called with a zero-length key.  If the `key` arg is longer than the
+    /// keys contained within the node, this method should return `false`
+    fn node_remove_dangling(&mut self, key: &[u8]) -> usize;
 
     /// Sets the downstream branch from the specified `key`.  Does not affect the value at the `key`
     ///
@@ -1413,6 +1425,14 @@ mod tagged_node_ref {
             }
         }
 
+        pub fn node_remove_dangling(&mut self, key: &[u8]) -> usize {
+            match self {
+                Self::DenseByteNode(node) => node.node_remove_dangling(key),
+                Self::LineListNode(node) => node.node_remove_dangling(key),
+                Self::CellByteNode(node) => node.node_remove_dangling(key),
+            }
+        }
+
         pub fn node_replace_child(&mut self, key: &[u8], new_node: TrieNodeODRc<V, A>) {
             match self {
                 Self::DenseByteNode(node) => node.node_replace_child(key, new_node),
@@ -1447,11 +1467,11 @@ mod tagged_node_ref {
             }
         }
 
-        pub fn node_remove_val(&mut self, key: &[u8]) -> Option<V> {
+        pub fn node_remove_val(&mut self, key: &[u8], prune: bool) -> Option<V> {
             match self {
-                Self::DenseByteNode(node) => node.node_remove_val(key),
-                Self::LineListNode(node) => node.node_remove_val(key),
-                Self::CellByteNode(node) => node.node_remove_val(key),
+                Self::DenseByteNode(node) => node.node_remove_val(key, prune),
+                Self::LineListNode(node) => node.node_remove_val(key, prune),
+                Self::CellByteNode(node) => node.node_remove_val(key, prune),
             }
         }
 
@@ -2715,6 +2735,9 @@ mod opaque_dyn_rc_trie_node {
         #[inline]
         pub(crate) fn new_empty() -> Self {
             Self { ptr: SlimNodePtr::new_empty(), alloc: MaybeUninit::uninit() }
+        }
+        pub(crate) fn is_empty(&self) -> bool {
+            self.tag() == EMPTY_NODE_TAG
         }
         /// Creates a new `TrieNodeODRc` that references a node that exists in memory (ie. not a sentinel for EmptyNode),
         /// but contains no values or onward links

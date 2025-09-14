@@ -64,12 +64,12 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
     ///
     /// WARNING: This method may cause the trie to be pruned above the zipper's focus, and may result in
     /// [Zipper::path_exists] returning `false`, where it previously returned `true`
-    fn remove_val(&mut self) -> Option<V>;
+    fn remove_val(&mut self, prune: bool) -> Option<V>;
 
     /// Deprecated alias for [ZipperWriting::remove_val]
     #[deprecated] //GOAT-old-names
     fn remove_value(&mut self) -> Option<V> {
-        self.remove_val()
+        self.remove_val(true)
     }
 
     /// Creates a [ZipperHead] at the zipper's current focus
@@ -197,13 +197,20 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
     /// GOAT: See discussion in [ZipperSubtries::make_map] about whether this behavior should be changed
     fn take_map(&mut self) -> Option<PathMap<V, A>>;
 
-    /// Uses a 256-bit mask to remove multiple branches below the zipper's focus
+    /// Removes multiple branches below the zipper's focus based on the supplied 256-bit `mask`
     ///
     /// Key bytes for which the corresponding `mask` bit is `0` will be removed.
     ///
     /// WARNING: This method may cause the trie to be pruned above the zipper's focus, and may result in
     /// [Zipper::path_exists] returning `false`, where it previously returned `true`
     fn remove_unmasked_branches(&mut self, mask: ByteMask);
+
+    /// Prunes a dangling path above the zipper's focus.  Returns the number of path bytes removed
+    ///
+    /// Calling this method may result in [Zipper::path_exists] to subsequently returning `false`, where it previously returned `true`
+    ///
+    /// This method has no effect if there is a value at the focus, or any downstream paths from the focus.
+    fn prune(&mut self) -> usize;
 }
 
 pub(crate) mod write_zipper_priv {
@@ -225,7 +232,7 @@ impl<V: Clone + Send + Sync, Z, A: Allocator> ZipperWriting<V, A> for &mut Z whe
     fn get_val_or_set_mut(&mut self, default: V) -> &mut V { (**self).get_val_or_set_mut(default) }
     fn get_val_or_set_mut_with<F>(&mut self, func: F) -> &mut V where F: FnOnce() -> V { (**self).get_val_or_set_mut_with(func) }
     fn set_val(&mut self, val: V) -> Option<V> { (**self).set_val(val) }
-    fn remove_val(&mut self) -> Option<V> { (**self).remove_val() }
+    fn remove_val(&mut self, prune: bool) -> Option<V> { (**self).remove_val(prune) }
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { (**self).zipper_head() }
     fn graft<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) { (**self).graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { (**self).graft_map(map) }
@@ -243,6 +250,7 @@ impl<V: Clone + Send + Sync, Z, A: Allocator> ZipperWriting<V, A> for &mut Z whe
     fn remove_branches(&mut self) -> bool { (**self).remove_branches() }
     fn take_map(&mut self) -> Option<PathMap<V, A>> { (**self).take_map() }
     fn remove_unmasked_branches(&mut self, mask: ByteMask) { (**self).remove_unmasked_branches(mask) }
+    fn prune(&mut self) -> usize { (**self).prune() }
 }
 
 impl<V: Clone + Send + Sync, Z, A: Allocator> WriteZipperPriv<V, A> for &mut Z where Z: WriteZipperPriv<V, A> {
@@ -374,7 +382,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn get_val_or_set_mut(&mut self, default: V) -> &mut V { self.z.get_val_or_set_mut(default) }
     fn get_val_or_set_mut_with<F>(&mut self, func: F) -> &mut V where F: FnOnce() -> V { self.z.get_val_or_set_mut_with(func) }
     fn set_val(&mut self, val: V) -> Option<V> { self.z.set_val(val) }
-    fn remove_val(&mut self) -> Option<V> { self.z.remove_val() }
+    fn remove_val(&mut self, prune: bool) -> Option<V> { self.z.remove_val(prune) }
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { self.z.zipper_head() }
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) { self.z.graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { self.z.graft_map(map) }
@@ -392,6 +400,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn remove_branches(&mut self) -> bool { self.z.remove_branches() }
     fn take_map(&mut self) -> Option<PathMap<V, A>> { self.z.take_map() }
     fn remove_unmasked_branches(&mut self, mask: ByteMask) { self.z.remove_unmasked_branches(mask) }
+    fn prune(&mut self) -> usize { self.z.prune() }
 }
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperPriv<V, A> for WriteZipperTracked<'a, 'path, V, A> {
@@ -545,7 +554,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn get_val_or_set_mut(&mut self, default: V) -> &mut V { self.z.get_val_or_set_mut(default) }
     fn get_val_or_set_mut_with<F>(&mut self, func: F) -> &mut V where F: FnOnce() -> V { self.z.get_val_or_set_mut_with(func) }
     fn set_val(&mut self, val: V) -> Option<V> { self.z.set_val(val) }
-    fn remove_val(&mut self) -> Option<V> { self.z.remove_val() }
+    fn remove_val(&mut self, prune: bool) -> Option<V> { self.z.remove_val(prune) }
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { self.z.zipper_head() }
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) { self.z.graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { self.z.graft_map(map) }
@@ -563,6 +572,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn remove_branches(&mut self) -> bool { self.z.remove_branches() }
     fn take_map(&mut self) -> Option<PathMap<V, A>> { self.z.take_map() }
     fn remove_unmasked_branches(&mut self, mask: ByteMask) { self.z.remove_unmasked_branches(mask) }
+    fn prune(&mut self) -> usize { self.z.prune() }
 }
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperPriv<V, A> for WriteZipperUntracked<'a, 'path, V, A> {
@@ -708,7 +718,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperWriting<V, A> for Write
     fn get_val_or_set_mut(&mut self, default: V) -> &mut V { self.z.get_val_or_set_mut(default) }
     fn get_val_or_set_mut_with<F>(&mut self, func: F) -> &mut V where F: FnOnce() -> V { self.z.get_val_or_set_mut_with(func) }
     fn set_val(&mut self, val: V) -> Option<V> { self.z.set_val(val) }
-    fn remove_val(&mut self) -> Option<V> { self.z.remove_val() }
+    fn remove_val(&mut self, prune: bool) -> Option<V> { self.z.remove_val(prune) }
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { self.z.zipper_head() }
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) { self.z.graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { self.z.graft_map(map) }
@@ -726,6 +736,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperWriting<V, A> for Write
     fn remove_branches(&mut self) -> bool { self.z.remove_branches() }
     fn take_map(&mut self) -> Option<PathMap<V, A>> { self.z.take_map() }
     fn remove_unmasked_branches(&mut self, mask: ByteMask) { self.z.remove_unmasked_branches(mask) }
+    fn prune(&mut self) -> usize { self.z.prune() }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> WriteZipperPriv<V, A> for WriteZipperOwned<V, A> {
@@ -763,12 +774,12 @@ impl<V: Clone + Send + Sync + Unpin + 'static, A: Allocator + 'static> Iterator 
     fn next(&mut self) -> Option<(Vec<u8>, V)> {
         if !self.started {
             self.started = true;
-            if let Some(val) = self.zipper.remove_val() {
+            if let Some(val) = self.zipper.remove_val(true) {
                 return Some((self.zipper.path().to_vec(), val))
             }
         }
         if self.zipper.to_next_val() {
-            match self.zipper.remove_val() {
+            match self.zipper.remove_val(true) {
                 Some(val) => return Some((self.zipper.path().to_vec(), val)),
                 None => None
             }
@@ -1280,16 +1291,16 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         old_val
     }
     /// See [ZipperWriting::remove_val]
-    pub fn remove_val(&mut self) -> Option<V> {
+    pub fn remove_val(&mut self, prune: bool) -> Option<V> {
         if self.key.node_key().len() == 0 {
             debug_assert!(self.at_root());
             let root_val_ref = self.root_val.as_mut().unwrap();
             return core::mem::take(unsafe{&mut **root_val_ref})
         }
         let mut focus_node = self.focus_stack.top_mut().unwrap();
-        if let Some(result) = focus_node.node_remove_val(self.key.node_key()) {
-            if focus_node.reborrow().node_is_empty() {
-                self.prune_path();
+        if let Some(result) = focus_node.node_remove_val(self.key.node_key(), prune) {
+            if prune {
+                self.prune_path(false);
             }
             Some(result)
         } else {
@@ -1324,7 +1335,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         #[cfg(feature = "graft_root_vals")]
         let _ = match read_zipper.val() {
             Some(src_val) => self.set_val(src_val.clone()),
-            None => self.remove_val()
+            None => self.remove_val(false)
         };
     }
     /// See [ZipperWriting::graft_map]
@@ -1337,7 +1348,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         #[cfg(feature = "graft_root_vals")]
         let _ = match src_root_val {
             Some(src_val) => self.set_val(src_val),
-            None => self.remove_val()
+            None => self.remove_val(false)
         };
     }
     /// See [ZipperWriting::join]
@@ -1458,7 +1469,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
                 }
             }
         }
-        //GOAT!!!!!  We should prune the path at the source zipper, since we're effectively leaving behind an empty node
+        //GOAT-prune!!!!!  We should prune the path at the source zipper, since we're effectively leaving behind an empty node
     }
     /// See [ZipperWriting::drop_head]
     pub fn drop_head(&mut self, byte_cnt: usize) -> bool where V: Lattice {
@@ -1474,7 +1485,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             },
             None => { false }
         }
-        //GOAT!!!!!  We should prune the path upstream, if we ended up removing all downstream paths
+        //GOAT-prune!!!!!  We should prune the path upstream, if we ended up removing all downstream paths
     }
     /// See [ZipperWriting::insert_prefix]
     pub fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool {
@@ -1655,7 +1666,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             let mut focus_node = self.focus_stack.top_mut().unwrap();
             if focus_node.node_remove_all_branches(node_key) {
                 if focus_node.reborrow().node_is_empty() {
-                    self.prune_path();
+                    self.prune_path(false); //goat-prune
                 }
                 true
             } else {
@@ -1672,7 +1683,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
                 true
             }
         }
-        //GOAT, is this where we want to do the upstream pruning??  I think this is the place to do it, taking a prune flag into this method,
+        //GOAT-prune, is this where we want to do the upstream pruning??  I think this is the place to do it, taking a prune flag into this method,
         // because graft_internal calls here
     }
     /// See [WriteZipper::take_map]
@@ -1680,10 +1691,10 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         #[cfg(not(feature = "graft_root_vals"))]
         let root_val = None;
         #[cfg(feature = "graft_root_vals")]
-        let root_val = self.remove_val();
+        let root_val = self.remove_val(true); //goat-prune
 
         let root_node = self.take_focus();
-        //GOAT, we should prune upstream here!!
+        //GOAT-prune, we should prune upstream here!!
 
         self.get_focus().into_option();
         if root_node.is_some() || root_val.is_some() {
@@ -1716,9 +1727,23 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             focus_node.node_remove_unmasked_branches(node_key, mask);
         }
         if focus_node.reborrow().node_is_empty() {
-            self.prune_path();
+            self.prune_path(false);
         }
-        //GOAT, this method should have a switch as to whether to prune the upstream branch or not
+        //GOAT-prune, this method should have a switch as to whether to prune the upstream branch or not
+    }
+
+    /// See [ZipperWriting::prune]
+    fn prune(&mut self) -> usize {
+        let key = self.key.node_key();
+        if key.len() > 0 {
+            let node_pruned_bytes = self.focus_stack.top_mut().unwrap().node_remove_dangling(key);
+            let trie_pruned_bytes = if node_pruned_bytes > 0 {
+                self.prune_path(false)
+            } else { 0 };
+            node_pruned_bytes.max(trie_pruned_bytes)
+        } else {
+            0
+        }
     }
 
     /// Internal method, Removes and returns the node at the zipper's focus.  This method may leave behind a dangling path
@@ -1740,7 +1765,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         } else {
             if let Some(new_node) = focus_node.take_node_at_key(node_key) {
                 if focus_node.reborrow().node_is_empty() {
-                    self.prune_path();
+                    self.prune_path(false); //goat-prune
                 }
                 Some(new_node)
             } else {
@@ -1818,12 +1843,14 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     /// Internal method to recursively prune empty nodes from the trie, starting at the focus, and working
     /// upward until a value or branch is encountered.
     ///
-    /// This method does not move the zipper, but may cause [Self::path_exists] to return `false`
-    pub(crate) fn prune_path(&mut self) {
-        //We need to make sure this path actually exists before trying to prune it, otherwise we may end
-        // up pruning the next upstream branch by mistake
-        if !self.focus_stack.top().unwrap().node_is_empty() && !self.path_exists() {
-            return
+    /// If `should_ascend` is `false`, then this method does not move the zipper, but may cause [Self::path_exists]
+    /// to return `false`.  If `should_ascend` is `true`, this method will move the zipper in an identical way
+    /// to [`ZipperMoving::ascend_until`]
+    pub(crate) fn prune_path(&mut self, should_ascend: bool) -> usize {
+
+        //We need to make sure we're at the end of a dangling path
+        if !self.focus_stack.top().unwrap().node_is_empty() {
+            return 0
         }
 
         //Reimplementation of KeyFields.origin_path(), to allow us to split the borrow
@@ -1887,6 +1914,14 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             //If we got here, we should have either removed something, or we should be at the top of the zipper
             debug_assert!(removed || self.focus_stack.depth()==1);
         }
+        debug_assert!(temp_path.len() >= self.key.origin_path.len());
+        let pruned_bytes = path_buf.len() - temp_path.len();
+
+        if should_ascend {
+            self.key.prefix_buf.truncate(temp_path.len());
+        }
+
+        pruned_bytes
     }
 
     /// Internal method that regularizes the `focus_stack` if nodes were created above the root
@@ -2353,7 +2388,7 @@ mod tests {
         *zipper.get_val_mut().unwrap() = 1337;
         assert_eq!(zipper.val(), Some(&1337));
 
-        assert_eq!(zipper.remove_val(), Some(1337));
+        assert_eq!(zipper.remove_val(true), Some(1337));
         assert_eq!(zipper.is_val(), false);
         assert_eq!(zipper.val(), None);
         assert_eq!(zipper.get_val_mut(), None);
@@ -2687,13 +2722,13 @@ mod tests {
         wz.set_val(());
         wz.ascend(4);
         wz.descend_to([0, 0, 0, 0]);
-        wz.remove_val();
+        wz.remove_val(true);
         wz.ascend(4);
         wz.descend_to([1, 0, 0, 1]);
-        wz.remove_val();
+        wz.remove_val(true);
         wz.ascend(4);
         wz.descend_to([2, 0, 0, 2]);
-        wz.remove_val();
+        wz.remove_val(true);
         wz.ascend(4);
 
         wz.meet(&rz);
@@ -3265,7 +3300,7 @@ mod tests {
         // [B] \/-> [A, B] should be `Identity`
         let mut wz = head.write_zipper_at_exclusive_path(b"src:").unwrap();
         wz.descend_to_byte(b'A');
-        wz.remove_val();
+        wz.remove_val(true);
         drop(wz);
         let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
         let rz = head.read_zipper_at_path(b"src:").unwrap();
@@ -3401,7 +3436,7 @@ mod tests {
         assert_eq!(wz.path_exists(), true);
 
         //Now delete one of the paths
-        wz.remove_val(); //This remove should already perform a prune
+        wz.remove_val(true); //This remove should already perform a prune
         assert_eq!(wz.is_val(), false);
         assert_eq!(wz.path_exists(), false);
 
@@ -3418,7 +3453,7 @@ mod tests {
         assert_eq!(wz.path_exists(), false);
 
         //Now run `prune_path`.  This `prune_path` should do nothing
-        wz.z.prune_path();
+        wz.z.prune_path(false);
         drop(wz);
 
         //Now we should still see the branch we didn't prune
@@ -3432,6 +3467,221 @@ mod tests {
         assert_eq!(rz.path_exists(), true);
         assert_eq!(rz.child_count(), 1);
         assert_eq!(rz.child_mask(), ByteMask::from(49));
+    }
+
+    /// This test exercises removing values to create dangling paths, with an emphasis on pair nodes
+    #[test]
+    fn write_zipper_prune_path_test2() {
+        let mut map = PathMap::<()>::new();
+        map.set_val_at([0], ());
+        map.set_val_at([0, 0, 0], ());
+        map.set_val_at([0, 0, 1, 0, 0], ());
+        let mut wz = map.write_zipper();
+        wz.descend_to([0, 0, 1, 0, 0]);
+
+        //Remove a value from a path within a pair node
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.remove_val(false), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.prune(), 3);
+        assert_eq!(wz.path(), &[0, 0, 1, 0, 0]);
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.set_val(()), None);
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.path_exists(), true);
+
+        //Now re-add the value again at the now-dangling path
+        assert_eq!(wz.set_val(()), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.val(), None);
+        assert_eq!(wz.path_exists(), true);
+
+        //Now try adding more stuff downstream of the dangling path
+        assert_eq!(wz.descend_to([2, 3, 4]), false);
+        assert_eq!(wz.path(), &[0, 0, 1, 0, 0, 2, 3, 4]);
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.set_val(()), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.val(), Some(&()));
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.val(), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.path(), &[0, 0, 1, 0, 0, 2, 3, 4]);
+        assert_eq!(wz.prune(), 6); //Prune back to the value at [0, 0, 0]
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.ascend(4), true);
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.ascend(2), true);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.path(), &[0, 0]);
+
+        //Set up the conditions to test removing nodes from the middle of paths
+        assert_eq!(wz.descend_to([0, 1, 2]), false);
+        assert_eq!(wz.set_val(()), None);
+        assert_eq!(wz.descend_to([3, 4]), false);
+        assert_eq!(wz.set_val(()), None);
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.path(), &[0, 0, 0, 1, 2, 3, 4]);
+        wz.reset();
+
+        //Remove some values from the middle of paths
+        assert_eq!(wz.descend_to([0]), true);
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.descend_to([0]), true);
+        assert_eq!(wz.remove_val(false), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.child_count(), 1);
+        assert_eq!(wz.descend_to([0]), true);
+        assert_eq!(wz.child_count(), 1);
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.descend_to([1]), true);
+        assert_eq!(wz.child_count(), 1);
+        assert_eq!(wz.remove_val(false), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.descend_to([2]), true);
+        assert_eq!(wz.child_count(), 1);
+
+        //Attempt a prune-remove, when there is still some upstream path
+        assert_eq!(wz.remove_val(true), Some(()));
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.descend_to([3]), true);
+        assert_eq!(wz.child_count(), 1);
+        assert_eq!(wz.remove_val(true), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.descend_to([4]), true);
+        assert_eq!(wz.child_count(), 0);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.val(), None);
+        assert_eq!(wz.descend_to([5]), false);
+        assert_eq!(wz.path_exists(), false);
+
+        //Try pruning below the end of a dangling path and make sure it fails
+        assert_eq!(wz.prune(), 0);
+
+        //And try pruning above the end
+        assert_eq!(wz.ascend(2), true);
+        assert_eq!(wz.prune(), 0);
+        assert_eq!(wz.descend_first_byte(), true);
+
+        //Now validate that prune goes all the way to the root
+        assert_eq!(wz.path(), &[0, 0, 0, 1, 2, 3, 4]);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.prune(), 7);
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.ascend(7), true);
+        assert_eq!(wz.path(), &[]);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.child_count(), 0);
+        assert_eq!(wz.val(), None);
+    }
+
+    //Similar test to `write_zipper_prune_path_test2`, but designed to exercise byte nodes
+    #[test]
+    fn write_zipper_prune_path_test3() {
+        let mut map = PathMap::<()>::new();
+        map.set_val_at([0], ());
+        map.set_val_at([1, 0, 0], ());
+        map.set_val_at([1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], ());
+        map.set_val_at([1, 0, 2], ());
+        map.set_val_at([1, 0, 3], ());
+        map.set_val_at([2, 0, 0], ());
+        let mut wz = map.write_zipper();
+
+        //Remove a value from a path within a byte node
+        assert_eq!(wz.descend_to([1, 0, 3]), true);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.remove_val(false), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.prune(), 1);
+        assert_eq!(wz.path(), &[1, 0, 3]);
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.set_val(()), None);
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.path_exists(), true);
+
+        //Now re-add the value again at the now-dangling path
+        assert_eq!(wz.set_val(()), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.val(), None);
+        assert_eq!(wz.path_exists(), true);
+
+        //Now try adding more stuff downstream of the dangling path
+        assert_eq!(wz.descend_to([4, 5, 6]), false);
+        assert_eq!(wz.path(), &[1, 0, 3, 4, 5, 6]);
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.set_val(()), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.val(), Some(&()));
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.val(), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.path(), &[1, 0, 3, 4, 5, 6]);
+        assert_eq!(wz.prune(), 4); //Prune back to the value at [1, 0, 0]
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.ascend(3), true);
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.ascend(1), true);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.path(), &[1, 0]);
+        assert_eq!(wz.child_count(), 3);
+
+        //Set up the conditions to test removing nodes from the middle of paths
+        assert_eq!(wz.descend_to([1]), true);
+        assert_eq!(wz.val(), None);
+        assert_eq!(wz.set_val(()), None);
+        assert_eq!(wz.descend_to([0, 0]), true);
+        assert_eq!(wz.set_val(()), None);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.path(), &[1, 0, 1, 0, 0]);
+        wz.reset();
+
+        //Remove some values from the middle of paths
+        assert_eq!(wz.descend_to([1, 0, 1]), true);
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.descend_to([0, 0]), true);
+        assert_eq!(wz.remove_val(true), Some(()));
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.child_count(), 1);
+        assert_eq!(wz.descend_to([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), true);
+        assert_eq!(wz.child_count(), 0);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.val(), Some(&()));
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.prune(), 50);
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.ascend(49), true);
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.ascend_byte(), true);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.path(), &[1, 0]);
+        assert_eq!(wz.child_count(), 2);
+
+        //Make sure the `remove_val` with the `prune` flag does the right thing
+        assert_eq!(wz.descend_to_byte(0), true);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.prune(), 0);
+        assert_eq!(wz.remove_val(true), Some(()));
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.prune(), 0);
+        assert_eq!(wz.ascend_byte(), true);
+        assert_eq!(wz.child_count(), 1);
+        assert_eq!(wz.descend_to_byte(2), true);
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.remove_val(false), Some(()));
+        assert_eq!(wz.path_exists(), true);
+        assert_eq!(wz.prune(), 3);
+        assert_eq!(wz.path_exists(), false);
+        assert_eq!(wz.ascend(3), true);
+        assert_eq!(wz.child_count(), 2);
     }
 
     /// Tests [`ZipperPriv::get_focus`] and [`ZipperPriv::try_borrow_focus`] internal APIs on [`WriteZipperCore`]
@@ -3498,3 +3748,9 @@ mod tests {
             btm.clone().into_write_zipper(path)
     });
 }
+
+//GOAT-prune TODO,
+//
+//create_path
+//prune_ascend
+//

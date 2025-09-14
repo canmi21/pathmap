@@ -108,7 +108,11 @@ fn list_node_take_child_to_drop<V: Clone + Send + Sync, A: Allocator>(node: &mut
             }
             node.header = 0;
             let next_node = unsafe{ ManuallyDrop::take(&mut node.val_or_child0.child) };
-            Some(next_node)
+            if !next_node.is_empty() {
+                Some(next_node)
+            } else {
+                None
+            }
         },
         (false, true) => {
             if node.is_used::<0>() {
@@ -116,7 +120,11 @@ fn list_node_take_child_to_drop<V: Clone + Send + Sync, A: Allocator>(node: &mut
             }
             node.header = 0;
             let next_node = unsafe{ ManuallyDrop::take(&mut node.val_or_child1.child) };
-            Some(next_node)
+            if !next_node.is_empty() {
+                Some(next_node)
+            } else {
+                None
+            }
         }
         (true, true) => None, //Since we don't clear the header, the recursive path will end up freeing the downward trie
         (false, false) => None, //Node is already empty of child links; recursive path will drop values
@@ -166,6 +174,15 @@ impl<V: Clone + Send + Sync, A: Allocator> core::fmt::Debug for LineListNode<V, 
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
         //Recursively printing a whole tree will get pretty unwieldy.  Should do something
         // like serialization for inspection using standard tools.
+        let dangling_0 = if self.is_used_child_0() {
+            if unsafe{ self.child_in_slot::<0>() }.is_empty() {
+                "true"
+            } else {
+                "false"
+            }
+        } else {
+            "n/a"
+        };
         let key_0 = if self.is_used::<0>() {
             let key = unsafe{ self.key_unchecked::<0>() };
             match std::str::from_utf8(key) {
@@ -174,6 +191,15 @@ impl<V: Clone + Send + Sync, A: Allocator> core::fmt::Debug for LineListNode<V, 
             }
         } else {
             "".to_string()
+        };
+        let dangling_1 = if self.is_used_child_1() {
+            if unsafe{ self.child_in_slot::<1>() }.is_empty() {
+                "true"
+            } else {
+                "false"
+            }
+        } else {
+            "n/a"
         };
         let key_1 = if self.is_used::<1>() {
             let key = unsafe{ self.key_unchecked::<1>() };
@@ -185,9 +211,9 @@ impl<V: Clone + Send + Sync, A: Allocator> core::fmt::Debug for LineListNode<V, 
             "".to_string()
         };
         write!(f,
-               "LineListNode (\nslot0: occupied={} is_child={} key={:?}\nslot1: occupied={} is_child={} key={:?})",
-               self.is_used::<0>(), self.is_child_ptr::<0>(), key_0,
-               self.is_used::<1>(), self.is_child_ptr::<1>(), key_1)
+            "LineListNode (\nslot0: occupied={} is_child={} key={:?} dangling={}\nslot1: occupied={} is_child={} key={:?} dangling={})",
+            self.is_used::<0>(), self.is_child_ptr::<0>(), key_0, dangling_0,
+            self.is_used::<1>(), self.is_child_ptr::<1>(), key_1, dangling_1)
     }
 }
 
@@ -272,6 +298,30 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
         match SLOT {
             0 => self.header & (1 << 13) > 0,
             1 => self.header & (1 << 12) > 0,
+            _ => unreachable!()
+        }
+    }
+    #[inline]
+    pub fn set_is_child_ptr<const SLOT: usize>(&mut self) {
+        match SLOT {
+            0 => {
+                self.header |= 1u16 << 13;
+            },
+            1 => {
+                self.header |= 1u16 << 12;
+            },
+            _ => unreachable!()
+        }
+    }
+    #[inline]
+    pub fn unset_is_child_ptr<const SLOT: usize>(&mut self) {
+        match SLOT {
+            0 => {
+                self.header &= !(1u16 << 13);
+            },
+            1 => {
+                self.header &= !(1u16 << 12);
+            },
             _ => unreachable!()
         }
     }
@@ -395,7 +445,11 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
             if key.len() >= key_len {
                 if node_key_0 == &key[..key_len] {
                     let child = unsafe{ self.child_in_slot_mut::<0>() };
-                    return Some((key_len, child))
+                    if !child.is_empty() {
+                        return Some((key_len, child))
+                    } else {
+                        return None
+                    }
                 }
             }
         }
@@ -405,7 +459,11 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
             if key.len() >= key_len {
                 if node_key_1 == &key[..key_len] {
                     let child = unsafe{ self.child_in_slot_mut::<1>() };
-                    return Some((key_len, child))
+                    if !child.is_empty() {
+                        return Some((key_len, child))
+                    } else {
+                        return None
+                    }
                 }
             }
         }
@@ -425,6 +483,25 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
             }
         }
         None
+    }
+    /// If the node has a sentinel empty node in either slot with a key that's a subset of `key` then remove it
+    fn remove_dangling_payload_along_key(&mut self, key: &[u8]) {
+        if self.is_used::<0>() && self.is_child_ptr::<0>() {
+            if unsafe { &self.val_or_child0.child }.is_empty() {
+                let node_key_0 = unsafe{ self.key_unchecked::<0>() };
+                if key.starts_with(node_key_0) {
+                    self.take_payload::<0>();
+                }
+            }
+        }
+        if self.is_used::<1>() && self.is_child_ptr::<1>() {
+            if unsafe { &self.val_or_child1.child }.is_empty() {
+                let node_key_1 = unsafe{ self.key_unchecked::<1>() };
+                if key.starts_with(node_key_1) {
+                    self.take_payload::<1>();
+                }
+            }
+        }
     }
     #[inline]
     pub(crate) fn get_both_keys(&self) -> (&[u8], &[u8]) {
@@ -715,6 +792,59 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
             _ => unreachable!()
         }
     }
+    /// Swaps the contents of `SLOT` for a new payload
+    fn swap_payload<const SLOT: usize>(&mut self, new_payload: ValOrChild<V, A>) -> ValOrChild<V, A> {
+        debug_assert!(self.is_used::<SLOT>());
+        match SLOT {
+            0 => {
+                let result = match self.is_child_ptr::<SLOT>() {
+                    true => {
+                        let child = unsafe{ ManuallyDrop::take(&mut self.val_or_child0.child) };
+                        self.unset_is_child_ptr::<SLOT>();
+                        ValOrChild::Child(child)
+                    },
+                    false => {
+                        let val = unsafe{ ManuallyDrop::take(&mut self.val_or_child0.val) };
+                        ValOrChild::Val(LocalOrHeap::into_inner(val))
+                    }
+                };
+                match new_payload {
+                    ValOrChild::Child(child) => {
+                        self.val_or_child0.child = ManuallyDrop::new(child);
+                        self.set_is_child_ptr::<SLOT>();
+                    },
+                    ValOrChild::Val(val) => {
+                        self.val_or_child0.val = ManuallyDrop::new(LocalOrHeap::new(val));
+                    }
+                }
+                result
+            },
+            1 => {
+                let result = match self.is_child_ptr::<SLOT>() {
+                    true => {
+                        let child = unsafe{ ManuallyDrop::take(&mut self.val_or_child1.child) };
+                        self.unset_is_child_ptr::<SLOT>();
+                        ValOrChild::Child(child)
+                    },
+                    false => {
+                        let val = unsafe{ ManuallyDrop::take(&mut self.val_or_child1.val) };
+                        ValOrChild::Val(LocalOrHeap::into_inner(val))
+                    }
+                };
+                match new_payload {
+                    ValOrChild::Child(child) => {
+                        self.val_or_child1.child = ManuallyDrop::new(child);
+                        self.set_is_child_ptr::<SLOT>();
+                    },
+                    ValOrChild::Val(val) => {
+                        self.val_or_child1.val = ManuallyDrop::new(LocalOrHeap::new(val));
+                    }
+                }
+                result
+            },
+            _ => unreachable!()
+        }
+    }
     /// Shifts the contents of slot1 into slot0, obliterating the contents of slot0
     fn shift_1_to_0(&mut self) {
         if self.is_used::<1>() {
@@ -794,6 +924,9 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
             let created_subnode = unsafe{ self.set_payload_0_no_overflow(key, IS_CHILD, payload) };
             return Ok((None, created_subnode))
         }
+
+        //If we have an empty (dangling) payload anywhere along the new key, remove it
+        self.remove_dangling_payload_along_key(key);
 
         //If the key has overlap with slot_0, split the key, and add the payload to the child
         let node_key_0 = unsafe{ self.key_unchecked::<0>() };
@@ -1588,23 +1721,73 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
             (result.map(|payload| payload.into_val() ), created_subnode)
         })
     }
-
-    fn node_remove_val(&mut self, key: &[u8]) -> Option<V> {
+    fn node_remove_val(&mut self, key: &[u8], prune: bool) -> Option<V> {
         if self.is_used_value_0() {
             let node_key_0 = unsafe{ self.key_unchecked::<0>() };
             if node_key_0 == key {
-                return Some(self.take_payload::<0>().unwrap().into_val())
+                if prune {
+                    return Some(self.take_payload::<0>().unwrap().into_val())
+                } else {
+                    //If the other slot already keeps this path, then just remove the value
+                    let node_key_1 = unsafe{ self.key_unchecked::<1>() };
+                    let overlap = find_prefix_overlap(node_key_0, node_key_1);
+                    if node_key_0.len() == overlap {
+                        return Some(self.take_payload::<0>().unwrap().into_val())
+                    } else {
+                        //Otherwise, turn the value into an empty node
+                        return Some(self.swap_payload::<0>(ValOrChild::Child(TrieNodeODRc::new_empty())).into_val())
+                    }
+                }
             }
         }
         if self.is_used_value_1() {
             let node_key_1 = unsafe{ self.key_unchecked::<1>() };
             if node_key_1 == key {
-                return Some(self.take_payload::<1>().unwrap().into_val())
+                if prune {
+                    return Some(self.take_payload::<1>().unwrap().into_val())
+                } else {
+                    //Turn the value into an empty node
+                    return Some(self.swap_payload::<1>(ValOrChild::Child(TrieNodeODRc::new_empty())).into_val())
+                }
             }
         }
         None
     }
 
+    #[inline]
+    fn node_remove_dangling(&mut self, key: &[u8]) -> usize {
+        debug_assert!(key.len() > 0);
+        let (key0, key1) = self.get_both_keys();
+        if self.is_used_child_0() {
+            if key0 == key {
+                let child = unsafe{ &self.val_or_child0.child };
+                if child.is_empty() {
+                    let pruned_bytes = if key1.len() > 0 && key[0] == key1[0] {
+                        key.len() - 1
+                    } else {
+                        key.len()
+                    };
+                    let _ = self.take_payload::<0>();
+                    return pruned_bytes
+                }
+            }
+        }
+        if self.is_used_child_1() {
+            if key1 == key {
+                let child = unsafe{ &self.val_or_child1.child };
+                if child.is_empty() {
+                    let pruned_bytes = if key[0] == key0[0] {
+                        key.len() - 1
+                    } else {
+                        key.len()
+                    };
+                    let _ = self.take_payload::<1>();
+                    return pruned_bytes
+                }
+            }
+        }
+        0
+    }
     fn node_set_branch(&mut self, key: &[u8], new_node: TrieNodeODRc<V, A>) -> Result<bool, TrieNodeODRc<V, A>> {
         self.set_payload_abstract::<true>(key, new_node.into())
             .map(|(_, created_subnode)| created_subnode)

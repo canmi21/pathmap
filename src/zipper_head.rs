@@ -299,7 +299,8 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
                 inner_z.move_to_path(origin_path);
                 if inner_z.try_borrow_focus().unwrap().as_tagged().node_is_empty() {
                     if !inner_z.is_val() && inner_z.child_count() == 0 {
-                        inner_z.prune_path();
+                        inner_z.remove_branches(); //GOAT, I can just pass the `prune` flag here, instead of calling prune_path below
+                        inner_z.prune_path(false);
                     }
                 }
                 inner_z.reset();
@@ -887,7 +888,7 @@ mod tests {
 
         let mut wz = unsafe{ space.write_zipper_at_exclusive_path_unchecked(&[4, 200, 0, 0, 0, 0, 0, 0, 0, 6, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4]) };
         wz.descend_to(&[200, 0, 0, 0, 0, 0, 0, 0, 7, 2, 200, 0, 0, 0, 0, 0, 0, 0, 3, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 2, 200, 0, 0, 0, 0, 0, 0, 0, 8, 192, 2, 200, 0, 0, 0, 0, 0, 0, 0, 3, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 2, 200, 0, 0, 0, 0, 0, 0, 0, 9, 128]);
-        wz.remove_val();
+        wz.remove_val(true);
         drop(wz);
 
         let wz = unsafe{ space.write_zipper_at_exclusive_path_unchecked(&[2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 2, 200, 0, 0, 0, 0, 0, 0, 0, 9]) };
@@ -898,7 +899,7 @@ mod tests {
 
         let mut wz = unsafe{ space.write_zipper_at_exclusive_path_unchecked(&[4, 200, 0, 0, 0, 0, 0, 0, 0, 6, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4]) };
         wz.descend_to(&[200, 0, 0, 0, 0, 0, 0, 0, 7, 2, 200, 0, 0, 0, 0, 0, 0, 0, 3, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 200, 0, 0, 0, 0, 0, 0, 0, 5, 2, 200, 0, 0, 0, 0, 0, 0, 0, 3, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 200, 0, 0, 0, 0, 0, 0, 0, 10]);
-        wz.remove_val();
+        wz.remove_val(true);
         drop(wz);
 
         let wz = unsafe{ space.write_zipper_at_exclusive_path_unchecked(&[2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 200, 0, 0, 0, 0, 0, 0, 0, 10]) };
@@ -990,7 +991,7 @@ mod tests {
 
         //Now that the witness is gone, validate I can create the WZ, and remove the value
         let mut wz = zh.write_zipper_at_exclusive_path(b"path").unwrap();
-        wz.remove_val();
+        wz.remove_val(true);
         drop(wz);
         drop(zh);
         assert_eq!(map.get_val_at(b"path"), None);

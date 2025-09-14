@@ -119,7 +119,7 @@ impl <V: TrieValue, A: Allocator> ZipperWriting<V, A> for NullZipper {
     fn get_val_or_set_mut(&mut self, default: V) -> &mut V { Box::leak(Box::new(default)) }
     fn get_val_or_set_mut_with<F>(&mut self, func: F) -> &mut V where F: FnOnce() -> V { Box::leak(Box::new(func())) }
     fn set_val(&mut self, _val: V) -> Option<V> { None }
-    fn remove_val(&mut self) -> Option<V> { None }
+    fn remove_val(&mut self, _prune: bool) -> Option<V> { None }
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { todo!() }
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) {}
     fn graft_map(&mut self, _map: PathMap<V, A>) {}
@@ -137,4 +137,5 @@ impl <V: TrieValue, A: Allocator> ZipperWriting<V, A> for NullZipper {
     fn remove_branches(&mut self) -> bool { false }
     fn take_map(&mut self) -> Option<PathMap<V, A>> { None }
     fn remove_unmasked_branches(&mut self, _mask: ByteMask) {}
+    fn prune(&mut self) -> usize { 0 }
 }

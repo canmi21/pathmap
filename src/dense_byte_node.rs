@@ -199,14 +199,14 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> ByteNode<Cf, A>
     }
 
     #[inline]
-    pub fn remove_val(&mut self, k: u8) -> Option<V> {
+    pub fn remove_val(&mut self, k: u8, prune: bool) -> Option<V> {
         if self.mask.test_bit(k) {
             let ix = self.mask.index_of(k) as usize;
 
             let cf = unsafe { self.values.get_unchecked_mut(ix) };
             let result = cf.take_val();
 
-            if !cf.has_rec() {
+            if prune && !cf.has_rec() {
                 self.mask.clear_bit(k);
                 self.values.remove(ix);
             }
@@ -803,12 +803,28 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
             }
         }
     }
-    fn node_remove_val(&mut self, key: &[u8]) -> Option<V> {
+    fn node_remove_val(&mut self, key: &[u8], prune: bool) -> Option<V> {
         if key.len() == 1 {
-            self.remove_val(key[0])
+            self.remove_val(key[0], prune)
         } else {
             None
         }
+    }
+    fn node_remove_dangling(&mut self, key: &[u8]) -> usize {
+        debug_assert!(key.len() > 0);
+        if key.len() == 1 {
+            let k = key[0];
+            if self.mask.test_bit(k) {
+                let ix = self.mask.index_of(k) as usize;
+                let cf = unsafe { self.values.get_unchecked_mut(ix) };
+                if !cf.has_rec() && !cf.has_val() {
+                    self.mask.clear_bit(k);
+                    self.values.remove(ix);
+                    return 1
+                }
+            }
+        }
+        0
     }
     fn node_set_branch(&mut self, key: &[u8], new_node: TrieNodeODRc<V, A>) -> Result<bool, TrieNodeODRc<V, A>> {
         debug_assert!(key.len() > 0);
