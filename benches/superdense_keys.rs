@@ -192,7 +192,7 @@ fn superdense_k_path_iter(bencher: Bencher, n: u64) {
     });
 }
 
-#[cfg(feature = "all_dense_nodes")]
+#[cfg(all(feature = "all_dense_nodes", feature = "old_cursor"))]
 #[divan::bench(args = [100, 200, 400, 800, 1600, 3200])]
 fn superdense_all_dense_cursor(bencher: Bencher, n: u64) {
 

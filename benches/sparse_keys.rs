@@ -199,7 +199,7 @@ fn sparse_cursor(bencher: Bencher, n: u64) {
     });
 }
 
-#[cfg(feature = "all_dense_nodes")]
+#[cfg(all(feature = "all_dense_nodes", feature = "old_cursor"))]
 #[divan::bench(args = [50, 100, 200, 400, 800, 1600])]
 fn sparse_all_dense_cursor(bencher: Bencher, n: u64) {
 
