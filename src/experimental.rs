@@ -137,6 +137,7 @@ impl <V: TrieValue, A: Allocator> ZipperWriting<V, A> for NullZipper {
     fn remove_branches(&mut self, prune: bool) -> bool { false }
     fn take_map(&mut self, prune: bool) -> Option<PathMap<V, A>> { None }
     fn remove_unmasked_branches(&mut self, _mask: ByteMask, prune: bool) {}
-    fn prune(&mut self) -> usize { 0 }
+    fn create_path(&mut self) -> bool { false }
+    fn prune_path(&mut self) -> usize { 0 }
     fn prune_ascend(&mut self) -> usize { 0 }
 }

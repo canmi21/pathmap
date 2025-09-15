@@ -216,6 +216,19 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> ByteNode<Cf, A>
         }
     }
 
+    #[inline]
+    pub fn set_dangling_cf(&mut self, k: u8) -> bool {
+        let ix = self.mask.index_of(k) as usize;
+        if self.mask.test_bit(k) {
+            false
+        } else {
+            self.mask.set_bit(k);
+            let new_cf = CoFree::new(None, None);
+            self.values.insert(ix, new_cf);
+            true
+        }
+    }
+
     /// Similar in behavior to [set_val], but will join v with the existing value instead of replacing it
     #[inline]
     pub fn join_val_into(&mut self, k: u8, val: V) -> AlgebraicStatus where V: Lattice {
@@ -808,6 +821,33 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
             self.remove_val(key[0], prune)
         } else {
             None
+        }
+    }
+    fn node_create_dangling(&mut self, key: &[u8]) -> Result<(bool, bool), TrieNodeODRc<V, A>> {
+        debug_assert!(key.len() > 0);
+        #[cfg(not(feature = "all_dense_nodes"))]
+        {
+            //Split a new node to hold everything after the first byte of the key
+            if key.len() > 1 {
+                {
+                    let mut child = crate::line_list_node::LineListNode::new_in(self.alloc.clone());
+                    child.node_create_dangling(&key[1..]).unwrap_or_else(|_| panic!());
+                    self.set_child(key[0], TrieNodeODRc::new_in(child, self.alloc.clone()));
+                }
+                Ok((true, true))
+            } else {
+                Ok((self.set_dangling_cf(key[0]), false))
+            }
+        }
+
+        #[cfg(feature = "all_dense_nodes")]
+        {
+            if key.len() > 1 {
+                let last_node = self.create_parent_path(key);
+                Ok((last_node.set_dangling_cf(key[key.len()-1]), true))
+            } else {
+                Ok((self.set_dangling_cf(key[key.len()-1]), false))
+            }
         }
     }
     fn node_remove_dangling(&mut self, key: &[u8]) -> usize {

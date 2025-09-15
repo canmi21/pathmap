@@ -122,7 +122,7 @@ pub(crate) trait TrieNode<V: Clone + Send + Sync, A: Allocator>: TrieNodeDowncas
     /// Returns `Ok((None, _))` if a new value was added where there was no previous value, returns
     /// `Ok((Some(v), false))` with the old value if the value was replaced.  The returned `bool` is a
     /// "sub_node_created" flag that will be `true` if `key` now specifies a different subnode; `false`
-    /// if key still specifies a branch within the node.
+    /// if key still specifies a location within the node.
     ///
     /// If this method returns Err(node), then the node was upgraded, and the new node must be
     /// substituted into the context formerly ocupied by this this node, and this node must be dropped.
@@ -136,6 +136,16 @@ pub(crate) trait TrieNode<V: Clone + Send + Sync, A: Allocator>: TrieNodeDowncas
     /// it will keep the dangling path.
     /// WARNING: This method may leave the node empty
     fn node_remove_val(&mut self, key: &[u8], prune: bool) -> Option<V>;
+
+    /// Creates a dangling path up to `key` if none exists.  Does nothing if the path already exists
+    ///
+    /// The returned value in the `Ok` case is `(path_bytes_created, sub_node_created)`. The "sub_node_created"
+    /// flag that will be `true` if `key` now specifies a different subnode; `false` if key still specifies a
+    /// location within the node.
+    ///
+    /// If this method returns Err(node), then the node was upgraded, and the new node must be
+    /// substituted into the context formerly ocupied by this this node, and this node must be dropped.
+    fn node_create_dangling(&mut self, key: &[u8]) -> Result<(bool, bool), TrieNodeODRc<V, A>>;
 
     /// Removes a dangling path exactly specified by `key`, from the node.  Returns the number of path
     /// bytes that comprised the dangling path, or 0 if no path was removed.
@@ -1433,6 +1443,14 @@ mod tagged_node_ref {
                 Self::DenseByteNode(node) => node.node_get_child_mut(key),
                 Self::LineListNode(node) => node.node_get_child_mut(key),
                 Self::CellByteNode(node) => node.node_get_child_mut(key),
+            }
+        }
+
+        pub fn node_create_dangling(&mut self, key: &[u8]) -> Result<(bool, bool), TrieNodeODRc<V, A>> {
+            match self {
+                Self::DenseByteNode(node) => node.node_create_dangling(key),
+                Self::LineListNode(node) => node.node_create_dangling(key),
+                Self::CellByteNode(node) => node.node_create_dangling(key),
             }
         }
 

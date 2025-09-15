@@ -1787,6 +1787,19 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
     }
 
     #[inline]
+    fn node_create_dangling(&mut self, key: &[u8]) -> Result<(bool, bool), TrieNodeODRc<V, A>> {
+        debug_assert!(key.len() > 0);
+        if !self.node_contains_partial_key(key) {
+            self.set_payload_abstract::<true>(key, ValOrChildUnion::from(TrieNodeODRc::new_empty())).map(|(result, created_subnode)| {
+                debug_assert!(result.is_none());
+                (true, created_subnode)
+            })
+        } else {
+            Ok((false, false))
+        }
+    }
+
+    #[inline]
     fn node_remove_dangling(&mut self, key: &[u8]) -> usize {
         debug_assert!(key.len() > 0);
         let (key0, key1) = self.get_both_keys();

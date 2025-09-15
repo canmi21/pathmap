@@ -38,6 +38,9 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for EmptyNode {
     fn node_remove_val(&mut self, _key: &[u8], _prune: bool) -> Option<V> {
         unreachable!()
     }
+    fn node_create_dangling(&mut self, _key: &[u8]) -> Result<(bool, bool), TrieNodeODRc<V, A>> {
+        unreachable!()
+    }
     fn node_remove_dangling(&mut self, _key: &[u8]) -> usize {
         unreachable!()
     }
