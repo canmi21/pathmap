@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::Read;
 use divan::{Divan, Bencher, black_box};
 use pathmap::PathMap;
-use pathmap::path_serialization::{deserialize_paths, serialize_paths};
+use pathmap::paths_serialization::{deserialize_paths, serialize_paths};
 
 #[divan::bench()]
 fn big_logic_serialize_paths(bencher: Bencher) {
@@ -21,7 +21,7 @@ fn big_logic_serialize_paths(bencher: Bencher) {
   bencher.bench_local(|| {
     let rz = map.read_zipper();
     unsafe { out_buffer.set_len(0) }
-    let pathmap::path_serialization::SerializationStats { path_count : total_paths , .. }=
+    let pathmap::paths_serialization::SerializationStats { path_count : total_paths , .. }=
       serialize_paths(rz, &mut out_buffer).expect("serialization error");
     assert_eq!(total_paths, 91692);
   });
@@ -39,7 +39,7 @@ fn big_logic_deserialize_paths(bencher: Bencher) {
   file.read_to_end(&mut in_buffer).unwrap();
   bencher.bench_local(|| {
     let wz = map.write_zipper();
-    let pathmap::path_serialization::DeserializationStats { path_count : total_paths , .. }=
+    let pathmap::paths_serialization::DeserializationStats { path_count : total_paths , .. }=
       deserialize_paths(wz, &in_buffer[..], ()).expect("deserialization error");
     assert_eq!(total_paths, 91692);
   });

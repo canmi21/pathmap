@@ -492,7 +492,7 @@ mod tests {
       // println!("let mut btm = PathMap::from_iter({:?}.iter().map(|(p, v)| (p.as_bytes(), v)));", trie.iter().map(|(p, v)| (String::from_utf8(p).unwrap(), v)).collect::<Vec<_>>());
       path_fuzzer.clone().sample_iter(rng.clone()).take(N_REMOVES).for_each(|path| {
         // println!("btm.remove_val_at({:?}.as_bytes());", String::from_utf8(path.clone()).unwrap());
-        trie.remove_val_at(path);
+        trie.remove_val_at(path, true);
       });
       black_box(trie);
     })
