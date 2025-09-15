@@ -207,8 +207,8 @@ impl<'a, V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for TinyRefNode<'a
         replacement_node.node_set_branch(key, new_node).unwrap_or_else(|_| panic!());
         Err(TrieNodeODRc::new_in(replacement_node, self.alloc.clone()))
     }
-    fn node_remove_all_branches(&mut self, _key: &[u8]) -> bool { unreachable!() }
-    fn node_remove_unmasked_branches(&mut self, _key: &[u8], _mask: ByteMask) { unreachable!() }
+    fn node_remove_all_branches(&mut self, _key: &[u8], _prune: bool) -> bool { unreachable!() }
+    fn node_remove_unmasked_branches(&mut self, _key: &[u8], _mask: ByteMask, _prune: bool) { unreachable!() }
     fn node_is_empty(&self) -> bool {
         self.header & (1 << 7) == 0
     }
@@ -275,7 +275,7 @@ impl<'a, V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for TinyRefNode<'a
         //The key must specify a path the node doesn't contains
         AbstractNodeRef::None
     }
-    fn take_node_at_key(&mut self, _key: &[u8]) -> Option<TrieNodeODRc<V, A>> { unreachable!() }
+    fn take_node_at_key(&mut self, _key: &[u8], _prune: bool) -> Option<TrieNodeODRc<V, A>> { unreachable!() }
     fn pjoin_dyn(&self, other: TaggedNodeRef<V, A>) -> AlgebraicResult<TrieNodeODRc<V, A>> where V: Lattice {
         //TODO, I can streamline this quite a lot, but for now I'll just up-convert to a ListNode to test
         // the basic premise of the TinyRefNode

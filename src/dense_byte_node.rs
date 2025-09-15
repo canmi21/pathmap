@@ -822,6 +822,15 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
                     self.values.remove(ix);
                     return 1
                 }
+                //Clean up empty nodes too, which may have been left by a ZipperHead
+                match cf.rec() {
+                    Some(node) => if node.as_tagged().node_is_empty() {
+                        self.mask.clear_bit(k);
+                        self.values.remove(ix);
+                        return 1
+                    },
+                    None => {}
+                }
             }
         }
         0
@@ -862,7 +871,7 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
             }
         }
     }
-    fn node_remove_all_branches(&mut self, key: &[u8]) -> bool {
+    fn node_remove_all_branches(&mut self, key: &[u8], prune: bool) -> bool {
         if key.len() > 1 {
             return false;
         }
@@ -877,8 +886,12 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
                     true
                 },
                 (true, false) => {
-                    self.values.remove(ix);
-                    self.mask.clear_bit(k);
+                    if prune {
+                        self.values.remove(ix);
+                        self.mask.clear_bit(k);
+                    } else {
+                        cf.set_rec_option(None);
+                    }
                     true
                 },
                 (false, _) => {
@@ -1018,7 +1031,7 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
         (Some(&ALL_BYTES[prefix..=prefix]), cf.rec().map(|cf| cf.as_tagged()))
     }
 
-    fn node_remove_unmasked_branches(&mut self, key: &[u8], mask: ByteMask) {
+    fn node_remove_unmasked_branches(&mut self, key: &[u8], mask: ByteMask, _prune: bool) {
         debug_assert!(key.len() == 0);
         // in the future we can use `drain_filter`, but that's experimental
         let mut lead = 0;
@@ -1134,12 +1147,23 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
         }
     }
 
-    fn take_node_at_key(&mut self, key: &[u8]) -> Option<TrieNodeODRc<V, A>> {
+    fn take_node_at_key(&mut self, key: &[u8], prune: bool) -> Option<TrieNodeODRc<V, A>> {
         if key.len() < 2 {
             debug_assert!(key.len() == 1);
-            match self.get_mut(key[0]) {
-                Some(cf) => cf.take_rec(),
-                None => None
+            let k = key[0];
+            if self.mask.test_bit(k) {
+                let ix = self.mask.index_of(k) as usize;
+
+                let cf = unsafe { self.values.get_unchecked_mut(ix) };
+                let result = cf.take_rec();
+
+                if prune && !cf.has_val() {
+                    self.mask.clear_bit(k);
+                    self.values.remove(ix);
+                }
+                result
+            } else {
+                None
             }
         } else {
             None

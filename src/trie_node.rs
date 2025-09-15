@@ -163,14 +163,14 @@ pub(crate) trait TrieNode<V: Clone + Send + Sync, A: Allocator>: TrieNodeDowncas
     ///
     /// WARNING: This method may leave the node empty.  If eager pruning of branches is desired then the
     /// node should subsequently be checked to see if it is empty
-    fn node_remove_all_branches(&mut self, key: &[u8]) -> bool;
+    fn node_remove_all_branches(&mut self, key: &[u8], prune: bool) -> bool;
 
     /// Uses a 256-bit mask to filter down children and values from the specified `key`.  Does not affect
     /// the value at the `key`
     ///
     /// WARNING: This method may leave the node empty.  If eager pruning of branches is desired then the
     /// node should subsequently be checked to see if it is empty
-    fn node_remove_unmasked_branches(&mut self, key: &[u8], mask: ByteMask);
+    fn node_remove_unmasked_branches(&mut self, key: &[u8], mask: ByteMask, prune: bool);
 
     /// Returns `true` if the node contains no children nor values, otherwise false
     fn node_is_empty(&self) -> bool;
@@ -275,7 +275,7 @@ pub(crate) trait TrieNode<V: Clone + Send + Sync, A: Allocator>: TrieNodeDowncas
     /// WARNING: This method may leave the node empty
     ///
     /// This method should never be called with `key.len() == 0`
-    fn take_node_at_key(&mut self, key: &[u8]) -> Option<TrieNodeODRc<V, A>>;
+    fn take_node_at_key(&mut self, key: &[u8], prune: bool) -> Option<TrieNodeODRc<V, A>>;
 
     /// Allows for the implementation of the Lattice trait on different node implementations, and
     /// the logic to promote nodes to other node types
@@ -1483,26 +1483,26 @@ mod tagged_node_ref {
             }
         }
 
-        pub fn node_remove_all_branches(&mut self, key: &[u8]) -> bool {
+        pub fn node_remove_all_branches(&mut self, key: &[u8], prune: bool) -> bool {
             match self {
-                Self::DenseByteNode(node) => node.node_remove_all_branches(key),
-                Self::LineListNode(node) => node.node_remove_all_branches(key),
-                Self::CellByteNode(node) => node.node_remove_all_branches(key),
+                Self::DenseByteNode(node) => node.node_remove_all_branches(key, prune),
+                Self::LineListNode(node) => node.node_remove_all_branches(key, prune),
+                Self::CellByteNode(node) => node.node_remove_all_branches(key, prune),
             }
         }
 
-        pub fn node_remove_unmasked_branches(&mut self, key: &[u8], mask: ByteMask) {
+        pub fn node_remove_unmasked_branches(&mut self, key: &[u8], mask: ByteMask, prune: bool) {
             match self {
-                Self::DenseByteNode(node) => node.node_remove_unmasked_branches(key, mask),
-                Self::LineListNode(node) => node.node_remove_unmasked_branches(key, mask),
-                Self::CellByteNode(node) => node.node_remove_unmasked_branches(key, mask),
+                Self::DenseByteNode(node) => node.node_remove_unmasked_branches(key, mask, prune),
+                Self::LineListNode(node) => node.node_remove_unmasked_branches(key, mask, prune),
+                Self::CellByteNode(node) => node.node_remove_unmasked_branches(key, mask, prune),
             }
         }
-        pub fn take_node_at_key(&mut self, key: &[u8]) -> Option<TrieNodeODRc<V, A>> {
+        pub fn take_node_at_key(&mut self, key: &[u8], prune: bool) -> Option<TrieNodeODRc<V, A>> {
             match self {
-                Self::DenseByteNode(node) => node.take_node_at_key(key),
-                Self::LineListNode(node) => node.take_node_at_key(key),
-                Self::CellByteNode(node) => node.take_node_at_key(key),
+                Self::DenseByteNode(node) => node.take_node_at_key(key, prune),
+                Self::LineListNode(node) => node.take_node_at_key(key, prune),
+                Self::CellByteNode(node) => node.take_node_at_key(key, prune),
             }
         }
         pub fn join_into_dyn(&mut self, other: TrieNodeODRc<V, A>) -> (AlgebraicStatus, Result<(), TrieNodeODRc<V, A>>) where V: Lattice {

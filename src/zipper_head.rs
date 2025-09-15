@@ -299,8 +299,7 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
                 inner_z.move_to_path(origin_path);
                 if inner_z.try_borrow_focus().unwrap().as_tagged().node_is_empty() {
                     if !inner_z.is_val() && inner_z.child_count() == 0 {
-                        inner_z.remove_branches(); //GOAT, I can just pass the `prune` flag here, instead of calling prune_path below
-                        inner_z.prune_path(false);
+                        inner_z.remove_branches(true);
                     }
                 }
                 inner_z.reset();
@@ -376,7 +375,7 @@ pub(crate) fn prepare_exclusive_write_path<'a, 'trie: 'a, 'path: 'a, V: Clone + 
                 z.in_zipper_mut_static_result(
                     |node, key| {
                         let new_node = if key.len() > 0 {
-                            if let Some(mut remaining) = node.take_node_at_key(key) {
+                            if let Some(mut remaining) = node.take_node_at_key(key, false) {
                                 make_cell_node(&mut remaining);
                                 remaining
                             } else {
@@ -425,7 +424,7 @@ fn prepare_node_at_path_end<'a, V: Clone + Send + Sync, A: Allocator>(start_node
     //If remaining_key is non-zero length, split and upgrade the intervening node
     if remaining_key.len() > 0 {
         let mut node_ref = node.make_mut();
-        let mut new_parent = match node_ref.take_node_at_key(remaining_key) {
+        let mut new_parent = match node_ref.take_node_at_key(remaining_key, false) {
             Some(downward_node) => downward_node,
             None => TrieNodeODRc::new_in(CellByteNode::new_in(alloc.clone()), alloc)
         };
@@ -577,7 +576,7 @@ mod tests {
             }
 
             let mut writer_z = zipper_head.write_zipper_at_exclusive_path(b"out").unwrap();
-            writer_z.remove_branches();
+            writer_z.remove_branches(true);
             drop(writer_z);
 
             //Dispatch a zipper to each thread
