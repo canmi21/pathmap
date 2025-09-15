@@ -445,9 +445,9 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ,
 
     fn is_bottom_val(&self) -> bool {
         if let Some(idx) = self.factor_idx(false) {
-            self.secondary[idx].is_val()
+            self.secondary[idx].child_count() == 0
         } else {
-            self.primary.is_val()
+            self.primary.child_count() == 0
         }
     }
 
@@ -692,10 +692,10 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
             // NOTE: descend_to_val here is used to take priority descending
             // into factors, instead of continuing deeper into the trie.
             if let Some(idx) = self.factor_idx(false) {
-                good = self.secondary[idx].descend_to_val(path);
+                good = self.secondary[idx].descend_to_existing(path);
                 self.primary.descend_to(&path[..good]);
             } else {
-                good = self.primary.descend_to_val(path);
+                good = self.primary.descend_to_existing(path);
             };
             if good == 0 {
                 break 'descend;
@@ -1242,7 +1242,7 @@ mod tests {
 
         assert!(pz.descend_to(b"nopqrstuvwxyz"));
 
-        assert_eq!(pz.focus_factor(), 1);
+        assert_eq!(pz.focus_factor(), 0);
         assert_eq!(pz.path(), b"nopqrstuvwxyz");
         assert_eq!(pz.origin_path(), b"abcdefghijklmnopqrstuvwxyz");
 
