@@ -1355,6 +1355,7 @@ mod tagged_node_ref {
             }
         }
 
+        #[cfg(feature = "counters")]
         pub fn item_count(&self) -> usize {
             match self {
                 Self::EmptyNode => 0,
