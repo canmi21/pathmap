@@ -204,8 +204,22 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
     ///
     /// Calling this method may result in [Zipper::path_exists] to subsequently returning `false`, where it previously returned `true`
     ///
+    /// This method cannot prune the trie above the zipper's root.
     /// This method has no effect if there is a value at the focus, or any downstream paths from the focus.
     fn prune(&mut self) -> usize;
+
+    /// Convenience to prune and ascend the zipper to the first non-dangling path
+    ///
+    /// Equivalent to:
+    /// ```ignore
+    /// let bytes = z.prune();
+    /// z.ascend(bytes);
+    /// return bytes
+    /// ```
+    //NOTE: This ought to go in a trait that's a supertrait on both `ZipperWriting` and `ZipperMoving`,
+    // however, there currently isn't such a thing; hence the lack of default impl.  If we implement
+    // non-moving `ZipperWriting` types in the furure, we may want to move this method
+    fn prune_ascend(&mut self) -> usize;
 }
 
 pub(crate) mod write_zipper_priv {
@@ -246,6 +260,7 @@ impl<V: Clone + Send + Sync, Z, A: Allocator> ZipperWriting<V, A> for &mut Z whe
     fn remove_branches(&mut self, prune: bool) -> bool { (**self).remove_branches(prune) }
     fn remove_unmasked_branches(&mut self, mask: ByteMask, prune: bool) { (**self).remove_unmasked_branches(mask, prune) }
     fn prune(&mut self) -> usize { (**self).prune() }
+    fn prune_ascend(&mut self) -> usize { (**self).prune_ascend() }
 }
 
 impl<V: Clone + Send + Sync, Z, A: Allocator> WriteZipperPriv<V, A> for &mut Z where Z: WriteZipperPriv<V, A> {
@@ -396,6 +411,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn remove_branches(&mut self, prune: bool) -> bool { self.z.remove_branches(prune) }
     fn remove_unmasked_branches(&mut self, mask: ByteMask, prune: bool) { self.z.remove_unmasked_branches(mask, prune) }
     fn prune(&mut self) -> usize { self.z.prune() }
+    fn prune_ascend(&mut self) -> usize { self.z.prune_ascend() }
 }
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperPriv<V, A> for WriteZipperTracked<'a, 'path, V, A> {
@@ -568,6 +584,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn remove_branches(&mut self, prune: bool) -> bool { self.z.remove_branches(prune) }
     fn remove_unmasked_branches(&mut self, mask: ByteMask, prune: bool) { self.z.remove_unmasked_branches(mask, prune) }
     fn prune(&mut self) -> usize { self.z.prune() }
+    fn prune_ascend(&mut self) -> usize { self.z.prune_ascend() }
 }
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperPriv<V, A> for WriteZipperUntracked<'a, 'path, V, A> {
@@ -732,6 +749,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperWriting<V, A> for Write
     fn remove_branches(&mut self, prune: bool) -> bool { self.z.remove_branches(prune) }
     fn remove_unmasked_branches(&mut self, mask: ByteMask, prune: bool) { self.z.remove_unmasked_branches(mask, prune) }
     fn prune(&mut self) -> usize { self.z.prune() }
+    fn prune_ascend(&mut self) -> usize { self.z.prune_ascend() }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> WriteZipperPriv<V, A> for WriteZipperOwned<V, A> {
@@ -1734,6 +1752,13 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         } else {
             0
         }
+    }
+
+    /// See [ZipperWriting::prune_ascend]
+    fn prune_ascend(&mut self) -> usize {
+        let bytes = self.prune();
+        self.ascend(bytes);
+        bytes
     }
 
     /// Internal method, Removes and returns the node at the zipper's focus.  This method may leave behind a dangling path
@@ -3902,5 +3927,4 @@ mod tests {
 //GOAT-prune TODO,
 //
 //create_path
-//prune_ascend
 //
