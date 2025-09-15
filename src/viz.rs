@@ -128,7 +128,7 @@ unsafe fn viz<V : TrieValue + Debug + Hash, A : Allocator>(n: &TrieNodeODRc<V, A
                     viz(r, dc, ds);
                     ds.nodes.insert(other_address, (address, NodeMeta{ shared: 1 << ds.root }));
                 }
-                Some((parent, ref mut meta)) => {
+                Some((parent, meta)) => {
                     meta.shared |= 1 << ds.root;
                 }
             }

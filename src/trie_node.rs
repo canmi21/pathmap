@@ -1354,6 +1354,16 @@ mod tagged_node_ref {
                 _ => false
             }
         }
+
+        pub fn item_count(&self) -> usize {
+            match self {
+                Self::EmptyNode => 0,
+                Self::DenseByteNode(node) => node.item_count(),
+                Self::LineListNode(node) => node.item_count(),
+                Self::CellByteNode(node) => node.item_count(),
+                Self::TinyRefNode(node) => node.item_count(),
+            }
+        }
     }
 
     impl<'a, V: Clone + Send + Sync, A: Allocator> TaggedNodeRefMut<'a, V, A> {
@@ -1940,6 +1950,17 @@ mod tagged_node_ref {
             let (ptr, tag) = self.ptr.get_raw_parts();
             debug_assert_eq!(tag, TINY_REF_NODE_TAG);
             unsafe{ &mut *ptr.cast::<TinyRefNode<V, A>>() }
+        }
+        pub fn item_count(&self) -> usize {
+            let (ptr, tag) = self.ptr.get_raw_parts();
+            match tag {
+                EMPTY_NODE_TAG => 0,
+                DENSE_BYTE_NODE_TAG => unsafe{ &*ptr.cast::<DenseByteNode<V, A>>() }.item_count(),
+                LINE_LIST_NODE_TAG => unsafe{ &*ptr.cast::<LineListNode<V, A>>() }.item_count(),
+                CELL_BYTE_NODE_TAG => unsafe{ &*ptr.cast::<CellByteNode<V, A>>() }.item_count(),
+                TINY_REF_NODE_TAG => unsafe{ &*ptr.cast::<TinyRefNode<V, A>>() }.item_count(),
+                _ => unsafe{ unreachable_unchecked() }
+            }
         }
     }
 
