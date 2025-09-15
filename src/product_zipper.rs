@@ -91,7 +91,17 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
     /// Returns `0` if the focus is in the primary factor.  The returned value will always be
     /// `zipper.focus_factor() < zipper.factor_count()`.
     pub fn focus_factor(&self) -> usize {
-        self.factor_paths.len()
+        match self.factor_paths.last() {
+            Some(factor_path_len) => {
+                let factor_idx = self.factor_paths.len();
+                if *factor_path_len < self.path().len() {
+                    factor_idx
+                } else {
+                    factor_idx - 1
+                }
+            },
+            None => 0
+        }
     }
     /// Returns a slice of the path indices that represent the end-points of the portion of the path from each
     /// factor
@@ -150,36 +160,8 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
                 }
             }
 
-            //If there is a `_secondary_root_val`, it lands at the same path as the value where the
-            // paths are joined.  And the value from the earlier zipper takes precedence
-            let (secondary_root, partial_path, _secondary_root_val) = self.secondaries[self.factor_paths.len()].borrow_raw_parts();
-
-            //SAFETY: We won't drop the `secondaries` vec until we're done with the stack of node references
-            let secondary_root: TaggedNodeRef<'trie, V, A> = unsafe{ core::mem::transmute(secondary_root) };
-
-            //TODO! Dealing with hidden root path in a secondary factor is very nasty.  I'm going to punt
-            // on handling this until we move this feature out of the experimental stage.
-            //See "WARNING" in ProductZipper creation methods
-            assert_eq!(partial_path.len(), 0);
-
-            self.z.deregularize();
-            self.z.push_node(secondary_root);
-            self.factor_paths.push(self.path().len());
+            self.enroll_next_factor();
         }
-    }
-    /// Internal method to determine whether a given method should be applied to the zipper core, or to the next factor root
-    #[inline]
-    fn should_use_next_factor(&self) -> bool {
-        if self.factor_paths.len() < self.secondaries.len() && self.z.child_count() == 0 {
-            if let Some(path_len) = self.factor_paths.last() {
-                if *path_len != self.z.path().len() {
-                    return true
-                }
-            } else {
-                return true
-            }
-        }
-        false
     }
     /// Internal method to make sure `self.factor_paths` is correct after an ascend method
     #[inline]
@@ -244,25 +226,26 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         self.descend_to(&[k])
     }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool {
+        let result = self.z.descend_indexed_byte(child_idx);
         self.ensure_descend_next_factor();
-        self.z.descend_indexed_byte(child_idx)
+        result
     }
     fn descend_first_byte(&mut self) -> bool {
+        let result = self.z.descend_first_byte();
         self.ensure_descend_next_factor();
-        self.z.descend_first_byte()
+        result
     }
     fn descend_until(&mut self) -> bool {
+        let result = self.z.descend_until();
         self.ensure_descend_next_factor();
-        self.z.descend_until()
+        result
     }
     fn to_next_sibling_byte(&mut self) -> bool {
-        self.ensure_descend_next_factor();
         let moved = self.z.to_next_sibling_byte();
         self.fix_after_ascend();
         moved
     }
     fn to_prev_sibling_byte(&mut self) -> bool {
-        self.ensure_descend_next_factor();
         let moved = self.z.to_prev_sibling_byte();
         self.fix_after_ascend();
         moved
@@ -313,18 +296,10 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         self.z.is_val()
     }
     fn child_count(&self) -> usize {
-        if self.should_use_next_factor() {
-            self.secondaries[self.factor_paths.len()].child_count()
-        } else {
-            self.z.child_count()
-        }
+        self.z.child_count()
     }
     fn child_mask(&self) -> ByteMask {
-        if self.should_use_next_factor() {
-            self.secondaries[self.factor_paths.len()].child_mask()
-        } else {
-            self.z.child_mask()
-        }
+        self.z.child_mask()
     }
 }
 
