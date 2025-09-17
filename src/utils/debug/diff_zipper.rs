@@ -234,18 +234,27 @@ impl<A: Zipper + ZipperIteration, B: Zipper + ZipperIteration> ZipperIteration f
     fn to_next_val(&mut self) -> bool {
         let a = self.a.to_next_val();
         let b = self.b.to_next_val();
+        if self.log_moves {
+            println!("DiffZipper: to_next_val")
+        }
         assert_eq!(a, b);
         a
     }
     fn descend_first_k_path(&mut self, k: usize) -> bool {
         let a = self.a.descend_first_k_path(k);
         let b = self.b.descend_first_k_path(k);
+        if self.log_moves {
+            println!("DiffZipper: descend_first_k_path k={k}")
+        }
         assert_eq!(a, b);
         a
     }
     fn to_next_k_path(&mut self, k: usize) -> bool {
         let a = self.a.to_next_k_path(k);
         let b = self.b.to_next_k_path(k);
+        if self.log_moves {
+            println!("DiffZipper: to_next_k_path k={k}")
+        }
         assert_eq!(a, b);
         a
     }

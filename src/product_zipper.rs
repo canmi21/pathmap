@@ -241,13 +241,19 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         result
     }
     fn to_next_sibling_byte(&mut self) -> bool {
+        if self.factor_paths.last().cloned().unwrap_or(0) == self.path().len() {
+            self.factor_paths.pop();
+        }
         let moved = self.z.to_next_sibling_byte();
-        self.fix_after_ascend();
+        self.ensure_descend_next_factor();
         moved
     }
     fn to_prev_sibling_byte(&mut self) -> bool {
+        if self.factor_paths.last().cloned().unwrap_or(0) == self.path().len() {
+            self.factor_paths.pop();
+        }
         let moved = self.z.to_prev_sibling_byte();
-        self.fix_after_ascend();
+        self.ensure_descend_next_factor();
         moved
     }
     fn ascend(&mut self, steps: usize) -> bool {
@@ -1194,6 +1200,55 @@ mod tests {
             assert_eq!(moving_pz.child_count(), fresh_pz.child_count());
             assert_eq!(moving_pz.child_mask(), fresh_pz.child_mask());
         })
+    }
+
+    /// Tests the ProductZipper's implementation of `to_next_k_path` or `to_next_sibling_byte`, stepping across factors
+    #[test]
+    fn product_zipper_test9() {
+        let paths = [
+            vec![3, 196, 50, 193, 52],
+            vec![3, 196, 50, 194, 49, 54],
+            vec![3, 196, 50, 194, 49, 55],
+        ];
+        let map: PathMap<()> = paths.iter().map(|path| (path, ())).collect();
+        $convert!(map);
+        let mut z = $ProductZipper::new(map.read_zipper(), [map.read_zipper(), map.read_zipper()]);
+
+        assert_eq!(z.descend_to([3, 196, 50, 193, 52, 3, 196, 50, 194, 49, 54]), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.to_next_k_path(2), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([3]));
+    }
+
+    /// Reproduce a bug in ProductZipperG, where continuing to descend past a non-existent
+    /// path somehow leads to re-entering the next factor
+    #[test]
+    fn product_zipper_testa() {
+        let paths = [
+            vec![3, 196, 101, 100, 103, 101, 193, 49, 194, 49, 56],
+            vec![3, 196, 101, 100, 103, 101, 193, 49, 194, 50, 48],
+        ];
+        let map: PathMap<()> = paths.iter().map(|path| (path, ())).collect();
+        $convert!(map);
+        let mut z = $ProductZipper::new(map.read_zipper(), [map.read_zipper(), map.read_zipper()]);
+
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.descend_to_byte(3), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.descend_to_byte(196), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.descend_to([101, 100, 103, 101]), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.descend_to_byte(193), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.path(), [3, 196, 101, 100, 103, 101, 193]);
+        assert_eq!(z.descend_to_byte(194), false);
+        assert_eq!(z.path(), [3, 196, 101, 100, 103, 101, 193, 194]);
+        assert_eq!(z.path_exists(), false);
+        assert_eq!(z.descend_to_byte(3), false);
+        assert_eq!(z.path(), [3, 196, 101, 100, 103, 101, 193, 194, 3]);
+        assert_eq!(z.path_exists(), false);
     }
 
     #[test]
