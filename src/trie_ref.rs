@@ -975,7 +975,7 @@ mod tests {
 
         //Lastly, check that the TrieRef didn't mess up the map
         let mut wz = zh.write_zipper_at_exclusive_path(b"path").unwrap();
-        wz.remove_val();
+        wz.remove_val(true);
         drop(wz);
         drop(zh);
         assert_eq!(map.get_val_at(b"path"), None);

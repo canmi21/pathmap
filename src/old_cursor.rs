@@ -5,7 +5,7 @@
 use crate::PathMap;
 use crate::trie_node::{TaggedNodeRef, NODE_ITER_FINISHED};
 use crate::dense_byte_node::{DenseByteNode, OrdinaryCoFree, CoFree};
-use crate::GlobalAlloc;
+use crate::alloc::GlobalAlloc;
 
 /// An iterator-like object that traverses key-value pairs in a [PathMap], however only one
 /// returned reference may exist at a given time

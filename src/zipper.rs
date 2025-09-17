@@ -1428,7 +1428,7 @@ pub(crate) mod read_zipper_core {
         /// The issue is how miri scopes its pointer tags, which make self-referential types fail
         /// when they are dropped, because the reference and the referant get dropped within the same
         /// scope.
-        #[derive(Clone)]
+        #[derive(Clone, Debug)]
         pub struct MiriWrapper<T>(T);
 
         impl<T> Deref for MiriWrapper<T> {

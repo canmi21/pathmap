@@ -199,20 +199,33 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> ByteNode<Cf, A>
     }
 
     #[inline]
-    pub fn remove_val(&mut self, k: u8) -> Option<V> {
+    pub fn remove_val(&mut self, k: u8, prune: bool) -> Option<V> {
         if self.mask.test_bit(k) {
             let ix = self.mask.index_of(k) as usize;
 
             let cf = unsafe { self.values.get_unchecked_mut(ix) };
             let result = cf.take_val();
 
-            if !cf.has_rec() {
+            if prune && !cf.has_rec() {
                 self.mask.clear_bit(k);
                 self.values.remove(ix);
             }
             result
         } else {
             None
+        }
+    }
+
+    #[inline]
+    pub fn set_dangling_cf(&mut self, k: u8) -> bool {
+        let ix = self.mask.index_of(k) as usize;
+        if self.mask.test_bit(k) {
+            false
+        } else {
+            self.mask.set_bit(k);
+            let new_cf = CoFree::new(None, None);
+            self.values.insert(ix, new_cf);
+            true
         }
     }
 
@@ -803,12 +816,64 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
             }
         }
     }
-    fn node_remove_val(&mut self, key: &[u8]) -> Option<V> {
+    fn node_remove_val(&mut self, key: &[u8], prune: bool) -> Option<V> {
         if key.len() == 1 {
-            self.remove_val(key[0])
+            self.remove_val(key[0], prune)
         } else {
             None
         }
+    }
+    fn node_create_dangling(&mut self, key: &[u8]) -> Result<(bool, bool), TrieNodeODRc<V, A>> {
+        debug_assert!(key.len() > 0);
+        #[cfg(not(feature = "all_dense_nodes"))]
+        {
+            //Split a new node to hold everything after the first byte of the key
+            if key.len() > 1 {
+                {
+                    let mut child = crate::line_list_node::LineListNode::new_in(self.alloc.clone());
+                    child.node_create_dangling(&key[1..]).unwrap_or_else(|_| panic!());
+                    self.set_child(key[0], TrieNodeODRc::new_in(child, self.alloc.clone()));
+                }
+                Ok((true, true))
+            } else {
+                Ok((self.set_dangling_cf(key[0]), false))
+            }
+        }
+
+        #[cfg(feature = "all_dense_nodes")]
+        {
+            if key.len() > 1 {
+                let last_node = self.create_parent_path(key);
+                Ok((last_node.set_dangling_cf(key[key.len()-1]), true))
+            } else {
+                Ok((self.set_dangling_cf(key[key.len()-1]), false))
+            }
+        }
+    }
+    fn node_remove_dangling(&mut self, key: &[u8]) -> usize {
+        debug_assert!(key.len() > 0);
+        if key.len() == 1 {
+            let k = key[0];
+            if self.mask.test_bit(k) {
+                let ix = self.mask.index_of(k) as usize;
+                let cf = unsafe { self.values.get_unchecked_mut(ix) };
+                if !cf.has_rec() && !cf.has_val() {
+                    self.mask.clear_bit(k);
+                    self.values.remove(ix);
+                    return 1
+                }
+                //Clean up empty nodes too, which may have been left by a ZipperHead
+                match cf.rec() {
+                    Some(node) => if node.as_tagged().node_is_empty() {
+                        self.mask.clear_bit(k);
+                        self.values.remove(ix);
+                        return 1
+                    },
+                    None => {}
+                }
+            }
+        }
+        0
     }
     fn node_set_branch(&mut self, key: &[u8], new_node: TrieNodeODRc<V, A>) -> Result<bool, TrieNodeODRc<V, A>> {
         debug_assert!(key.len() > 0);
@@ -846,7 +911,7 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
             }
         }
     }
-    fn node_remove_all_branches(&mut self, key: &[u8]) -> bool {
+    fn node_remove_all_branches(&mut self, key: &[u8], prune: bool) -> bool {
         if key.len() > 1 {
             return false;
         }
@@ -861,8 +926,12 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
                     true
                 },
                 (true, false) => {
-                    self.values.remove(ix);
-                    self.mask.clear_bit(k);
+                    if prune {
+                        self.values.remove(ix);
+                        self.mask.clear_bit(k);
+                    } else {
+                        cf.set_rec_option(None);
+                    }
                     true
                 },
                 (false, _) => {
@@ -1002,7 +1071,7 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
         (Some(&ALL_BYTES[prefix..=prefix]), cf.rec().map(|cf| cf.as_tagged()))
     }
 
-    fn node_remove_unmasked_branches(&mut self, key: &[u8], mask: ByteMask) {
+    fn node_remove_unmasked_branches(&mut self, key: &[u8], mask: ByteMask, _prune: bool) {
         debug_assert!(key.len() == 0);
         // in the future we can use `drain_filter`, but that's experimental
         let mut lead = 0;
@@ -1118,12 +1187,23 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
         }
     }
 
-    fn take_node_at_key(&mut self, key: &[u8]) -> Option<TrieNodeODRc<V, A>> {
+    fn take_node_at_key(&mut self, key: &[u8], prune: bool) -> Option<TrieNodeODRc<V, A>> {
         if key.len() < 2 {
             debug_assert!(key.len() == 1);
-            match self.get_mut(key[0]) {
-                Some(cf) => cf.take_rec(),
-                None => None
+            let k = key[0];
+            if self.mask.test_bit(k) {
+                let ix = self.mask.index_of(k) as usize;
+
+                let cf = unsafe { self.values.get_unchecked_mut(ix) };
+                let result = cf.take_rec();
+
+                if prune && !cf.has_val() {
+                    self.mask.clear_bit(k);
+                    self.values.remove(ix);
+                }
+                result
+            } else {
+                None
             }
         } else {
             None

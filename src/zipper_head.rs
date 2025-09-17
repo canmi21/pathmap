@@ -299,7 +299,7 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
                 inner_z.move_to_path(origin_path);
                 if inner_z.try_borrow_focus().unwrap().as_tagged().node_is_empty() {
                     if !inner_z.is_val() && inner_z.child_count() == 0 {
-                        inner_z.prune_path();
+                        inner_z.remove_branches(true);
                     }
                 }
                 inner_z.reset();
@@ -375,7 +375,7 @@ pub(crate) fn prepare_exclusive_write_path<'a, 'trie: 'a, 'path: 'a, V: Clone + 
                 z.in_zipper_mut_static_result(
                     |node, key| {
                         let new_node = if key.len() > 0 {
-                            if let Some(mut remaining) = node.take_node_at_key(key) {
+                            if let Some(mut remaining) = node.take_node_at_key(key, false) {
                                 make_cell_node(&mut remaining);
                                 remaining
                             } else {
@@ -424,7 +424,7 @@ fn prepare_node_at_path_end<'a, V: Clone + Send + Sync, A: Allocator>(start_node
     //If remaining_key is non-zero length, split and upgrade the intervening node
     if remaining_key.len() > 0 {
         let mut node_ref = node.make_mut();
-        let mut new_parent = match node_ref.take_node_at_key(remaining_key) {
+        let mut new_parent = match node_ref.take_node_at_key(remaining_key, false) {
             Some(downward_node) => downward_node,
             None => TrieNodeODRc::new_in(CellByteNode::new_in(alloc.clone()), alloc)
         };
@@ -576,7 +576,7 @@ mod tests {
             }
 
             let mut writer_z = zipper_head.write_zipper_at_exclusive_path(b"out").unwrap();
-            writer_z.remove_branches();
+            writer_z.remove_branches(true);
             drop(writer_z);
 
             //Dispatch a zipper to each thread
@@ -887,7 +887,7 @@ mod tests {
 
         let mut wz = unsafe{ space.write_zipper_at_exclusive_path_unchecked(&[4, 200, 0, 0, 0, 0, 0, 0, 0, 6, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4]) };
         wz.descend_to(&[200, 0, 0, 0, 0, 0, 0, 0, 7, 2, 200, 0, 0, 0, 0, 0, 0, 0, 3, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 2, 200, 0, 0, 0, 0, 0, 0, 0, 8, 192, 2, 200, 0, 0, 0, 0, 0, 0, 0, 3, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 2, 200, 0, 0, 0, 0, 0, 0, 0, 9, 128]);
-        wz.remove_val();
+        wz.remove_val(true);
         drop(wz);
 
         let wz = unsafe{ space.write_zipper_at_exclusive_path_unchecked(&[2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 2, 200, 0, 0, 0, 0, 0, 0, 0, 9]) };
@@ -898,7 +898,7 @@ mod tests {
 
         let mut wz = unsafe{ space.write_zipper_at_exclusive_path_unchecked(&[4, 200, 0, 0, 0, 0, 0, 0, 0, 6, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4]) };
         wz.descend_to(&[200, 0, 0, 0, 0, 0, 0, 0, 7, 2, 200, 0, 0, 0, 0, 0, 0, 0, 3, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 200, 0, 0, 0, 0, 0, 0, 0, 5, 2, 200, 0, 0, 0, 0, 0, 0, 0, 3, 2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 200, 0, 0, 0, 0, 0, 0, 0, 10]);
-        wz.remove_val();
+        wz.remove_val(true);
         drop(wz);
 
         let wz = unsafe{ space.write_zipper_at_exclusive_path_unchecked(&[2, 200, 0, 0, 0, 0, 0, 0, 0, 4, 200, 0, 0, 0, 0, 0, 0, 0, 10]) };
@@ -990,7 +990,7 @@ mod tests {
 
         //Now that the witness is gone, validate I can create the WZ, and remove the value
         let mut wz = zh.write_zipper_at_exclusive_path(b"path").unwrap();
-        wz.remove_val();
+        wz.remove_val(true);
         drop(wz);
         drop(zh);
         assert_eq!(map.get_val_at(b"path"), None);

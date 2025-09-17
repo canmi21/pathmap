@@ -313,7 +313,7 @@ impl BTMOctree {
             if points.len() < LEAF_CAPACITY || depth >= MAX_DEPTH {
                 points.push(p);
             } else {
-                let ps = wz.remove_val().unwrap();
+                let ps = wz.remove_val(true).unwrap();
                 for &old_p in ps.iter() {
                     let idx = Octree::child_index(bounds.center(), old_p);
                     let child_bounds = Octree::child(&bounds, idx);

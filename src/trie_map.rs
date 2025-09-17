@@ -340,18 +340,20 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
     // than replacing it
 
     /// Removes the value at `path` from the map and returns it, or returns `None` if there was no value at `path`
-    pub fn remove_val_at<K: AsRef<[u8]>>(&mut self, path: K) -> Option<V> {
+    ///
+    /// If `prune` is `true`, the path will be pruned, otherwise it will be left dangling.
+    pub fn remove_val_at<K: AsRef<[u8]>>(&mut self, path: K, prune: bool) -> Option<V> {
         let path = path.as_ref();
         //NOTE: we're descending the zipper rather than creating it at the path so it will be allowed to
         // prune the branches.  A WriteZipper can't move above its root, so it couldn't prune otherwise
         let mut zipper = self.write_zipper();
         zipper.descend_to(path);
-        zipper.remove_val()
+        zipper.remove_val(prune)
     }
 
     /// Alias for [Self::remove_val_at], so `PathMap` "feels" like other Rust collections
     pub fn remove<K: AsRef<[u8]>>(&mut self, path: K) -> Option<V> {
-        self.remove_val_at(path)
+        self.remove_val_at(path, true)
     }
 
     /// Returns a reference to the value at the specified `path`, or `None` if no value exists
@@ -851,7 +853,7 @@ mod tests {
         //Test root value
         assert_eq!(map.get_val_or_set_mut_at(b"", 42), &mut 42);
         assert_eq!(map.get_val_mut_at(b""), Some(&mut 42));
-        assert_eq!(map.remove_val_at(b""), Some(42));
+        assert_eq!(map.remove_val_at(b"", true), Some(42));
         *map.get_val_or_set_mut_at(b"", 42) = 24;
         assert_eq!(map.get_val_mut_at(b""), Some(&mut 24));
 
@@ -860,7 +862,7 @@ mod tests {
         assert_eq!(map.get_val_mut_at(PATH), None);
         assert_eq!(map.get_val_or_set_mut_at(PATH, 42), &mut 42);
         assert_eq!(map.get_val_mut_at(PATH), Some(&mut 42));
-        assert_eq!(map.remove_val_at(PATH), Some(42));
+        assert_eq!(map.remove_val_at(PATH, true), Some(42));
         *map.get_val_or_set_mut_at(PATH, 42) = 24;
         assert_eq!(map.get_val_mut_at(PATH), Some(&mut 24));
     }
@@ -878,23 +880,23 @@ mod tests {
         map.set_val_at("acaaa", "acaaa");
         assert_eq!(map.val_count(), 8);
 
-        assert_eq!(map.remove_val_at(b"aaaaa"), Some("aaaaa"));
+        assert_eq!(map.remove_val_at(b"aaaaa", true), Some("aaaaa"));
         assert_eq!(map.val_count(), 7);
-        assert_eq!(map.remove_val_at(b"acaaa"), Some("acaaa"));
+        assert_eq!(map.remove_val_at(b"acaaa", true), Some("acaaa"));
         assert_eq!(map.val_count(), 6);
-        assert_eq!(map.remove_val_at(b"cccccnot-a-real-key"), None);
+        assert_eq!(map.remove_val_at(b"cccccnot-a-real-key", true), None);
         assert_eq!(map.val_count(), 6);
-        assert_eq!(map.remove_val_at(b"aaaac"), Some("aaaac"));
+        assert_eq!(map.remove_val_at(b"aaaac", true), Some("aaaac"));
         assert_eq!(map.val_count(), 5);
-        assert_eq!(map.remove_val_at(b"aaaab"), Some("aaaab"));
+        assert_eq!(map.remove_val_at(b"aaaab", true), Some("aaaab"));
         assert_eq!(map.val_count(), 4);
-        assert_eq!(map.remove_val_at(b"abbbb"), Some("abbbb"));
+        assert_eq!(map.remove_val_at(b"abbbb", true), Some("abbbb"));
         assert_eq!(map.val_count(), 3);
-        assert_eq!(map.remove_val_at(b"ddddd"), Some("ddddd"));
+        assert_eq!(map.remove_val_at(b"ddddd", true), Some("ddddd"));
         assert_eq!(map.val_count(), 2);
-        assert_eq!(map.remove_val_at(b"ccccc"), Some("ccccc"));
+        assert_eq!(map.remove_val_at(b"ccccc", true), Some("ccccc"));
         assert_eq!(map.val_count(), 1);
-        assert_eq!(map.remove_val_at(b"bbbbb"), Some("bbbbb"));
+        assert_eq!(map.remove_val_at(b"bbbbb", true), Some("bbbbb"));
         assert_eq!(map.val_count(), 0);
         assert!(map.is_empty());
     }
@@ -902,8 +904,8 @@ mod tests {
     #[test]
     fn map_remove_test2() {
         let mut btm = PathMap::from_iter([("abbb", ()), ("b", ()), ("bba", ())].iter().map(|(p, v)| (p.as_bytes(), v)));
-        btm.remove_val_at("abbb".as_bytes());
-        btm.remove_val_at("a".as_bytes());
+        btm.remove_val_at("abbb".as_bytes(), true);
+        btm.remove_val_at("a".as_bytes(), true);
     }
 
     #[test]
@@ -981,7 +983,7 @@ mod tests {
         assert_eq!(map.get_val_at([]), None);
         assert_eq!(map.set_val_at([], 1), None);
         assert_eq!(map.get_val_at([]), Some(&1));
-        assert_eq!(map.remove_val_at([]), Some(1));
+        assert_eq!(map.remove_val_at([], true), Some(1));
         assert_eq!(map.get_val_at([]), None);
 
         //Through a WriteZipper, created at the root
@@ -990,7 +992,7 @@ mod tests {
         assert_eq!(z.set_val(1), None);
         assert_eq!(z.val(), Some(&1));
         *z.get_val_mut().unwrap() = 2;
-        assert_eq!(z.remove_val(), Some(2));
+        assert_eq!(z.remove_val(true), Some(2));
         assert_eq!(z.val(), None);
         drop(z);
 
@@ -1000,7 +1002,7 @@ mod tests {
         assert_eq!(z.set_val(1), None);
         assert_eq!(z.val(), Some(&1));
         *z.get_val_mut().unwrap() = 2;
-        assert_eq!(z.remove_val(), Some(2));
+        assert_eq!(z.remove_val(true), Some(2));
         assert_eq!(z.val(), None);
         drop(z);
 
@@ -1010,7 +1012,7 @@ mod tests {
         assert_eq!(map.read_zipper().get_val(), Some(&1));
         assert_eq!(map.read_zipper_at_borrowed_path(&[]).get_val(), Some(&1));
         assert_eq!(map.read_zipper_at_path([]).get_val(), Some(&1));
-        assert_eq!(map.remove_val_at([]), Some(1));
+        assert_eq!(map.remove_val_at([], true), Some(1));
         assert_eq!(map.read_zipper_at_borrowed_path(&[]).get_val(), None);
         assert_eq!(map.read_zipper_at_path([]).get_val(), None);
 
@@ -1277,6 +1279,22 @@ mod tests {
         assert_eq!(map.get_val_at(b"start:0000:goodbye"), Some(&0));
         assert_eq!(map.get_val_at(b"start:0003:hello"), Some(&3));
         assert_eq!(map.get_val_at(b"start:0003:goodbye"), Some(&3));
+    }
+
+    /// Makes a PathMap with a value type that must be dropped, to ensure we don't leak memory
+    #[test]
+    fn map_values_drop_test() {
+        let mut map = PathMap::<String>::new();
+
+        //We want at least one pair node and at least one byte node.
+        // "h" is the byte node, "how" is the pair node
+        map.set_val_at("hello", "hello".to_string());
+        map.set_val_at("howdy", "howdy".to_string());
+        map.set_val_at("how do you do", "how do you do".to_string());
+        map.set_val_at("hi there", "hi there".to_string());
+
+        assert_eq!(map.remove_val_at("how do you do", true), Some("how do you do".to_string()));
+        assert_eq!(map.remove_val_at("hello", true), Some("hello".to_string()));
     }
 }
 
