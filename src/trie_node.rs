@@ -2225,6 +2225,9 @@ pub(crate) fn val_count_below_root<V: Clone + Send + Sync, A: Allocator>(node: T
 }
 
 pub(crate) fn val_count_below_node<V: Clone + Send + Sync, A: Allocator>(node: &TrieNodeODRc<V, A>, cache: &mut HashMap<u64, usize>) -> usize {
+    if node.is_empty() {
+        return 0
+    }
     if node.refcount() > 1 {
         let hash = node.shared_node_id();
         match cache.get(&hash) {
