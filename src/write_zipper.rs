@@ -102,7 +102,7 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
 
     /// Depracated alias for [ZipperWriting::join_into].  Likely to be removed in the future to make way
     /// for a method that interacts with two read-only arguments and returns a newly constructed subtrie or map.
-    #[deprecated]
+    #[deprecated] //GOAT-old-names
     fn join<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice {
         self.join_into(read_zipper)
     }
@@ -134,7 +134,7 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice;
 
     /// Deprecated alias for [ZipperWriting::join_k_path_into]
-    #[deprecated]
+    #[deprecated] //GOAT-old-names
     fn drop_head(&mut self, byte_cnt: usize) -> bool where V: Lattice {
         self.join_k_path_into(byte_cnt, true)
     }
@@ -162,12 +162,12 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
 
     /// Meets (retains the intersection of) the subtrie below the zipper's focus with the subtrie downstream
     /// from the focus of `read_zipper`
-    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice;
+    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: Lattice;
 
     /// Deprecated alias for [ZipperWriting::meet_into].  May be replaced in the future with a different method
-    #[deprecated]
+    #[deprecated] //GOAT-old-names
     fn meet<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice {
-        self.meet_into(read_zipper)
+        self.meet_into(read_zipper, true)
     }
 
     /// Experiment.  GOAT, document this
@@ -175,12 +175,12 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
 
     /// Subtracts the subtrie downstream of the focus of `read_zipper` from the subtrie below the `self` zipper's
     /// focus
-    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice;
+    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: DistributiveLattice;
 
     /// Deprecated alias for [ZipperWriting::subtract_into]
-    #[deprecated]
+    #[deprecated] //GOAT-old-names
     fn subtract<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice {
-        self.subtract_into(read_zipper)
+        self.subtract_into(read_zipper, true)
     }
 
     /// Restricts paths in the subtrie downstream of the `self` focus to paths prefixed by a path to a value in
@@ -281,9 +281,9 @@ impl<V: Clone + Send + Sync, Z, A: Allocator> ZipperWriting<V, A> for &mut Z whe
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { (**self).join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { (**self).insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { (**self).remove_prefix(n) }
-    fn meet_into<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> AlgebraicStatus where V: Lattice { (**self).meet_into(read_zipper) }
+    fn meet_into<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ, prune: bool) -> AlgebraicStatus where V: Lattice { (**self).meet_into(read_zipper, prune) }
     fn meet_2<RZA: ZipperSubtries<V, A>, RZB: ZipperSubtries<V, A>>(&mut self, rz_a: &RZA, rz_b: &RZB) -> AlgebraicStatus where V: Lattice { (**self).meet_2(rz_a, rz_b) }
-    fn subtract_into<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> AlgebraicStatus where V: DistributiveLattice { (**self).subtract_into(read_zipper) }
+    fn subtract_into<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ, prune: bool) -> AlgebraicStatus where V: DistributiveLattice { (**self).subtract_into(read_zipper, prune) }
     fn restrict<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> AlgebraicStatus { (**self).restrict(read_zipper) }
     fn restricting<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> bool { (**self).restricting(read_zipper) }
     fn take_map(&mut self, prune: bool) -> Option<PathMap<V, A>> { (**self).take_map(prune) }
@@ -433,9 +433,9 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { self.z.remove_prefix(n) }
-    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper) }
+    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper, prune) }
     fn meet_2<ZA: ZipperSubtries<V, A>, ZB: ZipperSubtries<V, A>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice { self.z.meet_2(rz_a, rz_b) }
-    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract_into(read_zipper) }
+    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract_into(read_zipper, prune) }
     fn restrict<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus { self.z.restrict(read_zipper) }
     fn restricting<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> bool { self.z.restricting(read_zipper) }
     fn take_map(&mut self, prune: bool) -> Option<PathMap<V, A>> { self.z.take_map(prune) }
@@ -607,9 +607,9 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { self.z.remove_prefix(n) }
-    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper) }
+    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper, prune) }
     fn meet_2<ZA: ZipperSubtries<V, A>, ZB: ZipperSubtries<V, A>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice { self.z.meet_2(rz_a, rz_b) }
-    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract_into(read_zipper) }
+    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract_into(read_zipper, prune) }
     fn restrict<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus { self.z.restrict(read_zipper) }
     fn restricting<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> bool { self.z.restricting(read_zipper) }
     fn take_map(&mut self, prune: bool) -> Option<PathMap<V, A>> { self.z.take_map(prune) }
@@ -773,9 +773,9 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperWriting<V, A> for Write
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { self.z.remove_prefix(n) }
-    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper) }
+    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper, prune) }
     fn meet_2<ZA: ZipperSubtries<V, A>, ZB: ZipperSubtries<V, A>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice { self.z.meet_2(rz_a, rz_b) }
-    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract_into(read_zipper) }
+    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract_into(read_zipper, prune) }
     fn restrict<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus { self.z.restrict(read_zipper) }
     fn restricting<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> bool { self.z.restricting(read_zipper) }
     fn take_map(&mut self, prune: bool) -> Option<PathMap<V, A>> { self.z.take_map(prune) }
@@ -1556,14 +1556,17 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         fully_ascended
     }
     /// See [ZipperWriting::meet_into]
-    pub fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice {
-        let src = read_zipper.get_focus();
-        if src.is_none() {
-            self.graft_internal(None);
-            return AlgebraicStatus::None
-        }
+    pub fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: Lattice {
         match self.get_focus().try_as_tagged() {
             Some(self_node) => {
+                let src = read_zipper.get_focus();
+                if src.is_none() {
+                    self.graft_internal(None);
+                    if prune {
+                        self.prune_path();
+                    }
+                    return AlgebraicStatus::None
+                }
                 match self_node.pmeet_dyn(src.as_tagged()) {
                     AlgebraicResult::Element(intersection) => {
                         self.graft_internal(Some(intersection));
@@ -1571,6 +1574,9 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
                     },
                     AlgebraicResult::None => {
                         self.graft_internal(None);
+                        if prune {
+                            self.prune_path();
+                        }
                         AlgebraicStatus::None
                     },
                     AlgebraicResult::Identity(mask) => {
@@ -1627,7 +1633,7 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         }
     }
     /// See [ZipperWriting::subtract_into]
-    pub fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice {
+    pub fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: DistributiveLattice {
         let src = read_zipper.get_focus();
         let self_focus = self.get_focus();
         if src.is_none() {
@@ -1646,6 +1652,9 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
                     },
                     AlgebraicResult::None => {
                         self.graft_internal(None);
+                        if prune {
+                            self.prune_path();
+                        }
                         AlgebraicStatus::None
                     },
                     AlgebraicResult::Identity(mask) => {
@@ -2728,7 +2737,7 @@ mod tests {
         //Test an Element result
         let mut bz = b.write_zipper();
         assert_eq!(bz.val_count(), b_keys.len());
-        let result = bz.meet_into(&az);
+        let result = bz.meet_into(&az, true);
         assert_eq!(result, AlgebraicStatus::Element);
         assert_eq!(bz.val_count(), 1);
         assert!(bz.descend_to("12345"));
@@ -2738,7 +2747,7 @@ mod tests {
         let b_keys = ["12345"];
         let mut b: PathMap<()> = b_keys.iter().map(|k| (k, ())).collect();
         let mut bz = b.write_zipper();
-        let result = bz.meet_into(&az);
+        let result = bz.meet_into(&az, true);
         assert_eq!(result, AlgebraicStatus::Identity);
         assert_eq!(bz.val_count(), 1);
         assert!(bz.descend_to("12345"));
@@ -2750,7 +2759,7 @@ mod tests {
         let az = a.read_zipper();
         assert_eq!(az.val_count(), a_keys.len());
         bz.reset();
-        let result = bz.meet_into(&az);
+        let result = bz.meet_into(&az, true);
         assert_eq!(result, AlgebraicStatus::None);
         assert_eq!(bz.child_count(), 0);
     }
@@ -2810,7 +2819,7 @@ mod tests {
         wz.remove_val(true);
         wz.ascend(4);
 
-        wz.meet_into(&rz);
+        wz.meet_into(&rz, true);
 
         assert_eq!(wz.val_count(), 2);
         assert!(wz.descend_to([194, 7, 162]));

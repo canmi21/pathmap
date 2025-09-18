@@ -129,9 +129,9 @@ impl <V: TrieValue, A: Allocator> ZipperWriting<V, A> for NullZipper {
     fn join_k_path_into(&mut self, _byte_cnt: usize, _prune: bool) -> bool where V: Lattice { false }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, _prefix: K) -> bool { false }
     fn remove_prefix(&mut self, _n: usize) -> bool { false }
-    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
+    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z, _prune: bool) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
     fn meet_2<'z, ZA: ZipperSubtries<V, A>, ZB: ZipperSubtries<V, A>>(&mut self, _rz_a: &ZA, _rz_b: &ZB) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
-    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { AlgebraicStatus::Element }
+    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z, _prune: bool) -> AlgebraicStatus where V: DistributiveLattice { AlgebraicStatus::Element }
     fn restrict<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) -> AlgebraicStatus { AlgebraicStatus::Element }
     fn restricting<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) -> bool { false }
     fn remove_branches(&mut self, prune: bool) -> bool { false }
