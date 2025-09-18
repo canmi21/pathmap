@@ -2508,6 +2508,42 @@ pub(crate) mod read_zipper_core {
             self.focus_iter_token = NODE_ITER_INVALID;
         }
     }
+
+    /// Validate we don't accidentially reallocate the path buffer when we don't need to
+    #[test]
+    fn read_zipper_reserve_buffer_test() {
+        let map = PathMap::<()>::new();
+
+        //Try with no prefix path
+        let mut rz = map.read_zipper();
+        assert_eq!(rz.z.prefix_buf.capacity(), 0);
+        rz.reserve_buffers(4096, 512);
+        assert_eq!(rz.z.prefix_buf.capacity(), 4096);
+        let old_ptr = rz.z.prefix_buf.as_ptr();
+        rz.descend_to(b"hello");
+        assert_eq!(rz.z.prefix_buf.capacity(), 4096);
+        assert_eq!(rz.z.prefix_buf.as_ptr(), old_ptr);
+        assert_eq!(&rz.z.prefix_buf, b"hello");
+        assert_eq!(&rz.path(), b"hello");
+
+        //Try with a prefix path
+        let mut rz = map.read_zipper_at_borrowed_path(b"hi");
+        assert_eq!(rz.z.prefix_buf.capacity(), 0);
+        assert_eq!(rz.path(), b"");
+        assert_eq!(rz.origin_path(), b"hi");
+        rz.reserve_buffers(4096, 512);
+        assert_eq!(rz.z.prefix_buf.capacity(), 4096);
+        let old_ptr = rz.z.prefix_buf.as_ptr();
+        assert_eq!(rz.path(), b"");
+        assert_eq!(rz.origin_path(), b"hi");
+        assert_eq!(&rz.z.prefix_buf, b"hi");
+        rz.descend_to(b"-howdy");
+        assert_eq!(rz.z.prefix_buf.capacity(), 4096);
+        assert_eq!(rz.z.prefix_buf.as_ptr(), old_ptr);
+        assert_eq!(&rz.z.prefix_buf, b"hi-howdy");
+        assert_eq!(&rz.path(), b"-howdy");
+        assert_eq!(rz.origin_path(), b"hi-howdy");
+    }
 }
 use read_zipper_core::*;
 
@@ -2600,7 +2636,7 @@ impl<'a> SliceOrLen<'a> {
         match self {
             Self::Slice(slice) => slice.len(),
             Self::Len(len) => {
-                debug_assert!(*len > 0);
+                debug_assert!(*len > 0); //Zero-length SliceOrLen should always be represented as a `Slice`
                 *len
             },
         }
@@ -4249,4 +4285,3 @@ mod tests {
         assert_eq!(shared_cnt, 3);
     }
 }
-

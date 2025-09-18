@@ -89,13 +89,7 @@ use crate::{
     },
 };
 
-#[cfg(not(miri))]
-use gxhash::{GxHasher, HashMap, HashMapExt};
-
-#[cfg(miri)]
-use xxhash_rust::xxh64::{Xxh64 as GxHasher};
-#[cfg(miri)]
-use std::collections::HashMap;
+use crate::gxhash::{GxHasher, HashMap, HashMapExt};
 
 /// The identifier of a node (branch node or line node)
 ///

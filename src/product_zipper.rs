@@ -344,19 +344,15 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     fn root_prefix_path(&self) -> &[u8] { self.z.root_prefix_path() }
 }
 
-/// A convenience trait to make where clauses for `ProductZipperG` less bulky
-// pub trait ZipperReq<'trie, V>:
-//     Zipper + ZipperValues<V> + ZipperAbsolutePath {}
-
-// impl<'trie, V, Z> ZipperReq<'trie, V> for Z
-// where Z: Zipper + ZipperValues<V> + ZipperAbsolutePath {}
-
 /// A [Zipper] type that moves through a Cartesian product space created by extending each value at the
 /// end of a path in a primary space with the root of a secondardary space, and doing it recursively for
 /// as many spaces as needed
 ///
 /// Compared to [ProductZipper], this is a generic virtual zipper that works without
 /// inspecting the inner workings of primary and secondary zippers.
+///
+/// NOTE: In the future, this generic type will be renamed to `ProductZipper`, and the existing
+/// [ProductZipper] will be renamed something else or removed entirely.
 pub struct ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
@@ -380,6 +376,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ,
     pub fn new<ZipperList>(primary: PrimaryZ, other_zippers: ZipperList) -> Self
         where
             ZipperList: IntoIterator<Item=SecondaryZ>,
+            PrimaryZ: ZipperReadOnlyValues<'trie, V>,
+            SecondaryZ: ZipperReadOnlyValues<'trie, V>,
     {
         Self {
             factor_paths: Vec::new(),
