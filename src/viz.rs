@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::hash::{DefaultHasher, Hash, Hasher};
-use crate::trie_node::TrieNodeDowncast;
-use crate::gxhash::{HashSet, HashSetExt};
+use std::hash::Hash;
+use std::io::{self, Write};
 use smallvec::{SmallVec, ToSmallVec};
 use crate::alloc::Allocator;
-use crate::trie_map::BytesTrieMap;
+use crate::trie_map::PathMap;
 use crate::trie_node::{TaggedNodeRef, TrieNodeODRc, NODE_ITER_FINISHED};
 use crate::TrieValue;
 
@@ -23,7 +22,7 @@ struct NodeMeta {
 
 #[derive(Debug)]
 enum NodeType {
-    Dense, Pair, Tiny, Empty, Bridge, Unknown
+    Dense, Pair, Tiny, Empty, Unknown
 }
 
 enum DrawCmd {
@@ -34,16 +33,16 @@ enum DrawCmd {
 
 struct DrawState {
     root: usize,
-    values: HashMap<u64, u64>,
     nodes: HashMap<u64, (u64, NodeMeta)>,
     cmds: Vec<DrawCmd>
 }
 
+/// Output [Mermaid](https://mermaid.js.org) markup commands to render a graph of the physical memory layout of the nodes
+/// used by the provided [PathMap]s
+pub fn viz_maps_physical<V : TrieValue + Debug + Hash, W: Write>(btms: &[PathMap<V>], dc: &DrawConfig, mut out: W) -> io::Result<()> {
+    writeln!(out, "flowchart LR")?;
 
-pub unsafe fn viz_btms<V : TrieValue + Debug + Hash>(btms: &[BytesTrieMap<V>], dc: &DrawConfig) {
-    println!("flowchart LR");
-
-    let mut ds = DrawState{ root: 0, values: HashMap::new(), nodes: HashMap::new(), cmds: vec![] };
+    let mut ds = DrawState{ root: 0, nodes: HashMap::new(), cmds: vec![] };
     for btm in btms.iter() {
         unsafe { viz(&btm.root.get().as_ref().unwrap().as_ref().unwrap(), dc, &mut ds) };
         ds.root += 1;
@@ -67,10 +66,10 @@ pub unsafe fn viz_btms<V : TrieValue + Debug + Hash>(btms: &[BytesTrieMap<V>], d
                         0b111 => { "gray" }
                         _ => todo!()
                     };
-                    println!("g{address_str}@{{ shape: rect, label: \"{ntype:?}\"}}");
-                    println!("style g{address_str} fill:{color}");
+                    writeln!(out, "g{address_str}@{{ shape: rect, label: \"{ntype:?}\"}}")?;
+                    writeln!(out, "style g{address_str} fill:{color}")?;
                 } else {
-                    println!("g{address_str}@{{ shape: rect, label: \"{ntype:?}\"}}");
+                    writeln!(out, "g{address_str}@{{ shape: rect, label: \"{ntype:?}\"}}")?;
                 }
             }
             DrawCmd::Edge(src, dst, key_bytes) => {
@@ -78,7 +77,7 @@ pub unsafe fn viz_btms<V : TrieValue + Debug + Hash>(btms: &[BytesTrieMap<V>], d
                 let jump = if dc.ascii { std::str::from_utf8(&key_bytes[..]).unwrap_or_else(|_| debug_jump.as_str()) }
                 else { debug_jump.as_str() };
 
-                println!("g{src} --\"{jump:?}\"--> g{dst}");
+                writeln!(out, "g{src} --\"{jump:?}\"--> g{dst}")?;
             }
             DrawCmd::Value(parent, address, key_bytes) => {
                 if dc.hide_values { continue }
@@ -92,16 +91,17 @@ pub unsafe fn viz_btms<V : TrieValue + Debug + Hash>(btms: &[BytesTrieMap<V>], d
                 let value_address_string = format!("{address}");
                 let value_address_str = value_address_string.as_str();
 
-                let show_v = format!("{:?}", (address as *const V).as_ref().unwrap());
+                let show_v = format!("{:?}", unsafe{ (address as *const V).as_ref().unwrap() });
 
-                println!("g{address_str} --\"{jump:?}\"--> v{value_address_str}{address_str}");
-                println!("v{value_address_str}{address_str}@{{ shape: rounded, label: \"{show_v}\" }}");
+                writeln!(out, "g{address_str} --\"{jump:?}\"--> v{value_address_str}{address_str}")?;
+                writeln!(out, "v{value_address_str}{address_str}@{{ shape: rounded, label: \"{show_v}\" }}")?;
             }
         }
     }
+    Ok(())
 }
 
-unsafe fn viz<V : TrieValue + Debug + Hash, A : Allocator>(n: &TrieNodeODRc<V, A>, dc: &DrawConfig, ds: &mut DrawState) {
+fn viz<V : TrieValue + Debug + Hash, A : Allocator>(n: &TrieNodeODRc<V, A>, dc: &DrawConfig, ds: &mut DrawState) {
     let address = n.shared_node_id();
 
     let bn = n.as_tagged();
@@ -112,7 +112,6 @@ unsafe fn viz<V : TrieValue + Debug + Hash, A : Allocator>(n: &TrieNodeODRc<V, A
         // TaggedNodeRef::BridgeNode(_) => { NodeType::Bridge }
         TaggedNodeRef::CellByteNode(_) => { NodeType::Unknown }
         TaggedNodeRef::EmptyNode => { NodeType::Empty }
-        _ => { panic!() }
     };
     ds.cmds.push(DrawCmd::Node(address, ntype));
 
@@ -128,7 +127,7 @@ unsafe fn viz<V : TrieValue + Debug + Hash, A : Allocator>(n: &TrieNodeODRc<V, A
                     viz(r, dc, ds);
                     ds.nodes.insert(other_address, (address, NodeMeta{ shared: 1 << ds.root }));
                 }
-                Some((parent, meta)) => {
+                Some((_parent, meta)) => {
                     meta.shared |= 1 << ds.root;
                 }
             }
@@ -144,22 +143,25 @@ unsafe fn viz<V : TrieValue + Debug + Hash, A : Allocator>(n: &TrieNodeODRc<V, A
 
 #[cfg(test)]
 mod test {
-    use crate::zipper::{ZipperCreation, ZipperIteration, ZipperMoving, ZipperWriting};
+    use crate::zipper::{ZipperCreation, ZipperMoving, ZipperWriting};
     use super::*;
 
     #[test]
     fn small_viz() {
-        let mut btm = BytesTrieMap::new();
+        let mut btm = PathMap::new();
         let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
         rs.iter().enumerate().for_each(|(i, r)| { btm.insert(r.as_bytes(), i); });
 
-        unsafe { viz_btms(&[btm], &DrawConfig{ ascii: true, share_values: false, hide_values: false, color_mix: false }) };
+        let mut out_buf = Vec::new();
+        viz_maps_physical(&[btm], &DrawConfig{ ascii: true, share_values: false, hide_values: false, color_mix: false }, &mut out_buf).unwrap();
+    
+        println!("{}", String::from_utf8_lossy(&out_buf));
     }
 
     #[test]
     fn joined_viz() {
-        let mut a = BytesTrieMap::<usize>::new();
-        let mut b = BytesTrieMap::<usize>::new();
+        let mut a = PathMap::<usize>::new();
+        let mut b = PathMap::<usize>::new();
         let rs = ["Abbotsford", "Abbottabad", "Abcoude", "Abdul Hakim", "Abdulino", "Abdullahnagar", "Abdurahmoni Jomi", "Abejorral", "Abelardo Luz"];
         for (i, path) in rs.into_iter().enumerate() {
             if i % 2 == 0 {
@@ -171,15 +173,16 @@ mod test {
 
         let joined = a.join(&b);
 
-        unsafe { viz_btms(&[a, b, joined], &DrawConfig{ ascii: true, share_values: false, hide_values: false, color_mix: true }) };
+        let mut out_buf = Vec::new();
+        viz_maps_physical(&[a, b, joined], &DrawConfig{ ascii: true, share_values: false, hide_values: false, color_mix: true }, &mut out_buf).unwrap();
     }
 
     #[test]
     fn fizzbuzz() {
         let n = 50;
 
-        let mut space = BytesTrieMap::<()>::new();
-        let mut zh = space.zipper_head();
+        let mut space = PathMap::<()>::new();
+        let zh = space.zipper_head();
 
         let mut m3_path = b"[2]".to_vec();
         let m3_symbol = "m3".as_bytes();
@@ -221,7 +224,7 @@ mod test {
         m3n5_path.extend(m3n5_symbol);
         let mut m3n5_zipper = zh.write_zipper_at_exclusive_path(&m3n5_path[..]).unwrap();
         m3n5_zipper.graft(&m5_zipper);
-        m3n5_zipper.subtract(&m3_zipper);
+        m3n5_zipper.subtract_into(&m3_zipper, true);
 
         let mut m5n3_path = b"[2]".to_vec();
         let m5n3_symbol = "m5n3".as_bytes();
@@ -229,7 +232,7 @@ mod test {
         m5n3_path.extend(m5n3_symbol);
         let mut m5n3_zipper = zh.write_zipper_at_exclusive_path(&m5n3_path[..]).unwrap();
         m5n3_zipper.graft(&m3_zipper);
-        m5n3_zipper.subtract(&m5_zipper);
+        m5n3_zipper.subtract_into(&m5_zipper, true);
 
         let mut m3m5_path = b"[2]".to_vec();
         let m3m5_symbol = "m3m5".as_bytes();
@@ -237,7 +240,7 @@ mod test {
         m3m5_path.extend(m3m5_symbol);
         let mut m3m5_zipper = zh.write_zipper_at_exclusive_path(&m3m5_path[..]).unwrap();
         m3m5_zipper.graft(&m3_zipper);
-        m3m5_zipper.join(&m5_zipper);
+        m3m5_zipper.join_into(&m5_zipper);
 
         let mut n3n5_path = b"[2]".to_vec();
         let n3n5_symbol = "n3n5".as_bytes();
@@ -245,45 +248,45 @@ mod test {
         n3n5_path.extend(n3n5_symbol);
         let mut n3n5_zipper = zh.write_zipper_at_exclusive_path(&n3n5_path[..]).unwrap();
         n3n5_zipper.graft(&r_zipper);
-        n3n5_zipper.subtract(&m3m5_zipper);
+        n3n5_zipper.subtract_into(&m3m5_zipper, true);
         drop(m3m5_zipper);
 
         drop(m3_zipper);
         drop(m5_zipper);
         drop(r_zipper);
 
-        let mut FizzBuzz_path = b"[2]".to_vec();
-        let FizzBuzz_symbol = "FizzBuzz".as_bytes();
-        FizzBuzz_path.extend(b"<8>");
-        FizzBuzz_path.extend(FizzBuzz_symbol);
-        let mut fizz_buzz_zipper = zh.write_zipper_at_exclusive_path(&FizzBuzz_path[..]).unwrap();
+        let mut fizzbuzz_path = b"[2]".to_vec();
+        let fizzbuzz_symbol = "FizzBuzz".as_bytes();
+        fizzbuzz_path.extend(b"<8>");
+        fizzbuzz_path.extend(fizzbuzz_symbol);
+        let mut fizz_buzz_zipper = zh.write_zipper_at_exclusive_path(fizzbuzz_path).unwrap();
         fizz_buzz_zipper.graft(&m35_zipper);
         drop(fizz_buzz_zipper);
         drop(m35_zipper);
 
-        let mut Nothing_path = b"[2]".to_vec();
-        let Nothing_symbol = "Nothing".as_bytes();
-        Nothing_path.extend(b"<7>");
-        Nothing_path.extend(Nothing_symbol);
-        let mut nothing_zipper = zh.write_zipper_at_exclusive_path(&Nothing_path[..]).unwrap();
+        let mut nothing_path = b"[2]".to_vec();
+        let nothing_symbol = "Nothing".as_bytes();
+        nothing_path.extend(b"<7>");
+        nothing_path.extend(nothing_symbol);
+        let mut nothing_zipper = zh.write_zipper_at_exclusive_path(nothing_path).unwrap();
         nothing_zipper.graft(&n3n5_zipper);
         drop(nothing_zipper);
         drop(n3n5_zipper);
 
-        let mut Fizz_path = b"[2]".to_vec();
-        let Fizz_symbol = "Fizz".as_bytes();
-        Fizz_path.extend(b"<4>");
-        Fizz_path.extend(Fizz_symbol);
-        let mut fizz_zipper = zh.write_zipper_at_exclusive_path(&Fizz_path[..]).unwrap();
+        let mut fizz_path = b"[2]".to_vec();
+        let fizz_symbol = "Fizz".as_bytes();
+        fizz_path.extend(b"<4>");
+        fizz_path.extend(fizz_symbol);
+        let mut fizz_zipper = zh.write_zipper_at_exclusive_path(fizz_path).unwrap();
         fizz_zipper.graft(&m3n5_zipper);
         drop(fizz_zipper);
         drop(m3n5_zipper);
 
-        let mut Buzz_path = b"[2]".to_vec();
-        let Buzz_symbol = "Buzz".as_bytes();
-        Buzz_path.extend(b"<4>");
-        Buzz_path.extend(Buzz_symbol);
-        let mut buzz_zipper = zh.write_zipper_at_exclusive_path(&Buzz_symbol[..]).unwrap();
+        let mut buzz_path = b"[2]".to_vec();
+        let buzz_symbol = "Buzz".as_bytes();
+        buzz_path.extend(b"<4>");
+        buzz_path.extend(buzz_symbol);
+        let mut buzz_zipper = zh.write_zipper_at_exclusive_path(buzz_path).unwrap();
         buzz_zipper.graft(&m5n3_zipper);
         drop(buzz_zipper);
         drop(m5n3_zipper);
@@ -292,7 +295,8 @@ mod test {
 
         println!("space size {}", space.val_count());
 
-        unsafe { viz_btms(&[space], &DrawConfig{ ascii: false, share_values: false, hide_values: true, color_mix: true }) };
+        let mut out_buf = Vec::new();
+        viz_maps_physical(&[space], &DrawConfig{ ascii: false, share_values: false, hide_values: true, color_mix: true }, &mut out_buf).unwrap();
     }
 
 }

@@ -21,4 +21,6 @@ For more details, check out the [book](GOAT! need to host somewhere)
 
 - `zipper_tracking`: Exports the `zipper_tracking` module publicly, allowing the host application to use the conflict-checking logic independently of zipper creation.
 
+- `viz`: Provide APIs to inspect and visualize pathmap trie structures.  Useful to observe structural sharing.
+
 Other cargo features in this crate are intended for use by the developers of `pathmap` itself.
