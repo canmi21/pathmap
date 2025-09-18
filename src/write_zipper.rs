@@ -89,8 +89,8 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
     /// NOTE: If the `map` is empty then the effect will be the same as [remove_branches](ZipperWriting::remove_branches)
     fn graft_map(&mut self, map: PathMap<V, A>);
 
-    /// Joins (union of) the subtrie below the zipper's focus with the subtrie downstream from the focus of
-    /// `read_zipper`
+    /// Joins (union of) the subtrie below the focus of `read_zipper` into the subtrie downstream from the
+    /// focus of `self`
     ///
     /// GOAT: Should the ordinary zipper alg ops also be affected by `graft_root_vals` behavior?
     /// In other words, should we join, meet, subtract, etc. the values at the zipper focus as well??
@@ -98,7 +98,14 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
     /// method has an implementation that could likely be factord out and shared among all the ops.
     ///
     /// If the `self` zipper is at a path that does not exist, this method behaves like [graft](ZipperWriting::graft).
-    fn join<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice;
+    fn join_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice;
+
+    /// Depracated alias for [ZipperWriting::join_into].  Likely to be removed in the future to make way
+    /// for a method that interacts with two read-only arguments and returns a newly constructed subtrie or map.
+    #[deprecated]
+    fn join<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice {
+        self.join_into(read_zipper)
+    }
 
     /// Joins (union of) the trie below the zipper's focus with the contents of a [PathMap],
     /// consuming the map
@@ -112,24 +119,26 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
     /// This is related to a question in [ZipperSubtries::make_map]
     fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice;
 
-    /// Joins the subtrie below the focus of `src_zipper` with the subtrie below the focus of `self`,
-    /// consuming `src_zipper`'s subtrie
+    /// Joins the subtrie below the focus of `src_zipper` into the subtrie below the focus of `self`,
+    /// consuming the subtrie from the `src_zipper`
     ///
     /// Pass `true` to the `prune` argument to automatically remove any dangling path created in `src_zipper`.
-    //
-    //GOAT, `WriteZipper::join` already is "join_into", so `WriteZipper::join_into` should be renamed to something like `take_and_join`
-    fn join_into<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice;
+    fn join_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice;
 
     /// Collapses all the paths below the zipper's focus by removing the leading `byte_cnt` bytes from
     /// each path and joining together all of the downstream sub-paths
     ///
     /// Returns `true` if the focus has at least one downstream continuation, otherwise returns `false`.
     ///
-    /// NOTE: This method may prune the path upstream of the focus of the operation resulted in removing all
-    /// downstream paths.  This means that [Zipper::path_exists] may return `false` after this operation.
-    fn drop_head(&mut self, byte_cnt: usize) -> bool where V: Lattice;
+    /// NOTE: for legacy reasons, this operation is sometimes called `drop_head`
+    fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice;
 
-// GOAT, should we rename `drop_head` to `drop_prefix`?  Or rename `insert_prefix` to `insert_head`?
+    /// Deprecated alias for [ZipperWriting::join_k_path_into]
+    #[deprecated]
+    fn drop_head(&mut self, byte_cnt: usize) -> bool where V: Lattice {
+        self.join_k_path_into(byte_cnt, true)
+    }
+
 // GOAT QUESTION: Do we want to change the behavior to move the value as well?  Or do we want a variant
 //  of this method that moves the value?  The main guiding idea behind not shifting the value was the desire
 //  to preserve the property of being the inverse of drop_head.
@@ -153,17 +162,32 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
 
     /// Meets (retains the intersection of) the subtrie below the zipper's focus with the subtrie downstream
     /// from the focus of `read_zipper`
-    fn meet<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice;
+    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice;
+
+    /// Deprecated alias for [ZipperWriting::meet_into].  May be replaced in the future with a different method
+    #[deprecated]
+    fn meet<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice {
+        self.meet_into(read_zipper)
+    }
 
     /// Experiment.  GOAT, document this
     fn meet_2<'z, ZA: ZipperSubtries<V, A>, ZB: ZipperSubtries<V, A>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice;
 
-    /// Subtracts the subtrie downstream of the focus of `read_zipper` from the subtrie below the zipper's
+    /// Subtracts the subtrie downstream of the focus of `read_zipper` from the subtrie below the `self` zipper's
     /// focus
-    fn subtract<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice;
+    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice;
+
+    /// Deprecated alias for [ZipperWriting::subtract_into]
+    #[deprecated]
+    fn subtract<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice {
+        self.subtract_into(read_zipper)
+    }
 
     /// Restricts paths in the subtrie downstream of the `self` focus to paths prefixed by a path to a value in
     /// `read_zipper`
+    ///
+    /// NOTE: In the future this method is likely to be replaced by a "restrict" policy which may
+    /// be passed as an argument to [ZipperWriting::meet_into]
     fn restrict<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus;
 
     /// Populates the "stem" paths in `self` with the corresponding subtries in `read_zipper`
@@ -251,15 +275,15 @@ impl<V: Clone + Send + Sync, Z, A: Allocator> ZipperWriting<V, A> for &mut Z whe
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { (**self).zipper_head() }
     fn graft<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) { (**self).graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { (**self).graft_map(map) }
-    fn join<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> AlgebraicStatus where V: Lattice { (**self).join(read_zipper) }
+    fn join_into<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> AlgebraicStatus where V: Lattice { (**self).join_into(read_zipper) }
     fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { (**self).join_map(map) }
-    fn join_into<RZ: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut RZ, prune: bool) -> AlgebraicStatus where V: Lattice { (**self).join_into(src_zipper, prune) }
-    fn drop_head(&mut self, byte_cnt: usize) -> bool where V: Lattice { (**self).drop_head(byte_cnt) }
+    fn join_take<RZ: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut RZ, prune: bool) -> AlgebraicStatus where V: Lattice { (**self).join_take(src_zipper, prune) }
+    fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { (**self).join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { (**self).insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { (**self).remove_prefix(n) }
-    fn meet<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> AlgebraicStatus where V: Lattice { (**self).meet(read_zipper) }
+    fn meet_into<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> AlgebraicStatus where V: Lattice { (**self).meet_into(read_zipper) }
     fn meet_2<RZA: ZipperSubtries<V, A>, RZB: ZipperSubtries<V, A>>(&mut self, rz_a: &RZA, rz_b: &RZB) -> AlgebraicStatus where V: Lattice { (**self).meet_2(rz_a, rz_b) }
-    fn subtract<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> AlgebraicStatus where V: DistributiveLattice { (**self).subtract(read_zipper) }
+    fn subtract_into<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> AlgebraicStatus where V: DistributiveLattice { (**self).subtract_into(read_zipper) }
     fn restrict<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> AlgebraicStatus { (**self).restrict(read_zipper) }
     fn restricting<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> bool { (**self).restricting(read_zipper) }
     fn take_map(&mut self, prune: bool) -> Option<PathMap<V, A>> { (**self).take_map(prune) }
@@ -403,15 +427,15 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { self.z.zipper_head() }
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) { self.z.graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { self.z.graft_map(map) }
-    fn join<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.join(read_zipper) }
+    fn join_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.join_into(read_zipper) }
     fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map(map) }
-    fn join_into<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_into(src_zipper, prune) }
-    fn drop_head(&mut self, byte_cnt: usize) -> bool where V: Lattice { self.z.drop_head(byte_cnt) }
+    fn join_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_take(src_zipper, prune) }
+    fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { self.z.remove_prefix(n) }
-    fn meet<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.meet(read_zipper) }
+    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper) }
     fn meet_2<ZA: ZipperSubtries<V, A>, ZB: ZipperSubtries<V, A>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice { self.z.meet_2(rz_a, rz_b) }
-    fn subtract<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract(read_zipper) }
+    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract_into(read_zipper) }
     fn restrict<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus { self.z.restrict(read_zipper) }
     fn restricting<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> bool { self.z.restricting(read_zipper) }
     fn take_map(&mut self, prune: bool) -> Option<PathMap<V, A>> { self.z.take_map(prune) }
@@ -577,15 +601,15 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { self.z.zipper_head() }
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) { self.z.graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { self.z.graft_map(map) }
-    fn join<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.join(read_zipper) }
+    fn join_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.join_into(read_zipper) }
     fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map(map) }
-    fn join_into<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_into(src_zipper, prune) }
-    fn drop_head(&mut self, byte_cnt: usize) -> bool where V: Lattice { self.z.drop_head(byte_cnt) }
+    fn join_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_take(src_zipper, prune) }
+    fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { self.z.remove_prefix(n) }
-    fn meet<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.meet(read_zipper) }
+    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper) }
     fn meet_2<ZA: ZipperSubtries<V, A>, ZB: ZipperSubtries<V, A>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice { self.z.meet_2(rz_a, rz_b) }
-    fn subtract<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract(read_zipper) }
+    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract_into(read_zipper) }
     fn restrict<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus { self.z.restrict(read_zipper) }
     fn restricting<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> bool { self.z.restricting(read_zipper) }
     fn take_map(&mut self, prune: bool) -> Option<PathMap<V, A>> { self.z.take_map(prune) }
@@ -743,15 +767,15 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperWriting<V, A> for Write
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { self.z.zipper_head() }
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) { self.z.graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { self.z.graft_map(map) }
-    fn join<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.join(read_zipper) }
+    fn join_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.join_into(read_zipper) }
     fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map(map) }
-    fn join_into<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_into(src_zipper, prune) }
-    fn drop_head(&mut self, byte_cnt: usize) -> bool where V: Lattice { self.z.drop_head(byte_cnt) }
+    fn join_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_take(src_zipper, prune) }
+    fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { self.z.remove_prefix(n) }
-    fn meet<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.meet(read_zipper) }
+    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper) }
     fn meet_2<ZA: ZipperSubtries<V, A>, ZB: ZipperSubtries<V, A>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice { self.z.meet_2(rz_a, rz_b) }
-    fn subtract<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract(read_zipper) }
+    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { self.z.subtract_into(read_zipper) }
     fn restrict<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus { self.z.restrict(read_zipper) }
     fn restricting<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> bool { self.z.restricting(read_zipper) }
     fn take_map(&mut self, prune: bool) -> Option<PathMap<V, A>> { self.z.take_map(prune) }
@@ -1374,8 +1398,8 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             None => self.remove_val(false)
         };
     }
-    /// See [ZipperWriting::join]
-    pub fn join<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice {
+    /// See [ZipperWriting::join_into]
+    pub fn join_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice {
         let src = read_zipper.get_focus();
         let self_focus = self.get_focus();
         if src.is_none() {
@@ -1465,8 +1489,8 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         #[cfg(feature = "graft_root_vals")]
         return node_status.merge(val_status, true, true)
     }
-    /// See [ZipperWriting::join_into]
-    pub fn join_into<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice {
+    /// See [ZipperWriting::join_take]
+    pub fn join_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice {
         match src_zipper.take_focus(prune) {
             None => {
                 if self.get_focus().is_none() {
@@ -1493,20 +1517,21 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             }
         }
     }
-    /// See [ZipperWriting::drop_head]
-    pub fn drop_head(&mut self, byte_cnt: usize) -> bool where V: Lattice {
-        match self.get_focus().into_option() {
+    /// See [ZipperWriting::join_k_path_into]
+    pub fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice {
+        let result = match self.get_focus().into_option() {
             Some(mut self_node) => {
-                match self_node.make_mut().drop_head_dyn(byte_cnt) {
-                    Some(new_node) => {
-                        self.graft_internal(Some(new_node));
-                        true
-                    },
-                    None => { false }
-                }
+                let new_node = self_node.make_mut().drop_head_dyn(byte_cnt);
+                let result = new_node.is_some();
+                self.graft_internal(new_node);
+                result
             },
             None => { false }
+        };
+        if prune && !result {
+            self.prune_path();
         }
+        result
     }
     /// See [ZipperWriting::insert_prefix]
     pub fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool {
@@ -1530,8 +1555,8 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         self.graft_internal(downstream_node);
         fully_ascended
     }
-    /// See [ZipperWriting::meet]
-    pub fn meet<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice {
+    /// See [ZipperWriting::meet_into]
+    pub fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice {
         let src = read_zipper.get_focus();
         if src.is_none() {
             self.graft_internal(None);
@@ -1601,8 +1626,8 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             },
         }
     }
-    /// See [WriteZipper::subtract]
-    pub fn subtract<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice {
+    /// See [ZipperWriting::subtract_into]
+    pub fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice {
         let src = read_zipper.get_focus();
         let self_focus = self.get_focus();
         if src.is_none() {
@@ -2596,7 +2621,7 @@ mod tests {
         let mut wz = a.write_zipper_at_path(b"ro");
         let mut rz = b.read_zipper();
         rz.descend_to(b"ro");
-        wz.join(&rz);
+        wz.join_into(&rz);
         drop(wz);
 
         //Test that the original keys were left alone, above the graft point
@@ -2627,7 +2652,7 @@ mod tests {
     }
 
     #[test]
-    fn write_zipper_join_into_test1() {
+    fn write_zipper_join_take_test1() {
         let keys = ["a:arrow", "a:bow", "a:cannon", "a:roman", "a:romane", "a:romanus", "a:romulus", "a:rubens", "a:ruber", "a:rubicon", "a:rubicundus", "a:rom'i",
             "b:road", "b:rod", "b:roll", "b:roof", "b:room", "b:root", "b:rough", "b:round"];
         let mut map: PathMap<u64> = keys.iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
@@ -2658,7 +2683,7 @@ mod tests {
         assert_eq!(a.val_count(), 12);
         assert_eq!(b.val_count(), 8);
 
-        a.join_into(&mut b, true);
+        a.join_take(&mut b, true);
         assert_eq!(a.val_count(), 20);
         assert_eq!(b.val_count(), 0);
 
@@ -2703,7 +2728,7 @@ mod tests {
         //Test an Element result
         let mut bz = b.write_zipper();
         assert_eq!(bz.val_count(), b_keys.len());
-        let result = bz.meet(&az);
+        let result = bz.meet_into(&az);
         assert_eq!(result, AlgebraicStatus::Element);
         assert_eq!(bz.val_count(), 1);
         assert!(bz.descend_to("12345"));
@@ -2713,7 +2738,7 @@ mod tests {
         let b_keys = ["12345"];
         let mut b: PathMap<()> = b_keys.iter().map(|k| (k, ())).collect();
         let mut bz = b.write_zipper();
-        let result = bz.meet(&az);
+        let result = bz.meet_into(&az);
         assert_eq!(result, AlgebraicStatus::Identity);
         assert_eq!(bz.val_count(), 1);
         assert!(bz.descend_to("12345"));
@@ -2725,7 +2750,7 @@ mod tests {
         let az = a.read_zipper();
         assert_eq!(az.val_count(), a_keys.len());
         bz.reset();
-        let result = bz.meet(&az);
+        let result = bz.meet_into(&az);
         assert_eq!(result, AlgebraicStatus::None);
         assert_eq!(bz.child_count(), 0);
     }
@@ -2785,7 +2810,7 @@ mod tests {
         wz.remove_val(true);
         wz.ascend(4);
 
-        wz.meet(&rz);
+        wz.meet_into(&rz);
 
         assert_eq!(wz.val_count(), 2);
         assert!(wz.descend_to([194, 7, 162]));
@@ -2847,7 +2872,7 @@ mod tests {
         rz.descend_to(b"alli");
         wz.graft(&rz);
         rz.reset();
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Element);
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Element);
         drop(wz);
 
         assert_eq!(map.val_count(), 5);
@@ -2912,7 +2937,7 @@ mod tests {
         let mut map: PathMap<u64> = keys.iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
         let mut wz = map.write_zipper_at_path(b"123:");
 
-        wz.drop_head(4);
+        wz.join_k_path_into(4, true);
         drop(wz);
 
         let ref_keys: Vec<&[u8]> = vec![
@@ -2937,7 +2962,7 @@ mod tests {
         for i in 0..key.len() {
             assert_eq!(map.get_val_at(&key[i..]), Some(&42));
             let mut wz = map.write_zipper();
-            wz.drop_head(1);
+            wz.join_k_path_into(1, true);
         }
 
         //A slightly more complicated tree
@@ -2962,7 +2987,7 @@ mod tests {
                 assert_eq!(map.val_count(), 11-(i/5));
             }
             let mut wz = map.write_zipper();
-            wz.drop_head(1);
+            wz.join_k_path_into(1, true);
         }
     }
 
@@ -2974,7 +2999,7 @@ mod tests {
         ];
         let mut map: PathMap<u64> = keys.iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
         let mut wz = map.write_zipper_at_path(&[1]);
-        wz.drop_head(3);
+        wz.join_k_path_into(3, true);
         drop(wz);
 
         assert_eq!(map.get_val_at(&vec![1, 2, 42, 237, 3, 1, 173, 165, 3, 16, 200, 213, 4, 0, 166, 47, 81, 4, 0, 167, 216, 181, 4, 6, 125, 178, 225, 4, 6, 142, 119, 117, 4, 64, 232, 214, 129, 4, 65, 128, 13, 13, 4, 65, 144]), Some(&0));
@@ -2983,7 +3008,7 @@ mod tests {
 
         let mut map: PathMap<u64> = keys.iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
         let mut wz = map.write_zipper_at_path(&[1]);
-        wz.drop_head(27);
+        wz.join_k_path_into(27, true);
         drop(wz);
 
         assert_eq!(map.get_val_at(&vec![1, 178, 225, 4, 6, 142, 119, 117, 4, 64, 232, 214, 129, 4, 65, 128, 13, 13, 4, 65, 144]), Some(&0));
@@ -2996,7 +3021,7 @@ mod tests {
         let mut map: PathMap<()> = keys.iter().map(|k| (k, ())).collect();
         let mut wz = map.write_zipper();
 
-        wz.drop_head(1);
+        wz.join_k_path_into(1, true);
         assert_eq!(wz.val_count(), 2);
 
         let keys = [
@@ -3017,7 +3042,7 @@ mod tests {
         let mut b: PathMap<()> = keys.iter().map(|k| (k, ())).collect();
         let mut wz = b.write_zipper();
 
-        wz.drop_head(3);
+        wz.join_k_path_into(3, true);
         assert_eq!(wz.val_count(), 6);
     }
 
@@ -3037,7 +3062,7 @@ mod tests {
 
         let mut wz = map.write_zipper();
         wz.descend_to([0, 1]);
-        wz.drop_head(1);
+        wz.join_k_path_into(1, true);
         assert_eq!(wz.val_count(), 8);
     }
 
@@ -3056,8 +3081,46 @@ mod tests {
 
         let mut wz = map.write_zipper();
         wz.descend_to([193, 191]);
-        wz.drop_head(1);
+        wz.join_k_path_into(1, true);
         assert_eq!(wz.val_count(), 4);
+    }
+
+    /// Test pruning (or not pruning) behavior of `drop_head`
+    #[test]
+    fn write_zipper_drop_head_test6() {
+        let paths = [
+            vec![193, 191, 193, 193, 191],
+            vec![193, 191, 193, 194, 12, 28],
+            vec![193, 191, 193, 194, 18, 9],
+            vec![193, 191, 194, 193, 191],
+            vec![193, 191, 194, 194, 12, 28],
+            vec![193, 191, 194, 194, 15, 47],
+            vec![193, 191, 194, 194, 18, 9],
+        ];
+
+        //Here, we're totally dropping the entirety of the map
+        let mut map: PathMap<()> = paths.iter().map(|k| (k, ())).collect();
+        let mut wz = map.write_zipper();
+        assert_eq!(wz.descend_to([193, 191]), true);
+        assert_eq!(wz.join_k_path_into(4, true), false);
+        assert_eq!(wz.val_count(), 0);
+        wz.reset();
+        assert_eq!(wz.child_mask(), ByteMask::EMPTY);
+        drop(wz);
+
+        //Here, we're keeping some dangling paths
+        let mut map: PathMap<()> = paths.iter().map(|k| (k, ())).collect();
+        let mut wz = map.write_zipper();
+        assert_eq!(wz.descend_to([193, 191]), true);
+        assert_eq!(wz.join_k_path_into(4, false), false);
+        assert_eq!(wz.val_count(), 0);
+        wz.reset();
+        assert_eq!(wz.child_mask(), ByteMask::from_iter([193]));
+        assert_eq!(wz.descend_to_byte(193), true);
+        assert_eq!(wz.child_mask(), ByteMask::from_iter([191]));
+        assert_eq!(wz.descend_to_byte(191), true);
+        assert_eq!(wz.child_mask(), ByteMask::EMPTY);
+        drop(wz);
     }
 
     #[test]
@@ -3085,7 +3148,7 @@ mod tests {
         let mut wz = map.write_zipper();
         wz.insert_prefix(b"people:");
         //let paths: Vec<String> = map.iter().map(|(k, _)| String::from_utf8_lossy(&k[..]).to_string()).collect();
-        wz.drop_head(b"people:".len());
+        wz.join_k_path_into(b"people:".len(), true);
         drop(wz);
 
         assert_eq!(map.iter().map(|(k, _v)| k).collect::<Vec<Vec<u8>>>(), ref_keys);
@@ -3316,7 +3379,7 @@ mod tests {
         // Empty \/-> Empty should be `None`
         let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
         let rz = head.read_zipper_at_path(b"src:").unwrap();
-        assert_eq!(wz.join(&rz), AlgebraicStatus::None);
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::None);
         drop(wz);
         drop(rz);
 
@@ -3327,15 +3390,15 @@ mod tests {
         drop(wz);
         let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
         let rz = head.read_zipper_at_path(b"src:").unwrap();
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Element);
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Element);
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
         drop(wz);
         drop(rz);
 
         // [A] \/-> [A] should be `Identity`
         let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
         let rz = head.read_zipper_at_path(b"src:").unwrap();
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity);
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Identity);
         drop(wz);
         drop(rz);
 
@@ -3346,8 +3409,8 @@ mod tests {
         drop(wz);
         let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
         let rz = head.read_zipper_at_path(b"src:").unwrap();
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Element);
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Element);
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
         drop(wz);
         drop(rz);
 
@@ -3358,7 +3421,7 @@ mod tests {
         drop(wz);
         let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
         let rz = head.read_zipper_at_path(b"src:").unwrap();
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity);
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Identity);
         drop(wz);
         drop(rz);
 
@@ -3373,8 +3436,8 @@ mod tests {
         drop(wz);
         let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
         let rz = head.read_zipper_at_path(b"src:").unwrap();
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Element);
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Element);
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
         drop(wz);
         drop(rz);
 
@@ -3386,8 +3449,8 @@ mod tests {
         drop(wz);
         let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
         let rz = head.read_zipper_at_path(b"src:").unwrap();
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Element);
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Element);
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Identity); //Subsequent call should be `Identity`
         drop(wz);
         drop(rz);
 
@@ -3397,7 +3460,7 @@ mod tests {
         drop(wz);
         let mut wz = head.write_zipper_at_exclusive_path(b"dst:").unwrap();
         let rz = head.read_zipper_at_path(b"src:").unwrap();
-        assert_eq!(wz.join(&rz), AlgebraicStatus::Identity);
+        assert_eq!(wz.join_into(&rz), AlgebraicStatus::Identity);
         drop(wz);
         drop(rz);
     }
@@ -3803,7 +3866,7 @@ mod tests {
         assert_eq!(wz.prune_path(), 1);
     }
 
-    /// This test exercises `take_node` (source for join_into, take_map, etc.) to remove branches to create dangling paths, with an emphasis on pair nodes
+    /// This test exercises `take_node` (source for join_take, take_map, etc.) to remove branches to create dangling paths, with an emphasis on pair nodes
     #[test]
     fn write_zipper_prune_path_test5() {
         let mut src_map = PathMap::<()>::new();
@@ -3831,7 +3894,7 @@ mod tests {
 
         //Test removing from a node boundary
         let mut dst_z = dst_map.write_zipper();
-        assert_eq!(dst_z.join_into(&mut src_z, false), AlgebraicStatus::Element);
+        assert_eq!(dst_z.join_take(&mut src_z, false), AlgebraicStatus::Element);
         assert_eq!(src_z.path_exists(), true);
         assert_eq!(src_z.prune_path(), 1);
         assert_eq!(src_z.path_exists(), false);
