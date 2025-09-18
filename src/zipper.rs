@@ -36,7 +36,7 @@ use crate::PathMap;
 pub use crate::write_zipper::*;
 pub use crate::trie_ref::*;
 pub use crate::zipper_head::*;
-pub use crate::product_zipper::{ProductZipper, ProductZipperG, ZipperReq};
+pub use crate::product_zipper::{ProductZipper, ProductZipperG};
 pub use crate::prefix_zipper::{PrefixZipper};
 
 use crate::zipper_tracking::*;
@@ -381,6 +381,12 @@ pub trait ZipperMoving: Zipper {
             return self.descend_first_byte()
         }
         true
+    }
+}
+
+trait ZipperMovingNonGeneric: ZipperMoving {
+    fn descend_to_value(&mut self, k: &[u8]) -> usize {
+        ZipperMoving::descend_to_val(self, k)
     }
 }
 

@@ -62,6 +62,14 @@ impl<'prefix, Z>  PrefixZipper<'prefix, Z>
         }
     }
 
+    pub fn with_origin(mut self, origin: &[u8]) -> Result<Self, &'static str> {
+        if !self.prefix.starts_with(origin) {
+            return Err("set_origin must be called within prefix");
+        }
+        self.origin_depth = origin.len();
+        self.reset();
+        Ok(self)
+    }
     pub fn set_origin(&mut self, origin: &[u8]) -> Result<(), &'static str> {
         if !self.prefix.starts_with(origin) {
             return Err("set_origin must be called within prefix");

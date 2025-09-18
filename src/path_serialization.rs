@@ -1,3 +1,6 @@
+#[cfg(feature="nightly")]
+#[path="path_searialization_nightly.rs"]
+mod path_searialization_nightly;
 
 // GOAT both functions should be tested on long paths (larger than chunk size)
 use libz_ng_sys::*;
