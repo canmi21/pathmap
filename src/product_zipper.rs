@@ -43,7 +43,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
 
         //Get TrieRefs for the remaining zippers
         for other_z in other_z_iter {
-            let trie_ref = unsafe{ other_z.trie_ref_at_path_unchecked("") };
+            let trie_ref: TrieRef<'trie, V, A> = unsafe{ other_z.trie_ref_at_path_unchecked("").into() };
             secondaries.push(trie_ref);
             source_zippers.push(Box::new(other_z));
         }
@@ -75,7 +75,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
     {
         let other_z_iter = other_zippers.into_iter();
         for other_z in other_z_iter {
-            let trie_ref = unsafe{ other_z.trie_ref_at_path_unchecked("") };
+            let trie_ref: TrieRef<'trie, V, A> = unsafe{ other_z.trie_ref_at_path_unchecked("").into() };
             self.secondaries.push(trie_ref);
             self.source_zippers.push(Box::new(other_z));
         }
@@ -91,7 +91,17 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
     /// Returns `0` if the focus is in the primary factor.  The returned value will always be
     /// `zipper.focus_factor() < zipper.factor_count()`.
     pub fn focus_factor(&self) -> usize {
-        self.factor_paths.len()
+        match self.factor_paths.last() {
+            Some(factor_path_len) => {
+                let factor_idx = self.factor_paths.len();
+                if *factor_path_len < self.path().len() {
+                    factor_idx
+                } else {
+                    factor_idx - 1
+                }
+            },
+            None => 0
+        }
     }
     /// Returns a slice of the path indices that represent the end-points of the portion of the path from each
     /// factor
@@ -123,6 +133,9 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
         // paths are joined.  And the value from the earlier zipper takes precedence
         let (secondary_root, partial_path, _secondary_root_val) = self.secondaries[self.factor_paths.len()].borrow_raw_parts();
 
+        //SAFETY: We won't drop the `secondaries` vec until we're done with the stack of node references
+        let secondary_root: TaggedNodeRef<'trie, V, A> = unsafe{ core::mem::transmute(secondary_root) };
+
         //TODO! Dealing with hidden root path in a secondary factor is very nasty.  I'm going to punt
         // on handling this until we move this feature out of the experimental stage.
         //See "WARNING" in ProductZipper creation methods
@@ -138,7 +151,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
     /// `product_zipper_test4` for more discussion.
     #[inline]
     fn ensure_descend_next_factor(&mut self) {
-        if self.z.is_val() && self.factor_paths.len() < self.secondaries.len() {
+        if self.factor_paths.len() < self.secondaries.len() && self.z.child_count() == 0 {
 
             //We don't want to push the same factor on the stack twice
             if let Some(factor_path_len) = self.factor_paths.last() {
@@ -147,39 +160,14 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
                 }
             }
 
-            //If there is a `_secondary_root_val`, it lands at the same path as the value where the
-            // paths are joined.  And the value from the earlier zipper takes precedence
-            let (secondary_root, partial_path, _secondary_root_val) = self.secondaries[self.factor_paths.len()].borrow_raw_parts();
-
-            //TODO! Dealing with hidden root path in a secondary factor is very nasty.  I'm going to punt
-            // on handling this until we move this feature out of the experimental stage.
-            //See "WARNING" in ProductZipper creation methods
-            assert_eq!(partial_path.len(), 0);
-
-            self.z.deregularize();
-            self.z.push_node(secondary_root);
-            self.factor_paths.push(self.path().len());
+            self.enroll_next_factor();
         }
-    }
-    /// Internal method to determine whether a given method should be applied to the zipper core, or to the next factor root
-    #[inline]
-    fn should_use_next_factor(&self) -> bool {
-        if self.z.is_val() && self.factor_paths.len() < self.secondaries.len() {
-            if let Some(path_len) = self.factor_paths.last() {
-                if *path_len != self.z.path().len() {
-                    return true
-                }
-            } else {
-                return true
-            }
-        }
-        false
     }
     /// Internal method to make sure `self.factor_paths` is correct after an ascend method
     #[inline]
     fn fix_after_ascend(&mut self) {
         while let Some(factor_path_start) = self.factor_paths.last() {
-            if self.z.path().len() <= *factor_path_start {
+            if self.z.path().len() < *factor_path_start {
                 self.factor_paths.pop();
             } else {
                 break
@@ -206,20 +194,24 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     }
     fn descend_to_existing<K: AsRef<[u8]>>(&mut self, k: K) -> usize {
         let k = k.as_ref();
-        if self.has_next_factor() {
-            if self.is_val() && self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len() {
-                self.enroll_next_factor();
+        let mut descended = 0;
+
+        while descended < k.len() {
+            let this_step = self.z.descend_to_existing(&k[descended..]);
+            if this_step == 0 {
+                break
             }
-            let descended = self.z.descend_to_val(k);
-            debug_assert!(descended <= k.len());
-            if descended < k.len() && descended > 0 {
-                descended + self.descend_to_existing(&k[descended..])
+            descended += this_step;
+
+            if self.has_next_factor() {
+                if self.z.child_count() == 0 && self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len() {
+                    self.enroll_next_factor();
+                }
             } else {
-                descended
+                break
             }
-        } else {
-            self.z.descend_to_existing(k)
         }
+        descended
     }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool {
         let k = k.as_ref();
@@ -234,27 +226,34 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         self.descend_to(&[k])
     }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool {
+        let result = self.z.descend_indexed_byte(child_idx);
         self.ensure_descend_next_factor();
-        self.z.descend_indexed_byte(child_idx)
+        result
     }
     fn descend_first_byte(&mut self) -> bool {
+        let result = self.z.descend_first_byte();
         self.ensure_descend_next_factor();
-        self.z.descend_first_byte()
+        result
     }
     fn descend_until(&mut self) -> bool {
+        let result = self.z.descend_until();
         self.ensure_descend_next_factor();
-        self.z.descend_until()
+        result
     }
     fn to_next_sibling_byte(&mut self) -> bool {
-        self.ensure_descend_next_factor();
+        if self.factor_paths.last().cloned().unwrap_or(0) == self.path().len() {
+            self.factor_paths.pop();
+        }
         let moved = self.z.to_next_sibling_byte();
-        self.fix_after_ascend();
+        self.ensure_descend_next_factor();
         moved
     }
     fn to_prev_sibling_byte(&mut self) -> bool {
-        self.ensure_descend_next_factor();
+        if self.factor_paths.last().cloned().unwrap_or(0) == self.path().len() {
+            self.factor_paths.pop();
+        }
         let moved = self.z.to_prev_sibling_byte();
-        self.fix_after_ascend();
+        self.ensure_descend_next_factor();
         moved
     }
     fn ascend(&mut self, steps: usize) -> bool {
@@ -303,18 +302,10 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         self.z.is_val()
     }
     fn child_count(&self) -> usize {
-        if self.should_use_next_factor() {
-            self.secondaries[self.factor_paths.len()].child_count()
-        } else {
-            self.z.child_count()
-        }
+        self.z.child_count()
     }
     fn child_mask(&self) -> ByteMask {
-        if self.should_use_next_factor() {
-            self.secondaries[self.factor_paths.len()].child_mask()
-        } else {
-            self.z.child_mask()
-        }
+        self.z.child_mask()
     }
 }
 
@@ -330,7 +321,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> zipper_priv::ZipperPriv for P
     type V = V;
     type A = A;
     fn get_focus(&self) -> AbstractNodeRef<'_, Self::V, Self::A> { self.z.get_focus() }
-    fn try_borrow_focus(&self) -> Option<TaggedNodeRef<'_, Self::V, Self::A>> { self.z.try_borrow_focus() }
+    fn try_borrow_focus(&self) -> Option<&TrieNodeODRc<Self::V, Self::A>> { self.z.try_borrow_focus() }
 }
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperPathBuffer for ProductZipper<'_, 'trie, V, A> {
@@ -428,9 +419,9 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ,
 
     fn is_bottom_val(&self) -> bool {
         if let Some(idx) = self.factor_idx(false) {
-            self.secondary[idx].is_val()
+            self.secondary[idx].child_count() == 0
         } else {
-            self.primary.is_val()
+            self.primary.child_count() == 0
         }
     }
 
@@ -677,10 +668,10 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
             // NOTE: descend_to_val here is used to take priority descending
             // into factors, instead of continuing deeper into the trie.
             if let Some(idx) = self.factor_idx(false) {
-                good = self.secondary[idx].descend_to_val(path);
+                good = self.secondary[idx].descend_to_existing(path);
                 self.primary.descend_to(&path[..good]);
             } else {
-                good = self.primary.descend_to_val(path);
+                good = self.primary.descend_to_existing(path);
             };
             if good == 0 {
                 break 'descend;
@@ -965,7 +956,7 @@ mod tests {
 
         // println!("{map_cnt} {collapse_cnt}");
         assert_eq!(map_cnt, 18);
-        assert_eq!(collapse_cnt, 21);
+        assert_eq!(collapse_cnt, 25);
     }
 
     /// Narrows in on some tricky behavior surrounding values at factor transitions.  The issue is that the
@@ -996,7 +987,7 @@ mod tests {
         $convert!(e);
         let mut p = $ProductZipper::new(l.read_zipper(), [r.read_zipper(), e.read_zipper()]);
 
-        p.descend_to("abcdefghijklmnopqrstuvwxyzbo");
+        p.descend_to("abcdefghijklmnopqrstuvwxyzbow");
         assert!(p.is_val());
         assert_eq!(p.child_count(), 2);
         assert_eq!(p.child_mask(), ByteMask::from_iter([b'p', b'f']));
@@ -1022,37 +1013,37 @@ mod tests {
 
         {
             let mut p = $ProductZipper::new(l.read_zipper(), [r.read_zipper(), e.read_zipper()]);
-            assert!(p.descend_to("abcdefghijklmnopqrstuvwxyzbofo"));
-            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbofo");
+            assert!(p.descend_to("abcdefghijklmnopqrstuvwxyzbowfo"));
+            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowfo");
             assert!(p.descend_first_byte());
-            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbofoo");
+            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowfoo");
         }
         {
             let mut p = $ProductZipper::new(l.read_zipper(), [r.read_zipper(), e.read_zipper()]);
-            p.descend_to("abcdefghijklmnopqrstuvwxyzbof");
-            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbof");
+            p.descend_to("abcdefghijklmnopqrstuvwxyzbowf");
+            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowf");
             assert!(p.is_val());
             assert!(p.descend_to("oo"));
             assert!(p.is_val());
         }
         {
             let mut p = $ProductZipper::new(l.read_zipper(), [r.read_zipper(), e.read_zipper()]);
-            p.descend_to("abcdefghijklmnopqrstuvwxyzbofo");
-            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbofo");
+            p.descend_to("abcdefghijklmnopqrstuvwxyzbowfo");
+            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowfo");
             assert!(p.ascend_byte());
-            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbof");
+            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowf");
             assert!(p.ascend_byte());
-            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbo");
+            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbow");
             assert!(p.descend_to_byte(b'p'));
-            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbop");
+            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowp");
             assert!(p.descend_to_byte(b'h'));
-            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzboph");
+            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowph");
             assert!(p.descend_to_byte(b'o'));
-            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbopho");
+            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowpho");
             assert!(p.is_val());
             assert!(p.ascend_until());
-            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbo");
-            assert!(p.ascend(2));
+            assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbow");
+            assert!(p.ascend(3));
             assert_eq!(vec![b'A', b'a', b'b'], p.child_mask().iter().collect::<Vec<_>>());
             assert!(p.descend_to("ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
             assert_eq!(vec![b'f', b'p'], p.child_mask().iter().collect::<Vec<_>>())
@@ -1096,28 +1087,28 @@ mod tests {
         let mut p2 = $ProductZipper::new(a.read_zipper(), [b.read_zipper(), c.read_zipper()]);
 
         // Reference
-        for _ in 0..14 {
+        for _ in 0..23 {
             p1.descend_first_byte();
         }
         assert_eq!(p1.path_exists(), true);
-        assert_eq!(p1.path(), b"arrboclubhouse");
+        assert_eq!(p1.path(), b"arrowheadbowieclubhouse");
         assert!(p1.is_val());
 
         // Validate that I can do the same thing with descend_to()
-        p2.descend_to(b"arrboclubhouse");
+        p2.descend_to(b"arrowheadbowieclubhouse");
         assert_eq!(p2.path_exists(), true);
-        assert_eq!(p2.path(), b"arrboclubhouse");
+        assert_eq!(p2.path(), b"arrowheadbowieclubhouse");
         assert!(p2.is_val());
 
         // Validate that I can back up, and re-descend
         {
-            p2.ascend(11);
+            p2.ascend(20);
             assert_eq!(p2.path(), b"arr");
             assert_eq!(p2.path_exists(), true);
             assert!(p2.is_val());
 
-            p2.descend_to(b"boclub");
-            assert_eq!(p2.path(), b"arrboclub");
+            p2.descend_to(b"owheadbowieclub");
+            assert_eq!(p2.path(), b"arrowheadbowieclub");
             assert_eq!(p2.path_exists(), true);
             assert!(p2.is_val());
         }
@@ -1126,13 +1117,12 @@ mod tests {
         // an existing path
         {
             p2.reset();
-            // "arowbow" should't exist because the whole subtrie below "arr" should be the
-            // second factor
+            // "arrowbow" should't exist because the path continues from "arrowhead"
             p2.descend_to(b"arrowbow");
             assert_eq!(p2.path(), b"arrowbow");
             assert_eq!(p2.path_exists(), false);
 
-            // "arowbowclub" should't exist because we started in a trie that doesn't exist
+            // "arrowbowclub" should't exist because we started in a trie that doesn't exist
             p2.descend_to(b"club");
             assert_eq!(p2.path(), b"arrowbowclub");
             assert_eq!(p2.path_exists(), false);
@@ -1142,8 +1132,8 @@ mod tests {
             assert_eq!(p2.path_exists(), true);
             assert!(p2.is_val());
 
-            p2.descend_to(b"boclub");
-            assert_eq!(p2.path(), b"arrboclub");
+            p2.descend_to(b"owheadbowieclub");
+            assert_eq!(p2.path(), b"arrowheadbowieclub");
             assert_eq!(p2.path_exists(), true);
             assert!(p2.is_val());
         }
@@ -1152,19 +1142,18 @@ mod tests {
         // get back to an existing path
         {
             p2.reset();
-            // "arrbowclub" should't exist because the whole subtrie below "arrbo" should be the
-            // third factor
-            p2.descend_to(b"arrbowclub");
-            assert_eq!(p2.path(), b"arrbowclub");
+            // "arrowheadbowclub" should't exist because the path continues from "bowie"
+            p2.descend_to(b"arrowheadbowclub");
+            assert_eq!(p2.path(), b"arrowheadbowclub");
             assert_eq!(p2.path_exists(), false);
 
             p2.ascend(5);
-            assert_eq!(p2.path(), b"arrbo");
+            assert_eq!(p2.path(), b"arrowheadbo");
             assert_eq!(p2.path_exists(), true);
             assert!(p2.is_val());
 
-            p2.descend_to(b"club");
-            assert_eq!(p2.path(), b"arrboclub");
+            p2.descend_to(b"wieclub");
+            assert_eq!(p2.path(), b"arrowheadbowieclub");
             assert_eq!(p2.path_exists(), true);
             assert!(p2.is_val());
         }
@@ -1208,6 +1197,55 @@ mod tests {
         })
     }
 
+    /// Tests the ProductZipper's implementation of `to_next_k_path` or `to_next_sibling_byte`, stepping across factors
+    #[test]
+    fn product_zipper_test9() {
+        let paths = [
+            vec![3, 196, 50, 193, 52],
+            vec![3, 196, 50, 194, 49, 54],
+            vec![3, 196, 50, 194, 49, 55],
+        ];
+        let map: PathMap<()> = paths.iter().map(|path| (path, ())).collect();
+        $convert!(map);
+        let mut z = $ProductZipper::new(map.read_zipper(), [map.read_zipper(), map.read_zipper()]);
+
+        assert_eq!(z.descend_to([3, 196, 50, 193, 52, 3, 196, 50, 194, 49, 54]), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.to_next_k_path(2), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([3]));
+    }
+
+    /// Reproduce a bug in ProductZipperG, where continuing to descend past a non-existent
+    /// path somehow leads to re-entering the next factor
+    #[test]
+    fn product_zipper_testa() {
+        let paths = [
+            vec![3, 196, 101, 100, 103, 101, 193, 49, 194, 49, 56],
+            vec![3, 196, 101, 100, 103, 101, 193, 49, 194, 50, 48],
+        ];
+        let map: PathMap<()> = paths.iter().map(|path| (path, ())).collect();
+        $convert!(map);
+        let mut z = $ProductZipper::new(map.read_zipper(), [map.read_zipper(), map.read_zipper()]);
+
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.descend_to_byte(3), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.descend_to_byte(196), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.descend_to([101, 100, 103, 101]), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.descend_to_byte(193), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.path(), [3, 196, 101, 100, 103, 101, 193]);
+        assert_eq!(z.descend_to_byte(194), false);
+        assert_eq!(z.path(), [3, 196, 101, 100, 103, 101, 193, 194]);
+        assert_eq!(z.path_exists(), false);
+        assert_eq!(z.descend_to_byte(3), false);
+        assert_eq!(z.path(), [3, 196, 101, 100, 103, 101, 193, 194, 3]);
+        assert_eq!(z.path_exists(), false);
+    }
+
     #[test]
     fn product_zipper_inspection_test() {
         let lpaths = ["abcdefghijklmnopqrstuvwxyz".as_bytes(), "arr".as_bytes(), "arrow".as_bytes(), "x".as_bytes()];
@@ -1242,12 +1280,12 @@ mod tests {
         assert_eq!(pz.origin_path(), b"abcdefghijklmnopqrstuvwxyzAB");
 
         pz.reset();
-        println!("{:?}", pz.child_mask());
-        assert!(pz.descend_to(b"nopqrstuvwxyzboph"));
+        assert_eq!(pz.child_mask(), ByteMask::from_iter([b'n']));
+        assert!(pz.descend_to(b"nopqrstuvwxyzbowph"));
         assert_eq!(pz.focus_factor(), 2);
         assert_eq!(pz.path_indices()[0], 13);
-        assert_eq!(pz.path_indices()[1], 15);
-        assert_eq!(pz.path(), b"nopqrstuvwxyzboph");
+        assert_eq!(pz.path_indices()[1], 16);
+        assert_eq!(pz.path(), b"nopqrstuvwxyzbowph");
     }
             }
             // --- END OF MACRO GENERATED MOD ---
@@ -1314,11 +1352,6 @@ mod tests {
             ProductZipperG::new::<[ReadZipperUntracked<()>; 0]>(btm.read_zipper_at_path(path), [])
     });
 }
-// enum PZFactor {
-//     ACT(..),
-//     ByteMap(..),
-// }
-// impl ZipperMoving for PZFactor {}
 
 //POSSIBLE FUTURE DIRECTION:
 // A ProductZipper appears to create a new space for the purposes of zipper movement, but

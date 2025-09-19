@@ -278,7 +278,7 @@ fn common_prefix_avx512(bencher: Bencher) {
 #[cfg(feature = "nightly")]
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub extern "C" fn count_shared_simd(p: &[u8], q: &[u8]) -> usize {
+fn count_shared_simd(p: &[u8], q: &[u8]) -> usize {
     use std::simd::{u8x32, cmp::SimdPartialEq};
     unsafe {
         let pl = p.len();

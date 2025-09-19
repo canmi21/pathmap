@@ -3,6 +3,8 @@ use crate::ring::*;
 
 pub mod ints;
 
+pub mod debug;
+
 /// A 256-bit type containing a bit for every possible value in a byte
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 #[repr(transparent)]

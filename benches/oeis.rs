@@ -14,12 +14,12 @@ fn drop_symbol_head_byte<Z: ZipperWriting<usize> + Zipper + ZipperMoving>(loc: &
   while let Some(b) = it.next() {
     if b == 0 { continue }
     assert!(loc.descend_to(&[b]));
-    loc.drop_head(b as usize);
+    loc.join_k_path_into(b as usize, true);
     assert!(loc.ascend(1));
   }
   loc.reset();
   loc.descend_to(&p[..]);
-  loc.drop_head(1);
+  loc.join_k_path_into(1, true);
 }
 
 fn encode_seq<F : Iterator<Item=BigInt>>(iter: F) -> Vec<u8> {

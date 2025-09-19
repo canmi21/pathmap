@@ -1448,7 +1448,7 @@ where Storage: AsRef<[u8]>
     unsafe fn origin_path_assert_len(&self, len: usize) -> &[u8] {
         // Safety: we're not creating a slice larger than capacity
         assert!(self.path.capacity() >= len);
-        core::slice::from_raw_parts(self.path.as_ptr(), len)
+        unsafe{ core::slice::from_raw_parts(self.path.as_ptr(), len) }
     }
 
     fn reserve_buffers(&mut self, path_len: usize, stack_depth: usize) {

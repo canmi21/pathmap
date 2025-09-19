@@ -101,7 +101,7 @@ impl FullZipper {
 struct NullZipper {}
 
 impl<V: TrieValue, A: Allocator> WriteZipperPriv<V, A> for NullZipper {
-    fn take_focus(&mut self) -> Option<TrieNodeODRc<V, A>> {
+    fn take_focus(&mut self, prune: bool) -> Option<TrieNodeODRc<V, A>> {
         None
     }
     fn take_root_prefix_path(&mut self) -> Vec<u8> {
@@ -119,22 +119,25 @@ impl <V: TrieValue, A: Allocator> ZipperWriting<V, A> for NullZipper {
     fn get_val_or_set_mut(&mut self, default: V) -> &mut V { Box::leak(Box::new(default)) }
     fn get_val_or_set_mut_with<F>(&mut self, func: F) -> &mut V where F: FnOnce() -> V { Box::leak(Box::new(func())) }
     fn set_val(&mut self, _val: V) -> Option<V> { None }
-    fn remove_val(&mut self) -> Option<V> { None }
+    fn remove_val(&mut self, _prune: bool) -> Option<V> { None }
     fn zipper_head<'z>(&'z mut self) -> Self::ZipperHead<'z> { todo!() }
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) {}
     fn graft_map(&mut self, _map: PathMap<V, A>) {}
-    fn join<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
+    fn join_into<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
     fn join_map(&mut self, _map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
-    fn join_into<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, _src_zipper: &mut Z) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
-    fn drop_head(&mut self, _byte_cnt: usize) -> bool where V: Lattice { false }
+    fn join_into_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, _src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
+    fn join_k_path_into(&mut self, _byte_cnt: usize, _prune: bool) -> bool where V: Lattice { false }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, _prefix: K) -> bool { false }
     fn remove_prefix(&mut self, _n: usize) -> bool { false }
-    fn meet<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
+    fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z, _prune: bool) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
     fn meet_2<'z, ZA: ZipperSubtries<V, A>, ZB: ZipperSubtries<V, A>>(&mut self, _rz_a: &ZA, _rz_b: &ZB) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
-    fn subtract<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) -> AlgebraicStatus where V: DistributiveLattice { AlgebraicStatus::Element }
+    fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z, _prune: bool) -> AlgebraicStatus where V: DistributiveLattice { AlgebraicStatus::Element }
     fn restrict<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) -> AlgebraicStatus { AlgebraicStatus::Element }
     fn restricting<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) -> bool { false }
-    fn remove_branches(&mut self) -> bool { false }
-    fn take_map(&mut self) -> Option<PathMap<V, A>> { None }
-    fn remove_unmasked_branches(&mut self, _mask: ByteMask) {}
+    fn remove_branches(&mut self, prune: bool) -> bool { false }
+    fn take_map(&mut self, prune: bool) -> Option<PathMap<V, A>> { None }
+    fn remove_unmasked_branches(&mut self, _mask: ByteMask, prune: bool) {}
+    fn create_path(&mut self) -> bool { false }
+    fn prune_path(&mut self) -> usize { 0 }
+    fn prune_ascend(&mut self) -> usize { 0 }
 }

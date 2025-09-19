@@ -1,6 +1,11 @@
 #![cfg_attr(feature = "nightly", allow(internal_features), feature(core_intrinsics))]
 #![cfg_attr(feature = "nightly", feature(portable_simd))]
 #![cfg_attr(feature = "nightly", feature(allocator_api))]
+#![cfg_attr(feature = "nightly", feature(coroutine_trait))]
+#![cfg_attr(feature = "nightly", feature(coroutines))]
+#![cfg_attr(feature = "nightly", feature(stmt_expr_attributes))]
+#![cfg_attr(feature = "nightly", feature(gen_blocks))]
+#![cfg_attr(feature = "nightly", feature(yield_expr))]
 
 #![doc = include_str!("../README.md")]
 
@@ -109,7 +114,7 @@ pub mod alloc;
 pub mod viz;
 
 pub mod serialization;
-pub mod path_serialization;
+pub mod paths_serialization;
 pub mod tree_serialization;
 
 mod trie_node;
