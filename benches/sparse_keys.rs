@@ -107,7 +107,7 @@ fn binary_drop_head(bencher: Bencher, n: u64) {
         map
     }).bench_local_values(|mut map| {
         let mut wz = map.write_zipper();
-        wz.join_k_path(5);
+        wz.join_k_path_into(5, true);
     });
 }
 

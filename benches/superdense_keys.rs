@@ -88,7 +88,7 @@ fn superdense_drop_head(bencher: Bencher, n: u64) {
         map
     }).bench_local_values(|mut map| {
         let mut wz = map.write_zipper();
-        wz.join_k_path(1);
+        wz.join_k_path_into(1, true);
     });
 }
 
