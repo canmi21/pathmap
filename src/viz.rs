@@ -220,7 +220,19 @@ fn viz_zipper_logical<V : TrieValue + Debug + Hash, Z: zipper_priv::ZipperPriv +
     // internal graph structure.
     let mut trie_stack = vec![(0, root_node.shared_node_id())];
     let mut graph_stack = vec![(0, root_node_id)];
+    let mut skip_node = false;
     while z.to_next_step() {
+        //Skip a whole branch if we've already rendered it elsewhere
+        if skip_node {
+            z.ascend_byte();
+            while !z.to_next_sibling_byte() {
+                if !z.ascend_byte() {
+                    return; //We skipped all the way to the root
+                }
+            }
+        }
+        skip_node = false;
+
         let path = z.path();
 
         //See if we have ascended and therefore need to pop the trie stack
@@ -231,7 +243,6 @@ fn viz_zipper_logical<V : TrieValue + Debug + Hash, Z: zipper_priv::ZipperPriv +
         //See if we have descended into a new node and therefore need to push onto the trie stack
         let new_focus = z.get_focus();
         let mut node_is_shared = false;
-        let mut skip_node = false;
         if let Some(node) = new_focus.borrow() {
             let node_addr = node.shared_node_id();
             trie_stack.push((path.len(), node_addr));
@@ -271,15 +282,6 @@ fn viz_zipper_logical<V : TrieValue + Debug + Hash, Z: zipper_priv::ZipperPriv +
 
         if let Some(v) = z.val() {
             ds.cmds.push(DrawCmd::Value(graph_node_id, v as *const V as u64, edge_path.to_smallvec()));
-        }
-
-        //Skip a whole branch if we've already rendered it elsewhere
-        if skip_node {
-            while !z.to_next_sibling_byte() {
-                if !z.ascend_byte() {
-                    return; //We skipped all the way to the root
-                }
-            }
         }
     }
 }
@@ -361,6 +363,42 @@ mod test {
 
         let mut out_buf = Vec::new();
         viz_maps(&[btm], &DrawConfig{ ascii: true, hide_value_paths: false, minimize_values: true, logical: true }, &mut out_buf).unwrap();
+        // println!("{}", String::from_utf8_lossy(&out_buf));
+    }
+
+    /// Constructs the PathMap to render the diagram from the "Structural Sharing" intro in the book
+    #[test]
+    fn logical_viz_4x4() {
+        let bytes = [b'a', b'b', b'c', b'd'];
+        let mut l3_map = PathMap::new();
+        bytes.iter().for_each(|&byte| { l3_map.insert(&[byte], ()); });
+        let mut l2_map = PathMap::new();
+        let mut wz = l2_map.write_zipper();
+        bytes.iter().for_each(|&byte| {
+            wz.reset();
+            wz.descend_to_byte(byte);
+            wz.graft_map(l3_map.clone());
+        });
+        drop(wz);
+        let mut l1_map = PathMap::new();
+        let mut wz = l1_map.write_zipper();
+        bytes.iter().for_each(|&byte| {
+            wz.reset();
+            wz.descend_to_byte(byte);
+            wz.graft_map(l2_map.clone());
+        });
+        drop(wz);
+        let mut l0_map = PathMap::new();
+        let mut wz = l0_map.write_zipper();
+        bytes.iter().for_each(|&byte| {
+            wz.reset();
+            wz.descend_to_byte(byte);
+            wz.graft_map(l1_map.clone());
+        });
+        drop(wz);
+
+        let mut out_buf = Vec::new();
+        viz_maps(&[l0_map], &DrawConfig{ ascii: true, hide_value_paths: false, minimize_values: true, logical: true }, &mut out_buf).unwrap();
         // println!("{}", String::from_utf8_lossy(&out_buf));
     }
 
