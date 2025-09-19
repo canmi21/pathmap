@@ -465,6 +465,26 @@ impl<'prefix, Z> ZipperAbsolutePath for PrefixZipper<'prefix, Z>
     }
 }
 
+impl<'prefix, Z> ZipperIteration for PrefixZipper<'prefix, Z>
+    where Z: ZipperIteration
+{ }
+
+impl<'prefix, Z, V> ZipperForking<V> for PrefixZipper<'prefix, Z>
+    where
+        Z: ZipperIteration + ZipperForking<V>
+{
+    type ReadZipperT<'a> = PrefixZipper<'prefix, Z::ReadZipperT<'a>> where Self: 'a;
+    fn fork_read_zipper<'a>(&'a self) -> <Self as ZipperForking<V>>::ReadZipperT<'a> {
+        PrefixZipper {
+            path: Vec::new(),
+            position: PrefixPos::Prefix { valid: 0 },
+            source: self.source.fork_read_zipper(),
+            prefix: self.prefix.clone(),
+            origin_depth: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::PrefixZipper;

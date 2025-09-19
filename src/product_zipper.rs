@@ -376,8 +376,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ,
     pub fn new<ZipperList>(primary: PrimaryZ, other_zippers: ZipperList) -> Self
         where
             ZipperList: IntoIterator<Item=SecondaryZ>,
-            PrimaryZ: ZipperReadOnlyValues<'trie, V>,
-            SecondaryZ: ZipperReadOnlyValues<'trie, V>,
+            PrimaryZ: ZipperValues<V>,
+            SecondaryZ: ZipperValues<V>,
     {
         Self {
             factor_paths: Vec::new(),
