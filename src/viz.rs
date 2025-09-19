@@ -1,23 +1,48 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::hash::Hash;
+use std::hash::{Hash, DefaultHasher, Hasher};
 use std::io::{self, Write};
 use smallvec::{SmallVec, ToSmallVec};
 use crate::alloc::Allocator;
 use crate::trie_map::PathMap;
 use crate::trie_node::{TaggedNodeRef, TrieNodeODRc, NODE_ITER_FINISHED};
+use crate::zipper::*;
 use crate::TrieValue;
 
-
+/// Configuration settings for rendering a graph of a `pathmap` trie
 pub struct DrawConfig {
+    /// If `true`, render path substrings as ascii, otherwise render them as strings of
+    /// byte-sized numbers
     pub ascii: bool,
-    pub share_values: bool,
-    pub hide_values: bool,
-    pub color_mix: bool,
+    /// If `true`, skips rendering of the paths that terminate in values, otherwise renders
+    /// all paths in the trie
+    pub hide_value_paths: bool,
+    /// If `true`, skips rendering values, but still renders paths leading to values unless
+    /// `hide_value_paths` is also `true`
+    pub minimize_values: bool,
+    /// If `true`, renders the trie irrespective of the pysical (in-memory) representation,
+    /// otherwise also renders the nodes that comprise the layout of the trie structure
+    pub logical: bool,
+}
+
+impl Default for DrawConfig {
+    fn default() -> Self {
+        Self{
+            ascii: false,
+            hide_value_paths: false,
+            minimize_values: false,
+            logical: true,
+        }
+    }
 }
 
 struct NodeMeta {
-    shared: u64
+    /// bit-mask indicating which top-level pathmaps include the node
+    shared: u64,
+    /// Number of references to this node from upstream
+    ref_cnt: usize,
+    /// Whether a graph node has already been rendered for this trie node
+    taken: bool,
 }
 
 #[derive(Debug)]
@@ -28,48 +53,70 @@ enum NodeType {
 enum DrawCmd {
     Node(u64, NodeType),
     Edge(u64, u64, SmallVec<[u8; 8]>),
-    Value(u64, u64, SmallVec<[u8; 8]>)
+    Value(u64, u64, SmallVec<[u8; 8]>),
+    Map(usize, u64),
 }
 
 struct DrawState {
     root: usize,
-    nodes: HashMap<u64, (u64, NodeMeta)>,
+    nodes: HashMap<u64, NodeMeta>,
     cmds: Vec<DrawCmd>
 }
 
-/// Output [Mermaid](https://mermaid.js.org) markup commands to render a graph of the physical memory layout of the nodes
-/// used by the provided [PathMap]s
-pub fn viz_maps_physical<V : TrieValue + Debug + Hash, W: Write>(btms: &[PathMap<V>], dc: &DrawConfig, mut out: W) -> io::Result<()> {
+/// Output [Mermaid](https://mermaid.js.org) markup commands to render a graph of the trie
+/// within the provided [PathMap]s
+pub fn viz_maps<V : TrieValue + Debug + Hash, W: Write>(btms: &[PathMap<V>], dc: &DrawConfig, mut out: W) -> io::Result<()> {
     writeln!(out, "flowchart LR")?;
-
     let mut ds = DrawState{ root: 0, nodes: HashMap::new(), cmds: vec![] };
+
+    if dc.logical {
+        for btm in btms.iter() {
+            pre_init_node_hashes(btm.root().unwrap(), &mut ds);
+            ds.root += 1;
+        }
+    }
+
+    ds.root = 0;
     for btm in btms.iter() {
-        unsafe { viz(&btm.root.get().as_ref().unwrap().as_ref().unwrap(), dc, &mut ds) };
+        if dc.logical {
+            viz_zipper_logical(btm.read_zipper(), dc, &mut ds);
+        } else {
+            viz_map_physical(btm, dc, &mut ds);
+        }
         ds.root += 1;
     }
 
     for cmd in ds.cmds {
         match cmd {
-            DrawCmd::Node(address, ntype) => {
-                let address_string = format!("{address}");
-                let address_str = address_string.as_str();
-                // let rc = n.refcount();
-                if let Some((_, meta)) = ds.nodes.get(&address) {
-                    let color = match meta.shared {
-                        0b000 => { "black" }
-                        0b100 => { "red" }
-                        0b010 => { "green" }
-                        0b001 => { "blue" }
-                        0b011 => { "#0aa" }
-                        0b101 => { "#a0a" }
-                        0b110 => { "#aa0" }
-                        0b111 => { "gray" }
-                        _ => todo!()
-                    };
-                    writeln!(out, "g{address_str}@{{ shape: rect, label: \"{ntype:?}\"}}")?;
-                    writeln!(out, "style g{address_str} fill:{color}")?;
+            DrawCmd::Map(map_idx, root_node_addr) => {
+                if dc.logical {
+                    //Draw the map *as* its root node
+                    writeln!(out, "g{root_node_addr}@{{ shape: cylinder, label: \"PathMap[{map_idx}]\"}}")?;
                 } else {
-                    writeln!(out, "g{address_str}@{{ shape: rect, label: \"{ntype:?}\"}}")?;
+                    //Draw the map connecting to its root node
+                    writeln!(out, "m{map_idx}@{{ shape: cylinder, label: \"PathMap[{map_idx}]\"}}")?;
+                    writeln!(out, "m{map_idx} --> g{root_node_addr}")?;
+                }
+            },
+            DrawCmd::Node(address, ntype) => {
+                if !dc.logical {
+                    //Render the node as a box
+                    if let Some(meta) = ds.nodes.get(&address) {
+                        let color = color_for_bitmask(meta.shared);
+                        writeln!(out, "g{address}@{{ shape: rect, label: \"{ntype:?}\"}}")?;
+                        writeln!(out, "style g{address} fill:{color}")?;
+                    } else {
+                        writeln!(out, "g{address}@{{ shape: rect, label: \"{ntype:?}\"}}")?;
+                    }
+                } else {
+                    //Render it as a tiny dot (as small as Mermaid will draw)
+                    let color = if let Some(meta) = ds.nodes.get(&address) {
+                       color_for_bitmask(meta.shared)
+                    } else {
+                        "black"
+                    };
+                    writeln!(out, "g{address}@{{ shape: circle, label: \".\"}}")?;
+                    writeln!(out, "style g{address} fill:{color},stroke:none,color:transparent,font-size:0px")?;
                 }
             }
             DrawCmd::Edge(src, dst, key_bytes) => {
@@ -77,10 +124,14 @@ pub fn viz_maps_physical<V : TrieValue + Debug + Hash, W: Write>(btms: &[PathMap
                 let jump = if dc.ascii { std::str::from_utf8(&key_bytes[..]).unwrap_or_else(|_| debug_jump.as_str()) }
                 else { debug_jump.as_str() };
 
-                writeln!(out, "g{src} --\"{jump:?}\"--> g{dst}")?;
+                if jump.len() > 0 {
+                    writeln!(out, "g{src} --\"{jump:?}\"--> g{dst}")?;
+                } else {
+                    writeln!(out, "g{src} --> g{dst}")?;
+                }
             }
             DrawCmd::Value(parent, address, key_bytes) => {
-                if dc.hide_values { continue }
+                if dc.hide_value_paths { continue }
                 let debug_jump = format!("{:?}", key_bytes);
                 let jump = if dc.ascii { std::str::from_utf8(&key_bytes[..]).unwrap_or_else(|_| debug_jump.as_str()) }
                 else { debug_jump.as_str() };
@@ -93,15 +144,166 @@ pub fn viz_maps_physical<V : TrieValue + Debug + Hash, W: Write>(btms: &[PathMap
 
                 let show_v = format!("{:?}", unsafe{ (address as *const V).as_ref().unwrap() });
 
-                writeln!(out, "g{address_str} --\"{jump:?}\"--> v{value_address_str}{address_str}")?;
-                writeln!(out, "v{value_address_str}{address_str}@{{ shape: rounded, label: \"{show_v}\" }}")?;
-            }
+                if jump.len() > 0 {
+                    writeln!(out, "g{address_str} --\"{jump:?}\"--> v{value_address_str}{address_str}")?;
+                } else {
+                    writeln!(out, "g{address_str} --> v{value_address_str}{address_str}")?;
+                }
+                if dc.minimize_values {
+                    writeln!(out, "v{value_address_str}{address_str}@{{ shape: circle, label: \".\"}}")?;
+                    writeln!(out, "style v{value_address_str}{address_str} fill:black,stroke:none,color:transparent,font-size:0px")?;
+                } else {
+                    writeln!(out, "v{value_address_str}{address_str}@{{ shape: rounded, label: \"{show_v}\" }}")?;
+                }
+            },
         }
     }
     Ok(())
 }
 
-fn viz<V : TrieValue + Debug + Hash, A : Allocator>(n: &TrieNodeODRc<V, A>, dc: &DrawConfig, ds: &mut DrawState) {
+fn color_for_bitmask(mask: u64) -> &'static str {
+    match mask {
+        0b000 => { "black" }
+        0b100 => { "red" }
+        0b010 => { "green" }
+        0b001 => { "blue" }
+        0b011 => { "#0aa" }
+        0b101 => { "#a0a" }
+        0b110 => { "#aa0" }
+        0b111 => { "gray" }
+        _ => todo!()
+    }
+}
+
+fn pre_init_node_hashes<V : TrieValue + Debug + Hash, A : Allocator>(node: &TrieNodeODRc<V, A>, ds: &mut DrawState) {
+    if update_node_hash(node, ds) {
+        let node_ref = node.as_tagged();
+        let mut token = node_ref.new_iter_token();
+        while token != NODE_ITER_FINISHED {
+            let (new_token, _key_bytes, rec, _value) = node_ref.next_items(token);
+            if let Some(child) = rec {
+                pre_init_node_hashes(child, ds);
+            }
+            token = new_token;
+        }
+    }
+}
+
+/// Updates the node hash table for a single node.  Returns `true` if a new hash entry was
+/// created, indicating the calling code should descend the subtrie recursively
+fn update_node_hash<V : TrieValue + Debug + Hash, A : Allocator>(node: &TrieNodeODRc<V, A>, ds: &mut DrawState) -> bool {
+    let node_addr = node.shared_node_id();
+    match ds.nodes.get_mut(&node_addr) {
+        None => {
+            ds.nodes.insert(node_addr, NodeMeta{ shared: 1 << ds.root, ref_cnt: 1, taken: false });
+            true
+        }
+        Some(meta) => {
+            meta.shared |= 1 << ds.root;
+            meta.ref_cnt += 1;
+            false
+        }
+    }
+}
+
+fn viz_zipper_logical<V : TrieValue + Debug + Hash, Z: zipper_priv::ZipperPriv + ZipperMoving + ZipperIteration + ZipperValues<V>>(mut z: Z, dc: &DrawConfig, ds: &mut DrawState) {
+    let root_focus = z.get_focus();
+    let root_node = root_focus.borrow().unwrap();
+    let root_node_id = hash_pair(root_node.shared_node_id(), &[]);
+    ds.cmds.push(DrawCmd::Map(ds.root, root_node_id));
+
+    //We keep two separate stacks.  `trie_stack` is the physical nodes, and `graph_stack` is
+    // the nodes that will get rendered.  This is necessary because the correspondence is
+    // not straightforward.  For example, many physical trie nodes can end up subsumed under
+    // a single graph edge, in the case of a long straight path, but it's also the case that
+    // a single physical trie node can produce many graph nodes, when a trie node contains
+    // internal graph structure.
+    let mut trie_stack = vec![(0, root_node.shared_node_id())];
+    let mut graph_stack = vec![(0, root_node_id)];
+    while z.to_next_step() {
+        let path = z.path();
+
+        //See if we have ascended and therefore need to pop the trie stack
+        while path.len() <= trie_stack.last().unwrap().0 {
+            trie_stack.pop();
+        }
+
+        //See if we have descended into a new node and therefore need to push onto the trie stack
+        let new_focus = z.get_focus();
+        let mut node_is_shared = false;
+        let mut skip_node = false;
+        if let Some(node) = new_focus.borrow() {
+            let node_addr = node.shared_node_id();
+            trie_stack.push((path.len(), node_addr));
+            if let Some(meta) = ds.nodes.get_mut(&node_addr) {
+                if meta.ref_cnt > 1 {
+                    node_is_shared = true;
+                }
+                skip_node = meta.taken;
+                meta.taken = true;
+            }
+        }
+
+        let node_addr = trie_stack.last().unwrap().1;
+        let node_key = &path[trie_stack.last().unwrap().0..];
+
+        //See if we have ascended and therefore need to pop the graph stack
+        while path.len() <= graph_stack.last().unwrap().0 {
+            graph_stack.pop();
+        }
+
+        //See if we have met one of the conditions to push a node onto the graph stack
+        if z.child_count() > 1 || (z.is_val() && z.child_count() == 1 && !dc.hide_value_paths) || node_is_shared {
+            let parent_node_id = graph_stack.last().unwrap().1;
+            let edge_path = &path[graph_stack.last().unwrap().0..];
+
+            let graph_node_id = hash_pair(node_addr, node_key);
+            graph_stack.push((z.path().len(), graph_node_id));
+
+            ds.cmds.push(DrawCmd::Edge(parent_node_id, graph_node_id, edge_path.to_smallvec()));
+            if !skip_node {
+                ds.cmds.push(DrawCmd::Node(graph_node_id, NodeType::Unknown));
+            }
+        }
+
+        let graph_node_id = graph_stack.last().unwrap().1;
+        let edge_path = &path[graph_stack.last().unwrap().0..];
+
+        if let Some(v) = z.val() {
+            ds.cmds.push(DrawCmd::Value(graph_node_id, v as *const V as u64, edge_path.to_smallvec()));
+        }
+
+        //Skip a whole branch if we've already rendered it elsewhere
+        if skip_node {
+            while !z.to_next_sibling_byte() {
+                if !z.ascend_byte() {
+                    return; //We skipped all the way to the root
+                }
+            }
+        }
+    }
+}
+
+/// A simple function to hash an address with a partial path, to make new node_ids for logical nodes
+fn hash_pair(addr: u64, key: &[u8]) -> u64 {
+    if key.len() > 0 {
+        let mut hasher = DefaultHasher::new();
+        addr.hash(&mut hasher);
+        key.hash(&mut hasher);
+        hasher.finish()
+    } else {
+        addr
+    }
+}
+
+fn viz_map_physical<V : TrieValue + Debug + Hash, A : Allocator>(map: &PathMap<V, A>, dc: &DrawConfig, ds: &mut DrawState) {
+    let root_node = map.root().unwrap();
+    ds.cmds.push(DrawCmd::Map(ds.root, root_node.shared_node_id()));
+    update_node_hash(root_node, ds);
+    viz_node_physical(root_node, dc, ds);
+}
+
+fn viz_node_physical<V : TrieValue + Debug + Hash, A : Allocator>(n: &TrieNodeODRc<V, A>, dc: &DrawConfig, ds: &mut DrawState) {
     let address = n.shared_node_id();
 
     let bn = n.as_tagged();
@@ -122,14 +324,8 @@ fn viz<V : TrieValue + Debug + Hash, A : Allocator>(n: &TrieNodeODRc<V, A>, dc: 
         if let Some(r) = rec {
             let other_address = r.shared_node_id();
             ds.cmds.push(DrawCmd::Edge(address, other_address, key_bytes.to_smallvec()));
-            match ds.nodes.get_mut(&other_address) {
-                None => {
-                    viz(r, dc, ds);
-                    ds.nodes.insert(other_address, (address, NodeMeta{ shared: 1 << ds.root }));
-                }
-                Some((_parent, meta)) => {
-                    meta.shared |= 1 << ds.root;
-                }
+            if update_node_hash(r, ds) {
+                viz_node_physical(r, dc, ds);
             }
         }
 
@@ -153,9 +349,30 @@ mod test {
         rs.iter().enumerate().for_each(|(i, r)| { btm.insert(r.as_bytes(), i); });
 
         let mut out_buf = Vec::new();
-        viz_maps_physical(&[btm], &DrawConfig{ ascii: true, share_values: false, hide_values: false, color_mix: false }, &mut out_buf).unwrap();
-    
-        println!("{}", String::from_utf8_lossy(&out_buf));
+        viz_maps(&[btm], &DrawConfig{ ascii: true, hide_value_paths: false, minimize_values: false, logical: false }, &mut out_buf).unwrap();
+        // println!("{}", String::from_utf8_lossy(&out_buf));
+    }
+
+    #[test]
+    fn logical_viz_tiny() {
+        let mut btm = PathMap::new();
+        let rs = ["arrow", "bow", "cannon"];
+        rs.iter().for_each(|path| { btm.insert(path.as_bytes(), ()); });
+
+        let mut out_buf = Vec::new();
+        viz_maps(&[btm], &DrawConfig{ ascii: true, hide_value_paths: false, minimize_values: true, logical: true }, &mut out_buf).unwrap();
+        // println!("{}", String::from_utf8_lossy(&out_buf));
+    }
+
+    #[test]
+    fn logical_viz_small() {
+        let mut btm = PathMap::new();
+        let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
+        rs.iter().enumerate().for_each(|(i, r)| { btm.insert(r.as_bytes(), i); });
+
+        let mut out_buf = Vec::new();
+        viz_maps(&[btm], &DrawConfig{ ascii: true, hide_value_paths: false, minimize_values: false, logical: true }, &mut out_buf).unwrap();
+        // println!("{}", String::from_utf8_lossy(&out_buf));
     }
 
     #[test]
@@ -174,7 +391,8 @@ mod test {
         let joined = a.join(&b);
 
         let mut out_buf = Vec::new();
-        viz_maps_physical(&[a, b, joined], &DrawConfig{ ascii: true, share_values: false, hide_values: false, color_mix: true }, &mut out_buf).unwrap();
+        viz_maps(&[a, b, joined], &DrawConfig{ ascii: true, hide_value_paths: false, minimize_values: false, logical: false }, &mut out_buf).unwrap();
+        // println!("{}", String::from_utf8_lossy(&out_buf));
     }
 
     #[test]
@@ -293,10 +511,11 @@ mod test {
 
         drop(zh);
 
-        println!("space size {}", space.val_count());
+        // println!("space size {}", space.val_count());
 
         let mut out_buf = Vec::new();
-        viz_maps_physical(&[space], &DrawConfig{ ascii: false, share_values: false, hide_values: true, color_mix: true }, &mut out_buf).unwrap();
+        viz_maps(&[space], &DrawConfig{ ascii: false, hide_value_paths: true, minimize_values: true, logical: false }, &mut out_buf).unwrap();
+        // println!("{}", String::from_utf8_lossy(&out_buf));
     }
 
 }
