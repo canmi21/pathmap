@@ -685,6 +685,15 @@ impl<'a, V: Clone + Send + Sync, A: Allocator> AbstractNodeRef<'a, V, A> {
     pub fn is_none(&self) -> bool {
         matches!(self, AbstractNodeRef::None)
     }
+    pub fn borrow(&self) -> Option<&TrieNodeODRc<V, A>> {
+        match self {
+            AbstractNodeRef::None => None,
+            AbstractNodeRef::BorrowedDyn(_) => None,
+            AbstractNodeRef::BorrowedRc(node) => Some(*node),
+            AbstractNodeRef::BorrowedTiny(_) => None,
+            AbstractNodeRef::OwnedRc(node) => Some(node)
+        }
+    }
     pub fn into_option(self) -> Option<TrieNodeODRc<V, A>> {
         match self {
             AbstractNodeRef::None => None,
