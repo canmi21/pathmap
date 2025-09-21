@@ -435,6 +435,19 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         } && self.root_val().is_none())
     }
 
+    /// Removes the dangling `path` specified, and returns the number of path bytes removed
+    pub fn prune_path<K: AsRef<[u8]>>(&mut self, path: K) -> usize {
+        //GOAT, come back and redo this withoug a temporary WZ
+        let path = path.as_ref();
+        //NOTE: we're descending the zipper rather than creating it at the path so it will be allowed to
+        // prune the branches.  A WriteZipper can't move above its root, so it couldn't prune otherwise
+        let mut zipper = self.write_zipper();
+        zipper.descend_to(path);
+        zipper.prune_path()
+    }
+
+    //GOAT, add `create_path` method too
+
     /// Returns the total number of values contained within the map
     ///
     /// WARNING: This is not a cheap method. It may have an order-N cost
