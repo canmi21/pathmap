@@ -346,6 +346,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         let path = path.as_ref();
         //NOTE: we're descending the zipper rather than creating it at the path so it will be allowed to
         // prune the branches.  A WriteZipper can't move above its root, so it couldn't prune otherwise
+        //GOAT, come back and redo this withoug a temporary WZ
         let mut zipper = self.write_zipper();
         zipper.descend_to(path);
         zipper.remove_val(prune)
@@ -435,18 +436,25 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         } && self.root_val().is_none())
     }
 
-    /// Removes the dangling `path` specified, and returns the number of path bytes removed
+    /// Prunes the dangling `path` specified up to the first upstream value or fork in the path, and 
+    /// returns the number of path bytes removed
     pub fn prune_path<K: AsRef<[u8]>>(&mut self, path: K) -> usize {
-        //GOAT, come back and redo this withoug a temporary WZ
         let path = path.as_ref();
-        //NOTE: we're descending the zipper rather than creating it at the path so it will be allowed to
-        // prune the branches.  A WriteZipper can't move above its root, so it couldn't prune otherwise
+        //GOAT, come back and redo this withoug a temporary WZ
         let mut zipper = self.write_zipper();
         zipper.descend_to(path);
         zipper.prune_path()
     }
 
-    //GOAT, add `create_path` method too
+    /// Creates the `path` specified as a dangling path.  Returns `true` if new path bytes were created,
+    /// or `false` if the path already existed
+    pub fn create_path<K: AsRef<[u8]>>(&mut self, path: K) -> bool {
+        let path = path.as_ref();
+        //GOAT, come back and redo this withoug a temporary WZ
+        let mut zipper = self.write_zipper();
+        zipper.descend_to(path);
+        zipper.create_path()
+    }
 
     /// Returns the total number of values contained within the map
     ///
