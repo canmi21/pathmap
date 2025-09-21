@@ -223,7 +223,15 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         true
     }
     fn descend_to_byte(&mut self, k: u8) -> bool {
-        self.descend_to(&[k])
+        //In order to step into the next factor...
+        if self.has_next_factor() && //We must have another factor to descend into,
+            self.z.child_count() == 0 && //We must be at the end of the path for the current factor
+            self.z.path_exists() // We must be on an existent path within the current factor
+        {
+            debug_assert!(self.factor_paths.last().map(|l| *l).unwrap_or(0) <= self.path().len());
+            self.enroll_next_factor();
+        }
+        self.z.descend_to_byte(k)
     }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool {
         let result = self.z.descend_indexed_byte(child_idx);
@@ -1249,6 +1257,46 @@ mod tests {
         assert_eq!(z.descend_to_byte(3), false);
         assert_eq!(z.path(), [3, 196, 101, 100, 103, 101, 193, 194, 3]);
         assert_eq!(z.path_exists(), false);
+    }
+
+    /// Test focussed heavily on `descend_to_byte`, which stitches at dangling paths
+    #[test]
+    fn product_zipper_testb() {
+        let paths = [
+            vec![3, 196, 101, 49],
+            vec![3, 196, 101, 50],
+        ];
+        let mut map = PathMap::<()>::new();
+        paths.into_iter().for_each(|path| { map.create_path(path); });
+        map.insert([3, 196], ());
+        $convert!(map);
+        let mut z = $ProductZipper::new(map.read_zipper(), [map.read_zipper(), map.read_zipper()]);
+
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.descend_to_byte(3), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), false);
+        assert_eq!(z.descend_to_byte(196), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), true);
+        assert_eq!(z.descend_to_byte(101), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), false);
+        assert_eq!(z.descend_to_byte(50), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), false);
+        assert_eq!(z.descend_to_byte(3), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), false);
+        assert_eq!(z.descend_to_byte(196), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), true);
+        assert_eq!(z.descend_to_byte(101), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), false);
+        assert_eq!(z.descend_to_byte(49), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), false);
     }
 
     #[test]
