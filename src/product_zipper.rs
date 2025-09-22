@@ -127,7 +127,6 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
     fn has_next_factor(&mut self) -> bool {
         self.factor_paths.len() < self.secondaries.len()
     }
-    #[inline]
     fn enroll_next_factor(&mut self, unchecked_descent: usize) {
         //If there is a `_secondary_root_val`, it lands at the same path as the value where the
         // paths are joined.  And the value from the earlier zipper takes precedence

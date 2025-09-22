@@ -2363,7 +2363,7 @@ pub(crate) mod read_zipper_core {
         /// Called by `ProductZipper::descend_to_byte`, after descending so we can assume we're not at the
         /// zipper's root.
         #[inline]
-        pub(crate) fn path_parent_byte_is_path_end(&mut self) -> bool {
+        pub(crate) fn path_parent_byte_is_path_end(&self) -> bool {
             debug_assert!(self.is_regularized());
             debug_assert!(self.prefix_buf.capacity() > 0);
             debug_assert!(!self.at_root());
@@ -2376,16 +2376,6 @@ pub(crate) mod read_zipper_core {
             }
 
             if self.focus_node.node_is_empty() {
-                //We ended up pushing an empty node onto the node stack, so pop it back off
-                match self.ancestors.pop() {
-                    Some((node, _iter_tok, _prefix_offset)) => {
-                        *self.focus_node = node;
-                        self.focus_iter_token = NODE_ITER_INVALID;
-                    },
-                    None => {
-                        debug_assert!(self.is_regularized());
-                    }
-                };
                 debug_assert_eq!(key_len, 1); //Right now this method is only called by `descend_to_byte`
                 true
             } else {
