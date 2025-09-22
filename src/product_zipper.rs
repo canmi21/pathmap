@@ -128,7 +128,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
         self.factor_paths.len() < self.secondaries.len()
     }
     #[inline]
-    fn enroll_next_factor(&mut self) {
+    fn enroll_next_factor(&mut self, unchecked_descent: usize) {
         //If there is a `_secondary_root_val`, it lands at the same path as the value where the
         // paths are joined.  And the value from the earlier zipper takes precedence
         let (secondary_root, partial_path, _secondary_root_val) = self.secondaries[self.factor_paths.len()].borrow_raw_parts();
@@ -142,8 +142,8 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
         assert_eq!(partial_path.len(), 0);
 
         self.z.deregularize();
-        self.z.push_node(secondary_root);
-        self.factor_paths.push(self.path().len());
+        self.z.push_node(secondary_root, unchecked_descent);
+        self.factor_paths.push(self.path().len() - unchecked_descent);
     }
     /// Internal method to descend across the boundary between two factor zippers if the focus is on a value
     ///
@@ -160,7 +160,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
                 }
             }
 
-            self.enroll_next_factor();
+            self.enroll_next_factor(0);
         }
     }
     /// Internal method to make sure `self.factor_paths` is correct after an ascend method
@@ -205,7 +205,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 
             if self.has_next_factor() {
                 if self.z.child_count() == 0 && self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len() {
-                    self.enroll_next_factor();
+                    self.enroll_next_factor(0);
                 }
             } else {
                 break
@@ -222,16 +222,18 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         }
         true
     }
+    #[inline]
     fn descend_to_byte(&mut self, k: u8) -> bool {
-        //In order to step into the next factor...
-        if self.has_next_factor() && //We must have another factor to descend into,
-            self.z.child_count() == 0 && //We must be at the end of the path for the current factor
-            self.z.path_exists() // We must be on an existent path within the current factor
-        {
-            debug_assert!(self.factor_paths.last().map(|l| *l).unwrap_or(0) <= self.path().len());
-            self.enroll_next_factor();
-        }
-        self.z.descend_to_byte(k)
+        if !self.z.descend_to_byte(k) {
+            if self.has_next_factor() {
+                if self.z.path_parent_byte_is_path_end() {
+                    debug_assert!(self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len());
+                    self.enroll_next_factor(1);
+                    self.z.regularize();
+                    true
+                } else { false }
+            } else { false }
+        } else { true }
     }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool {
         let result = self.z.descend_indexed_byte(child_idx);
@@ -1269,6 +1271,7 @@ mod tests {
         let mut map = PathMap::<()>::new();
         paths.into_iter().for_each(|path| { map.create_path(path); });
         map.insert([3, 196], ());
+        map.insert([3, 196, 101, 49], ());
         $convert!(map);
         let mut z = $ProductZipper::new(map.read_zipper(), [map.read_zipper(), map.read_zipper()]);
 
@@ -1296,6 +1299,21 @@ mod tests {
         assert_eq!(z.is_val(), false);
         assert_eq!(z.descend_to_byte(49), true);
         assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), true);
+        assert_eq!(z.descend_to_byte(3), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), false);
+        assert_eq!(z.descend_to_byte(196), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), true);
+        assert_eq!(z.descend_to_byte(101), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), false);
+        assert_eq!(z.descend_to_byte(50), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), false);
+        assert_eq!(z.descend_to_byte(3), false);
+        assert_eq!(z.path_exists(), false);
         assert_eq!(z.is_val(), false);
     }
 

@@ -1575,6 +1575,7 @@ pub(crate) mod read_zipper_core {
             }
         }
 
+        #[inline]
         fn descend_to_byte(&mut self, k: u8) -> bool {
             self.prepare_buffers();
             debug_assert!(self.is_regularized());
@@ -2292,12 +2293,13 @@ pub(crate) mod read_zipper_core {
         ///  represented with the `focus_node` of `c` and a `node_key()` of `[]`; called the zipper's
         ///  regularized form.  Alternatively it could be represented with the `focus_node` of `b` and a
         ///  `node_key()` of `c`, which is called a deregularized form.
-        fn regularize(&mut self) {
+        #[inline]
+        pub(crate) fn regularize(&mut self) {
             debug_assert!(self.prefix_buf.len() >= self.node_key_start()); //If this triggers, we have uninitialized buffers
             if let Some((_consumed_byte_cnt, next_node)) = self.focus_node.node_get_child(self.node_key()) {
                 self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
                 *self.focus_node = next_node.as_tagged();
-                self.focus_iter_token = self.focus_node.new_iter_token();
+                self.focus_iter_token = NODE_ITER_INVALID;
             }
         }
 
@@ -2353,6 +2355,48 @@ pub(crate) mod read_zipper_core {
             let (key_len, node) = parent_node.node_get_child(parent_key).unwrap();
             debug_assert_eq!(key_len, parent_key.len());
             node
+        }
+
+        /// Returns `true` if the parent byte, ie. `self.path()[self.path().len-2]` is at the end of a path,
+        /// ie. `child_count == 0 && path_exists == 1`
+        ///
+        /// Called by `ProductZipper::descend_to_byte`, after descending so we can assume we're not at the
+        /// zipper's root.
+        #[inline]
+        pub(crate) fn path_parent_byte_is_path_end(&mut self) -> bool {
+            debug_assert!(self.is_regularized());
+            debug_assert!(self.prefix_buf.capacity() > 0);
+            debug_assert!(!self.at_root());
+            let node_key = self.node_key();
+            let key_len = node_key.len();
+
+            if key_len == 0 {
+                //We know this focus location exists, So the parent byte couldn't have been the end of a path
+                return false
+            }
+
+            if self.focus_node.node_is_empty() {
+                //We ended up pushing an empty node onto the node stack, so pop it back off
+                match self.ancestors.pop() {
+                    Some((node, _iter_tok, _prefix_offset)) => {
+                        *self.focus_node = node;
+                        self.focus_iter_token = NODE_ITER_INVALID;
+                    },
+                    None => {
+                        debug_assert!(self.is_regularized());
+                    }
+                };
+                debug_assert_eq!(key_len, 1); //Right now this method is only called by `descend_to_byte`
+                true
+            } else {
+                let parent_exists = if key_len > 1 {
+                    self.focus_node.node_contains_partial_key(&node_key[..key_len-1])
+                } else {
+                    true
+                };
+
+                parent_exists && self.focus_node.count_branches(&node_key[..key_len-1]) == 0 //child_count == 0
+            }
         }
 
         /// Internal method to implement `descend_to` and similar methods, handling the movement
@@ -2705,8 +2749,8 @@ pub(crate) mod read_zipper_core {
         }
         /// Push a new node-path pair onto the zipper.  This is used in the internal implementation of
         /// the [crate::zipper::ProductZipper]
-        pub(crate) fn push_node(&mut self, node: TaggedNodeRef<'a, V, A>) {
-            self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
+        pub(crate) fn push_node(&mut self, node: TaggedNodeRef<'a, V, A>, unchecked_descent: usize) {
+            self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len() - unchecked_descent));
             *self.focus_node = node;
             self.focus_iter_token = NODE_ITER_INVALID;
         }
