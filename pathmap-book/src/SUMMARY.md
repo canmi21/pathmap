@@ -6,9 +6,15 @@
 - [Algebraic Operations](./1.01.00_algebraic_ops.md)
     - [Traits and Values](./1.01.01_algebraic_traits.md)
 - [Zippers](./1.02.00_zippers.md)
-    - [Iteration](./1.02.01_zipper_iter.md)
-    - [Multiple Zippers](./1.02.02_multi_zipper.md)
-- [Morphisms](./1.03.00_morphisms.md)
+    - [Base Trait](./1.02.01_zipper_trait.md)
+    - [Value Access](./1.02.02_zipper_values.md)
+    - [Paths and Absolute Paths](1.02.03_zipper_paths.md)
+    - [Focus Moving](1.02.04_zipper_moving.md)
+    - [Iteration](./1.02.05_zipper_iter.md)
+    - [Modifying the Space](./1.02.06_zipper_writing.md)
+    - [Algebra on Subspaces](./1.02.07_zipper_algebra.md)
+- [Concurrent Zippers](./1.03.00_multi_zipper.md)
+- [Morphisms](./1.04.00_morphisms.md)
 
 # Building a Database on Pathmap
 
