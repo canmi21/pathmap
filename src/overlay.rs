@@ -1,5 +1,5 @@
 use crate::utils::{BitMask, ByteMask};
-use crate::zipper::{Zipper, ZipperMoving, ZipperValues};
+use crate::zipper::{Zipper, ZipperMoving, ZipperIteration, ZipperValues};
 
 pub struct OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
     where
@@ -250,6 +250,14 @@ impl<VBase, VOverlay, Base, Overlay, Mapping> ZipperMoving
     }
 }
 
+impl<VBase, VOverlay, Base, Overlay, Mapping> ZipperIteration
+    for OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
+    where
+        Base: ZipperValues<VBase> + ZipperMoving,
+        Overlay: ZipperValues<VOverlay> + ZipperMoving,
+        Mapping: Fn(&VBase) -> &VOverlay,
+{ }
+
 #[cfg(test)]
 mod tests {
     use crate::alloc::GlobalAlloc;
@@ -258,7 +266,7 @@ use super::{OverlayZipper};
         PathMap,
         zipper::{
             ReadZipperUntracked,
-            // zipper_iteration_tests,
+            zipper_iteration_tests,
             zipper_moving_tests,
             // ZipperIteration,
             // ZipperMoving,
@@ -307,13 +315,21 @@ use super::{OverlayZipper};
         }
     );
 
-    // zipper_iteration_tests::zipper_iteration_tests!(arena_compact_zipper,
-    //     |keys: &[&[u8]]| {
-    //         let btm = keys.into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
-    //         ArenaCompactTree::from_zipper(btm.read_zipper(), |&_v| 0)
-    //     },
-    //     |trie: &mut ArenaCompactTree<Vec<u8>>, path: &[u8]| -> ACTZipper<'_, Vec<u8>> {
-    //         trie.read_zipper_at_path(path)
-    //     }
-    // );
+    zipper_iteration_tests::zipper_iteration_tests!(arena_compact_zipper,
+        |keys: &[&[u8]]| {
+            let cutoff = keys.len() / 3 * 2;
+            eprintln!("keys={:?}, {:?}", &keys[..cutoff+1], &keys[cutoff..]);
+            let a = keys[..cutoff+1].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
+            let b = keys[cutoff..].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
+            (a, b)
+        },
+        |trie: &mut (PathMap<()>, PathMap<()>), path: &[u8]| -> OZ<'_, ()> {
+            OverlayZipper {
+                base: trie.0.read_zipper_at_path(path),
+                overlay: trie.1.read_zipper_at_path(path),
+                mapping: (|x| x) as Mapping,
+                _marker: core::marker::PhantomData,
+            }
+        }
+    );
 }
