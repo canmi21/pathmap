@@ -2806,7 +2806,7 @@ mod opaque_dyn_rc_trie_node {
             self.ptr.as_tagged()
         }
         #[inline]
-        pub fn as_tagged_mut(&mut self) -> TaggedNodeRefMut<'_, V, A> {
+        pub unsafe fn as_tagged_mut(&mut self) -> TaggedNodeRefMut<'_, V, A> {
             self.ptr.as_tagged_mut()
         }
         #[allow(unused)]

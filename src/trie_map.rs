@@ -403,7 +403,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         self.ensure_root();
         let root_node = self.root.get_mut().as_mut().unwrap();
         let (node_key, node) = node_along_path_mut(root_node, path, true);
-        node.as_tagged_mut().node_into_val_ref_mut(node_key)
+        node.make_mut().node_into_val_ref_mut(node_key)
     }
 
     /// Alias for [Self::get_val_mut_at], so `PathMap` "feels" like other Rust collections

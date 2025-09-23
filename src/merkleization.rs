@@ -72,7 +72,7 @@ pub(crate) fn merkleize_impl<V, A>(
                     node_ref.clone_self()
                 });
                 counters.replaced += 1;
-                node.as_tagged_mut().node_replace_child(path, replace);
+                node.make_mut().node_replace_child(path, replace);
             }
         } else {
             // value and no child -> pretend there's an empty node
