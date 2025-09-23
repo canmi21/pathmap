@@ -327,9 +327,6 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyS
             Self::new_invalid_in(self.alloc.clone())
         }
     }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRefBorrowed<'a, V, A> {
-        self.trie_ref_at_path(path)
-    }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for TrieRefBorrowed<'_, V, A> {
@@ -656,9 +653,6 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyS
             Self::new_invalid_in(self.alloc.clone())
         }
     }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRefOwned<V, A> {
-        self.trie_ref_at_path(path)
-    }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for TrieRefOwned<V, A> {
@@ -797,9 +791,6 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyS
             TrieRef::Borrowed(trie_ref) => TrieRef::Borrowed(trie_ref.trie_ref_at_path(path)),
             TrieRef::Owned(trie_ref) => TrieRef::Owned(trie_ref.trie_ref_at_path(path)),
         }
-    }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRef<'a, V, A> {
-        self.trie_ref_at_path(path)
     }
 }
 

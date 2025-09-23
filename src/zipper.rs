@@ -451,14 +451,6 @@ pub trait ZipperReadOnlySubtries<'a, V: Clone + Send + Sync, A: Allocator = Glob
 
     /// Returns a [TrieRef] for the specified path, relative to the current focus
     fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT;
-
-    //GOAT, This `trie_ref_at_path_unchecked` API has become redundant.  Doesn't do anything that the regular version doesn't do.  Should be deleted
-    //
-    /// Returns an untracked [TrieRef]
-    ///
-    /// NOTE: this method should only be used when the reference validity can be ensured through
-    /// other means - such as keeping the parent zipper alive.
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT;
 }
 
 /// An interface for advanced [Zipper] movements used for various types of iteration; such as iterating
@@ -774,7 +766,6 @@ impl<'a, V, Z> ZipperReadOnlyConditionalIteration<'a, V> for &mut Z where Z: Zip
 impl<'a, V: Clone + Send + Sync + 'a, Z, A: Allocator + 'a> ZipperReadOnlySubtries<'a, V, A> for &mut Z where Z: ZipperReadOnlySubtries<'a, V, A>, Self: ZipperReadOnlyPriv<'a, V, A> + ZipperSubtries<V, A> {
     type TrieRefT = <Z as ZipperReadOnlySubtries<'a, V, A>>::TrieRefT;
     fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT { (**self).trie_ref_at_path(path) }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT { unsafe{ (**self).trie_ref_at_path_unchecked(path) } }
 }
 
 impl<Z> ZipperConcrete for &mut Z where Z: ZipperConcrete, Self: ZipperConcretePriv {
@@ -877,9 +868,6 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyS
     fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> TrieRefOwned<V, A> {
         let path = path.as_ref();
         TrieRefOwned::new_with_key_and_path_in(self.z.focus_parent(), self.val(), self.z.node_key(), path, self.z.alloc.clone())
-    }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRefOwned<V, A> {
-        self.trie_ref_at_path(path)
     }
 }
 
@@ -1033,7 +1021,6 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyS
         let path = path.as_ref();
         TrieRefBorrowed::new_with_key_and_path_in(self.z.focus_parent_borrowed(), self.get_val(), self.z.node_key(), path, self.z.alloc.clone())
     }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRefBorrowed<'a, V, A> { self.trie_ref_at_path(path) }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipperUntracked<'_, '_, V, A> {
@@ -1228,7 +1215,6 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator> ZipperReadOnlySubtries<'a
         let path = path.as_ref();
         TrieRefOwned::new_with_key_and_path_in(self.z.focus_parent(), self.val(), self.z.node_key(), path, self.z.alloc.clone())
     }
-    unsafe fn trie_ref_at_path_unchecked<K: AsRef<[u8]>>(&self, path: K) -> TrieRefOwned<V, A> { self.trie_ref_at_path(path) }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipperOwned<V, A> {
