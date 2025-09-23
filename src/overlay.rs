@@ -13,6 +13,39 @@ pub struct OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
     _marker: core::marker::PhantomData<(VBase, VOverlay)>,
 }
 
+fn identity_ref<V>(x: &V) -> &V { x }
+
+impl<Value, Base, Overlay>
+    OverlayZipper<Value, Value, Base, Overlay, fn(&Value) -> &Value>
+    where
+        Base: ZipperValues<Value> + ZipperMoving,
+        Overlay: ZipperValues<Value> + ZipperMoving,
+{
+    pub fn new(base: Base, overlay: Overlay) -> Self {
+        Self {
+            base, overlay,
+            mapping: identity_ref,
+            _marker: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<VBase, VOverlay, Base, Overlay, Mapping>
+    OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
+    where
+        Base: ZipperValues<VBase> + ZipperMoving,
+        Overlay: ZipperValues<VOverlay> + ZipperMoving,
+        Mapping: Fn(&VBase) -> &VOverlay,
+{
+    pub fn with_mapping(base: Base, overlay: Overlay, mapping: Mapping) -> Self {
+        Self {
+            base, overlay,
+            mapping,
+            _marker: core::marker::PhantomData,
+        }
+    }
+}
+
 impl<VBase, VOverlay, Base, Overlay, Mapping>
     OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
     where
@@ -306,12 +339,10 @@ use super::{OverlayZipper};
             (a, b)
         },
         |trie: &mut (PathMap<()>, PathMap<()>), path: &[u8]| -> OZ<'_, ()> {
-            OverlayZipper {
-                base: trie.0.read_zipper_at_path(path),
-                overlay: trie.1.read_zipper_at_path(path),
-                mapping: (|x| x) as Mapping,
-                _marker: core::marker::PhantomData,
-            }
+            OverlayZipper::new(
+                trie.0.read_zipper_at_path(path),
+                trie.1.read_zipper_at_path(path),
+            )
         }
     );
 
@@ -324,12 +355,10 @@ use super::{OverlayZipper};
             (a, b)
         },
         |trie: &mut (PathMap<()>, PathMap<()>), path: &[u8]| -> OZ<'_, ()> {
-            OverlayZipper {
-                base: trie.0.read_zipper_at_path(path),
-                overlay: trie.1.read_zipper_at_path(path),
-                mapping: (|x| x) as Mapping,
-                _marker: core::marker::PhantomData,
-            }
+            OverlayZipper::new(
+                trie.0.read_zipper_at_path(path),
+                trie.1.read_zipper_at_path(path),
+            )
         }
     );
 }
