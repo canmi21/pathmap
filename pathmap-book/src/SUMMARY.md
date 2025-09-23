@@ -14,7 +14,8 @@
     - [Modifying the Space](./1.02.06_zipper_writing.md)
     - [Algebra on Subspaces](./1.02.07_zipper_algebra.md)
 - [Concurrent Zippers](./1.03.00_multi_zipper.md)
-- [Morphisms](./1.04.00_morphisms.md)
+- [Abstract Spaces](./1.04.00_abstract_zippers.md)
+- [Morphisms](./1.05.00_morphisms.md)
 
 # Building a Database on Pathmap
 
