@@ -307,21 +307,17 @@ use super::{OverlayZipper};
         },
     };
 
-    /*
-    base: ACT { "aaa" -> 1, "bbb" -> 3 }
-    overlay: PathMap { "aaa" -> 2, "ccc" -> 4 }
-    result: Overlay { "aaa" -> 2, "bbb" -> 3, "ccc" -> 4 }
-
-        let trie_a = keys[..cutoff].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
-        let trie_b = keys[cutoff..].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
-        let mut oz = OverlayZipper {
-            base: trie_a.read_zipper_at_path(path),
-            overlay: trie_b.read_zipper_at_path(path),
-            mapping: (|x| x) as Mapping,
-            _marker: core::marker::PhantomData,
-        };
-        oz.keys() == keys
-    */
+    // #[test]
+    // fn overlay_preserves_keys() {
+    //     // base: ACT { "aaa" -> 1, "bbb" -> 3 }
+    //     // overlay: PathMap { "aaa" -> 2, "ccc" -> 4 }
+    //     // result: Overlay { "aaa" -> 2, "bbb" -> 3, "ccc" -> 4 }
+    //     let keys: &[&[u8]] = &[b"a", b"aa", b"ab", b"b", b"ba", b"bb"];
+    //     let trie_a = keys[..3].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
+    //     let trie_b = keys[3..].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
+    //     let mut oz = OverlayZipper::new(trie_a.read_zipper(), trie_b.read_zipper());
+    //     assert_eq!(oz.keys(), keys);
+    // }
 
     type Mapping = fn(&()) -> &();
     type OZ<'a, V, A=GlobalAlloc> = OverlayZipper<
@@ -333,8 +329,9 @@ use super::{OverlayZipper};
     zipper_moving_tests::zipper_moving_tests!(overlay_zipper,
         |keys: &[&[u8]]| {
             let cutoff = keys.len() / 3 * 2;
-            eprintln!("keys={:?}, {:?}", &keys[..cutoff+1], &keys[cutoff..]);
-            let a = keys[..cutoff+1].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
+            // eprintln!("keys={:?}", &keys);
+            eprintln!("keys={:?}, {:?}", &keys[..cutoff], &keys[cutoff..]);
+            let a = keys[..cutoff].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             let b = keys[cutoff..].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             (a, b)
         },
@@ -349,8 +346,8 @@ use super::{OverlayZipper};
     zipper_iteration_tests::zipper_iteration_tests!(arena_compact_zipper,
         |keys: &[&[u8]]| {
             let cutoff = keys.len() / 3 * 2;
-            eprintln!("keys={:?}, {:?}", &keys[..cutoff+1], &keys[cutoff..]);
-            let a = keys[..cutoff+1].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
+            eprintln!("keys={:?}, {:?}", &keys[..cutoff], &keys[cutoff..]);
+            let a = keys[..cutoff].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             let b = keys[cutoff..].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             (a, b)
         },
