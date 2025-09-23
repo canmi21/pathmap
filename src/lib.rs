@@ -94,6 +94,9 @@ pub mod experimental;
 #[cfg(feature = "arena_compact")]
 pub mod arena_compact;
 
+/// Overlay zipper
+pub mod overlay;
+
 /// Track outstanding zippers to be sure they don't conflict
 #[cfg(feature = "zipper_tracking")]
 pub mod zipper_tracking;
