@@ -69,7 +69,7 @@ pub(crate) fn merkleize_impl<V, A>(
             if let Some(replace) = replace {
                 let node = replacement.get_or_insert_with(|| {
                     counters.cloned += 1;
-                    node_ref.clone_self()
+                    node.clone()
                 });
                 counters.replaced += 1;
                 node.make_mut().node_replace_child(path, replace);
