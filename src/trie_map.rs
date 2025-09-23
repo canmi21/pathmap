@@ -89,6 +89,23 @@ impl<V: Clone + Send + Sync + Unpin> PathMap<V, GlobalAlloc> {
         Self::new_from_ana_in(w, alg_f, global_alloc())
     }
 
+    pub fn merkalize(&mut self) -> MerkalizeResult
+        where V: core::hash::Hash
+    {
+        let Some(root) = self.root() else {
+            return MerkalizeResult::default();
+        };
+        let mut result = MerkalizeResult::default();
+        let hasher = gxhash::GxBuildHasher::default();
+        let mut memo = gxhash::HashMap::with_hasher(hasher);
+        let (hash, new_root) = merkalize_impl(&mut result, &mut memo, root, self.root_val());
+        result.hash = hash;
+        if let Some(new_root) = new_root {
+            *self.root.get_mut() = Some(new_root);
+        }
+        result
+    }
+
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
@@ -720,6 +737,68 @@ impl<V: Clone + Send + Sync + Unpin> Default for PathMap<V> {
     }
 }
 
+#[derive(Default, Debug)]
+pub struct MerkalizeResult {
+    pub hash: u128,
+    pub cloned: usize,
+    pub reused: usize,
+    pub replaced: usize,
+}
+
+fn merkalize_impl<V, A>(
+    counters: &mut MerkalizeResult,
+    memo: &mut gxhash::HashMap<u128, TrieNodeODRc<V, A>>,
+    node: &TrieNodeODRc<V, A>,
+    value: Option<&V>,
+) -> (u128, Option<TrieNodeODRc<V, A>>)
+    where
+        V: Clone + Send + Sync + std::hash::Hash,
+        A: Allocator,
+{
+    // hash = (value, [(path, child_hash)])
+    use std::hash::{Hash};
+    use std::collections::hash_map::Entry;
+    const INITIAL_SEED: i64 = 0;
+    let mut hasher = gxhash::GxHasher::with_seed(INITIAL_SEED);
+    value.hash(&mut hasher);
+    let mut replacement = None;
+
+    let node_ref = node.as_tagged();
+    let mut it = node_ref.new_iter_token();
+    while let (next, path, Some(child), val) = node_ref.next_items(it) {
+        path.hash(&mut hasher);
+        let (child_hash, replace) = merkalize_impl(counters, memo, child, val);
+        if let Some(replace) = replace {
+            let node = replacement.get_or_insert_with(|| {
+                counters.cloned += 1;
+                node.clone()
+            });
+            counters.replaced += 1;
+            node.as_tagged_mut().node_replace_child(path, replace);
+        }
+        child_hash.hash(&mut hasher);
+        it = next;
+        if it == NODE_ITER_FINISHED { break; }
+    }
+    let hash = hasher.finish_u128();
+    match memo.entry(hash) {
+        Entry::Vacant(entry) => {
+            counters.cloned += 1;
+            if let Some(replacement) = &replacement {
+                entry.insert(replacement.clone());
+            } else {
+                entry.insert(node.clone());
+            }
+        }
+        // if we've seen the hash before, do the replacement
+        Entry::Occupied(entry) => {
+            counters.reused += 1;
+            replacement = Some(entry.get().clone());
+        }
+    }
+    (hash, replacement)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::trie_map::*;
@@ -1316,6 +1395,39 @@ mod tests {
 
         assert_eq!(map.remove_val_at("how do you do", true), Some("how do you do".to_string()));
         assert_eq!(map.remove_val_at("hello", true), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn test_btm_merkalize() {
+        let paths: &[&[u8]] = &[
+            b"axx",
+            b"ayy",
+            b"bxx",
+            b"byy",
+            b"cxx",
+            b"cyy",
+            b"ddxx",
+            b"ddyy",
+        ];
+        let paths = paths.iter()
+            .map(|&path| (path, ()));
+        let mut btm = crate::PathMap::from_iter(paths);
+        #[cfg(feature="viz")] {
+            let mut before = Vec::new();
+            use crate::viz::{viz_maps, DrawConfig};
+            viz_maps(&[btm.clone()], &DrawConfig::default(), &mut before).unwrap();
+            eprintln!("before:");
+            eprintln!("```mermaid\n{}```", std::str::from_utf8(&before).unwrap());
+        }
+        let result = btm.merkalize();
+        eprintln!("merkalize result: {result:?}\n");
+        #[cfg(feature="viz")] {
+            use crate::viz::{viz_maps, DrawConfig};
+            let mut after = Vec::new();
+            viz_maps(&[btm], &DrawConfig::default(), &mut after).unwrap();
+            eprintln!("after:");
+            eprintln!("```mermaid\n{}```", std::str::from_utf8(&after).unwrap());
+        }
     }
 }
 
