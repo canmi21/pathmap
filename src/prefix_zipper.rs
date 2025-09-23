@@ -80,6 +80,15 @@ impl<'prefix, Z>  PrefixZipper<'prefix, Z>
         }
     }
 
+    pub fn with_origin(mut self, origin: &[u8]) -> Result<Self, &'static str> {
+        if !self.prefix.starts_with(origin) {
+            return Err("set_origin must be called within prefix");
+        }
+        self.origin_depth = origin.len();
+        self.reset();
+        Ok(self)
+    }
+
     /// Sets the portion of the zipper's `prefix` to treat as the [`root_prefix_path`](ZipperAbsolutePath::root_prefix_path)
     ///
     /// The remaining portion of the `prefix` will be part of the [`path`](ZipperMoving::path).
@@ -92,6 +101,7 @@ impl<'prefix, Z>  PrefixZipper<'prefix, Z>
         self.reset();
         Ok(())
     }
+
     fn set_valid(&mut self, valid: usize) {
         debug_assert!(valid <= self.prefix.len(), "valid prefix can't be outside prefix");
         self.position = if valid == self.prefix.len() - self.origin_depth {
@@ -452,6 +462,26 @@ impl<'prefix, Z> ZipperAbsolutePath for PrefixZipper<'prefix, Z>
     }
     fn root_prefix_path(&self) -> &[u8] {
         &self.path[..self.origin_depth]
+    }
+}
+
+impl<'prefix, Z> ZipperIteration for PrefixZipper<'prefix, Z>
+    where Z: ZipperIteration
+{ }
+
+impl<'prefix, Z, V> ZipperForking<V> for PrefixZipper<'prefix, Z>
+    where
+        Z: ZipperIteration + ZipperForking<V>
+{
+    type ReadZipperT<'a> = PrefixZipper<'prefix, Z::ReadZipperT<'a>> where Self: 'a;
+    fn fork_read_zipper<'a>(&'a self) -> <Self as ZipperForking<V>>::ReadZipperT<'a> {
+        PrefixZipper {
+            path: Vec::new(),
+            position: PrefixPos::Prefix { valid: 0 },
+            source: self.source.fork_read_zipper(),
+            prefix: self.prefix.clone(),
+            origin_depth: 0,
+        }
     }
 }
 

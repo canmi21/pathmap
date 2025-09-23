@@ -555,6 +555,11 @@ pub struct ArenaCompactTree<Storage> {
     value: Cell<u64>,
 }
 
+pub type ACTVec = ArenaCompactTree<Vec<u8>>;
+pub type ACTMmap = ArenaCompactTree<Mmap>;
+pub type ACTVecZipper<'tree, Value> = ACTZipper<'tree, Vec<u8>, Value>;
+pub type ACTMmapZipper<'tree, Value> = ACTZipper<'tree, Mmap, Value>;
+
 impl<Storage> ArenaCompactTree<Storage> {
     fn write_line(
         dst: &mut impl Write, line: &NodeLine, node_id: NodeId,
@@ -1241,7 +1246,7 @@ where Storage: AsRef<[u8]>
     _marker: PhantomData<Value>,
 }
 
-impl<'tree, Storage, Value> Clone for  ACTZipper<'tree, Storage, Value>
+impl<'tree, Storage, Value> Clone for ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     fn clone(&self) -> Self {
