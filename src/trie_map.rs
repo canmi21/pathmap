@@ -7,7 +7,7 @@ use crate::zipper::*;
 use crate::merkleization::{MerkleizeResult, merkleize_impl};
 use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
 
-use crate::gxhash::gxhash128;
+use crate::gxhash::{self, gxhash128};
 
 //GOAT-old-names
 #[deprecated]
@@ -98,8 +98,7 @@ impl<V: Clone + Send + Sync + Unpin> PathMap<V, GlobalAlloc> {
             return MerkleizeResult::default();
         };
         let mut result = MerkleizeResult::default();
-        let hasher = gxhash::GxBuildHasher::default();
-        let mut memo = gxhash::HashMap::with_hasher(hasher);
+        let mut memo = gxhash::HashMap::default();
         let (hash, new_root) = merkleize_impl(&mut result, &mut memo, root, self.root_val());
         result.hash = hash;
         if let Some(new_root) = new_root {
