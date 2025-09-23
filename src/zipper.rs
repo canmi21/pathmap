@@ -5,25 +5,6 @@
 //! within the trie in order to access the trie for reading and/or writing.  A zipper's focus may not be
 //! moved above the zipper's root.
 //!
-//! ## Move by Absolute Distance or by Trie Features
-//!
-//! Zippers may be moved either by stepping an absolute number of elements, or by jumping to features
-//! such as branches and values.  In general, moving by jumping will be faster.
-//!
-//! The stepping methods are:
-//! - [descend_to_byte](zipper::ZipperMoving::descend_to_byte)
-//! - [descend_indexed_byte](zipper::ZipperMoving::descend_indexed_byte)
-//! - [descend_first_byte](zipper::ZipperMoving::descend_first_byte)
-//! - [ascend](zipper::ZipperMoving::ascend)
-//! - [ascend_byte](zipper::ZipperMoving::ascend_byte)
-//! - [to_next_sibling_byte](zipper::ZipperMoving::to_next_sibling_byte)
-//! - [to_prev_sibling_byte](zipper::ZipperMoving::to_prev_sibling_byte)
-//!
-//! The jumping methods are:
-//! - [descend_to](zipper::ZipperMoving::descend_to)
-//! - [descend_until](zipper::ZipperMoving::descend_until)
-//! - [ascend_until](zipper::ZipperMoving::ascend_until)
-//!
 
 use maybe_dangling::MaybeDangling;
 
