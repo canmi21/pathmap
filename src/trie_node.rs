@@ -3053,4 +3053,16 @@ mod tests {
         node_ref.make_unique();
         drop(cloned);
     }
+
+    // Breaking borrow rules: it's possible to borrow nodes as shared and unique
+    // Only fails on MIRI, but it's technically a bug.
+    #[test]
+    fn test_node_miri_borrow_fail() {
+        let btm = crate::PathMap::from_iter([(b"", ())]);
+        let mut root = btm.root().unwrap().clone();
+        let root2 = root.clone();
+        let root_unique = root.as_tagged_mut();
+        let _root_shared = root2.as_tagged();
+        drop(root_unique);
+    }
 }
