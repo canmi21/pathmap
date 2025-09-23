@@ -4,9 +4,10 @@ use crate::alloc::{Allocator, GlobalAlloc, global_alloc};
 use crate::morphisms::{new_map_from_ana_in, Catamorphism, TrieBuilder};
 use crate::trie_node::*;
 use crate::zipper::*;
+use crate::merkleization::{MerkleizeResult, merkleize_impl};
 use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, Lattice, LatticeRef, DistributiveLattice, DistributiveLatticeRef, Quantale};
 
-use crate::gxhash::gxhash128;
+use crate::gxhash::{self, gxhash128};
 
 //GOAT-old-names
 #[deprecated]
@@ -89,6 +90,22 @@ impl<V: Clone + Send + Sync + Unpin> PathMap<V, GlobalAlloc> {
         Self::new_from_ana_in(w, alg_f, global_alloc())
     }
 
+    /// Optimize the `PathMap` by factoring shared subtries using a temporary [Merkle Tree](https://en.wikipedia.org/wiki/Merkle_tree)
+    pub fn merkleize(&mut self) -> MerkleizeResult
+        where V: core::hash::Hash
+    {
+        let Some(root) = self.root() else {
+            return MerkleizeResult::default();
+        };
+        let mut result = MerkleizeResult::default();
+        let mut memo = gxhash::HashMap::default();
+        let (hash, new_root) = merkleize_impl(&mut result, &mut memo, root, self.root_val());
+        result.hash = hash;
+        if let Some(new_root) = new_root {
+            *self.root.get_mut() = Some(new_root);
+        }
+        result
+    }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
@@ -386,7 +403,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         self.ensure_root();
         let root_node = self.root.get_mut().as_mut().unwrap();
         let (node_key, node) = node_along_path_mut(root_node, path, true);
-        node.as_tagged_mut().node_into_val_ref_mut(node_key)
+        node.make_mut().node_into_val_ref_mut(node_key)
     }
 
     /// Alias for [Self::get_val_mut_at], so `PathMap` "feels" like other Rust collections
