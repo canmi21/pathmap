@@ -765,20 +765,28 @@ fn merkalize_impl<V, A>(
 
     let node_ref = node.as_tagged();
     let mut it = node_ref.new_iter_token();
-    while let (next, path, Some(child), val) = node_ref.next_items(it) {
+    while it != NODE_ITER_FINISHED {
+        let (next, path, child, val) = node_ref.next_items(it);
+        it = next;
         path.hash(&mut hasher);
-        let (child_hash, replace) = merkalize_impl(counters, memo, child, val);
-        if let Some(replace) = replace {
-            let node = replacement.get_or_insert_with(|| {
-                counters.cloned += 1;
-                node.clone()
-            });
-            counters.replaced += 1;
-            node.as_tagged_mut().node_replace_child(path, replace);
+        let (child_hash, replace);
+        if let Some(child) = child {
+            (child_hash, replace) = merkalize_impl(counters, memo, child, val);
+            if let Some(replace) = replace {
+                let node = replacement.get_or_insert_with(|| {
+                    counters.cloned += 1;
+                    node.clone()
+                });
+                counters.replaced += 1;
+                node.as_tagged_mut().node_replace_child(path, replace);
+            }
+        } else {
+            // value and no child -> pretend there's an empty node
+            let mut hasher = gxhash::GxHasher::with_seed(INITIAL_SEED);
+            val.hash(&mut hasher);
+            child_hash = hasher.finish_u128();
         }
         child_hash.hash(&mut hasher);
-        it = next;
-        if it == NODE_ITER_FINISHED { break; }
     }
     let hash = hasher.finish_u128();
     match memo.entry(hash) {
