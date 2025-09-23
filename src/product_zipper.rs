@@ -426,11 +426,13 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ,
         &self.factor_paths
     }
 
-    fn is_bottom_val(&self) -> bool {
+    /// Returns `true` if the last active factor zipper is positioned at the end of a valid path
+    /// (i.e. a stitch point to the next zipper)
+    fn is_path_end(&self) -> bool {
         if let Some(idx) = self.factor_idx(false) {
-            self.secondary[idx].child_count() == 0
+            self.secondary[idx].child_count() == 0 && self.secondary[idx].path_exists()
         } else {
-            self.primary.child_count() == 0
+            self.primary.child_count() == 0 && self.primary.path_exists()
         }
     }
 
@@ -445,12 +447,12 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ,
         exited
     }
 
-    /// Enter factors at current location while we're on a value
+    /// Enter factors at current location if we're on the end of the factor's path
     fn enter_factors(&mut self) -> bool {
         let len = self.path().len();
-        // enter factors while we can
+        // enter the next factor if we can
         let mut entered = false;
-        while self.is_bottom_val() && self.factor_paths.len() < self.secondary.len() {
+        if self.factor_paths.len() < self.secondary.len() && self.is_path_end() {
             self.factor_paths.push(len);
             entered = true;
         }
@@ -674,8 +676,6 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
         'descend: while !path.is_empty() {
             self.enter_factors();
             let good;
-            // NOTE: descend_to_val here is used to take priority descending
-            // into factors, instead of continuing deeper into the trie.
             if let Some(idx) = self.factor_idx(false) {
                 good = self.secondary[idx].descend_to_existing(path);
                 self.primary.descend_to(&path[..good]);
