@@ -223,7 +223,7 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
             return false;
         }
         if !desc_a && desc_b {
-            if self.a.child_count() == 0 && !self.a.is_val() {
+            if self.a.child_count() == 0 {
                 self.a.descend_to(path_b);
                 return true;
             } else {
@@ -232,7 +232,7 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
             }
         }
         if desc_a && !desc_b {
-            if self.b.child_count() == 0 && !self.b.is_val() {
+            if self.b.child_count() == 0 {
                 self.b.descend_to(path_a);
                 return true;
             } else {
