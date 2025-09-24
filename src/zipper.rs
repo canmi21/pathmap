@@ -93,7 +93,7 @@ pub trait ZipperSubtries<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Zi
     ///
     /// Luke: Personally I think it might make sense for all of the entry points to change behavior.
     /// Perhaps the biggest argument against the change is that it effectively doubles the cost of
-    /// graft.  This is related to a similar question on [ZipperWriting::join_map]
+    /// graft.  This is related to a similar question on [ZipperWriting::join_map_into]
     fn make_map(&self) -> Option<PathMap<Self::V, A>>;
 }
 
