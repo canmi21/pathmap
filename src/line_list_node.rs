@@ -2195,14 +2195,16 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
             return &[]
         }
         let (key0, key1) = self.get_both_keys();
-        if key_len > key0.len() {
-            if &key[..key0.len()] == key0 {
-                return &key[..key0.len()]
-            }
-        }
-        if key_len > key1.len() {
+
+        //We are checking key1 first because, key1 is allowed to be a superset of key0, but never the reverse
+        if key1.len() > 0 && key_len > key1.len() {
             if &key[..key1.len()] == key1 {
                 return &key[..key1.len()]
+            }
+        }
+        if key0.len() > 0 && key_len > key0.len() {
+            if &key[..key0.len()] == key0 {
+                return &key[..key0.len()]
             }
         }
         let key_byte = key.get(0);

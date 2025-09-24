@@ -94,7 +94,7 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
     ///
     /// GOAT: Should the ordinary zipper alg ops also be affected by `graft_root_vals` behavior?
     /// In other words, should we join, meet, subtract, etc. the values at the zipper focus as well??
-    /// It actually makes sense that the answer should be yes.  If this is the decision, the `join_map`
+    /// It actually makes sense that the answer should be yes.  If this is the decision, the `join_map_into`
     /// method has an implementation that could likely be factord out and shared among all the ops.
     ///
     /// If the `self` zipper is at a path that does not exist, this method behaves like [graft](ZipperWriting::graft).
@@ -107,7 +107,7 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
         self.join_into(read_zipper)
     }
 
-    /// Joins (union of) the trie below the zipper's focus with the contents of a [PathMap],
+    /// Joins (union of) the contents of a [PathMap] into the trie below the zipper's focus,
     /// consuming the map
     ///
     /// GOAT: This method's behavior is affected by the `graft_root_vals` feature
@@ -117,7 +117,13 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
     /// believe `yes` is more conceptually correct, and that the behavior of `graft` and `graft_map`
     /// should probably be revisited.  **HOWEVER** the currently implemented behavior is **NO**!
     /// This is related to a question in [ZipperSubtries::make_map]
-    fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice;
+    fn join_map_into(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice;
+
+    /// Depracated alias for [ZipperWriting::join_map_into]
+    #[deprecated] //GOAT-old-names
+    fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice {
+        self.join_map_into(map)
+    }
 
     /// Joins the subtrie below the focus of `src_zipper` into the subtrie below the focus of `self`,
     /// consuming the subtrie from the `src_zipper`
@@ -276,7 +282,7 @@ impl<V: Clone + Send + Sync, Z, A: Allocator> ZipperWriting<V, A> for &mut Z whe
     fn graft<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) { (**self).graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { (**self).graft_map(map) }
     fn join_into<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ) -> AlgebraicStatus where V: Lattice { (**self).join_into(read_zipper) }
-    fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { (**self).join_map(map) }
+    fn join_map_into(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { (**self).join_map_into(map) }
     fn join_into_take<RZ: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut RZ, prune: bool) -> AlgebraicStatus where V: Lattice { (**self).join_into_take(src_zipper, prune) }
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { (**self).join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { (**self).insert_prefix(prefix) }
@@ -428,7 +434,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) { self.z.graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { self.z.graft_map(map) }
     fn join_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.join_into(read_zipper) }
-    fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map(map) }
+    fn join_map_into(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map_into(map) }
     fn join_into_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_into_take(src_zipper, prune) }
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
@@ -602,7 +608,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) { self.z.graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { self.z.graft_map(map) }
     fn join_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.join_into(read_zipper) }
-    fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map(map) }
+    fn join_map_into(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map_into(map) }
     fn join_into_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_into_take(src_zipper, prune) }
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
@@ -768,7 +774,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperWriting<V, A> for Write
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) { self.z.graft(read_zipper) }
     fn graft_map(&mut self, map: PathMap<V, A>) { self.z.graft_map(map) }
     fn join_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus where V: Lattice { self.z.join_into(read_zipper) }
-    fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map(map) }
+    fn join_map_into(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map_into(map) }
     fn join_into_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_into_take(src_zipper, prune) }
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
@@ -1434,8 +1440,8 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             None => { self.graft_internal(src.into_option()); AlgebraicStatus::Element }
         }
     }
-    /// See [ZipperWriting::join_map]
-    pub fn join_map(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice {
+    /// See [ZipperWriting::join_map_into]
+    pub fn join_map_into(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice {
         let (src_root_node, src_root_val) = map.into_root();
 
         #[cfg(not(feature = "graft_root_vals"))]
@@ -3222,7 +3228,7 @@ mod tests {
 
         let mut wr = map.write_zipper();
         wr.descend_to(b"c");
-        wr.join_map(sub_map);
+        wr.join_map_into(sub_map);
         drop(wr);
 
         let map_keys: Vec<String> = map.iter().map(|(k, _v)| String::from_utf8_lossy(&k).to_string()).collect();

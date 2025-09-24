@@ -94,7 +94,7 @@ pub trait ZipperSubtries<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Zi
     ///
     /// Luke: Personally I think it might make sense for all of the entry points to change behavior.
     /// Perhaps the biggest argument against the change is that it effectively doubles the cost of
-    /// graft.  This is related to a similar question on [ZipperWriting::join_map]
+    /// graft.  This is related to a similar question on [ZipperWriting::join_map_into]
     fn make_map(&self) -> Option<PathMap<Self::V, A>>;
 }
 
@@ -2968,6 +2968,12 @@ pub(crate) mod zipper_moving_tests {
                 }
 
                 #[test]
+                fn [<$z_name _zipper_ascend_until_test5>]() {
+                    let mut temp_store = $read_keys(crate::zipper::zipper_moving_tests::ZIPPER_ASCEND_UNTIL_TEST5_KEYS);
+                    crate::zipper::zipper_moving_tests::run_test(&mut temp_store, $make_z, &[], crate::zipper::zipper_moving_tests::zipper_ascend_until_test5)
+                }
+
+                #[test]
                 fn [<$z_name _indexed_zipper_movement1>]() {
                     let mut temp_store = $read_keys(crate::zipper::zipper_moving_tests::ZIPPER_INDEXED_MOVEMENT_TEST1_KEYS);
                     crate::zipper::zipper_moving_tests::run_test(&mut temp_store, $make_z, &[], crate::zipper::zipper_moving_tests::indexed_zipper_movement1)
@@ -3288,9 +3294,12 @@ pub(crate) mod zipper_moving_tests {
 
     pub fn zipper_ascend_until_test3<Z: ZipperMoving>(mut zip: Z) {
 
-        //Test that ascend_until stops at each value
-        assert!(zip.descend_to(b"12345"));
+        //First test that ascend_until stops when transitioning from non-existent path
+        assert_eq!(zip.descend_to(b"123456"), false);
+        assert!(zip.ascend_until());
         assert_eq!(zip.path(), b"12345");
+
+        //Test that ascend_until stops at each value
         assert!(zip.ascend_until());
         assert_eq!(zip.path(), b"1234");
         assert!(zip.ascend_until());
@@ -3385,6 +3394,24 @@ pub(crate) mod zipper_moving_tests {
         assert_eq!(zip.path(), b"");
         assert!(!zip.ascend_until_branch());
         assert!(zip.at_root());
+    }
+
+    /// Test ascending over a long key that spans multiple nodes
+    pub const ZIPPER_ASCEND_UNTIL_TEST5_KEYS: &[&[u8]] = &[b"A", b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"];
+
+    pub fn zipper_ascend_until_test5<Z: ZipperMoving>(mut zip: Z) {
+
+        //Test that ascend_until stops when transitioning from non-existent path
+        assert_eq!(zip.descend_to(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB"), false);
+        assert!(zip.ascend_until());
+        assert_eq!(zip.path(), b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
+        //Test that jump all the way back to where we want to be
+        assert!(zip.ascend_until());
+        assert_eq!(zip.path(), b"A");
+        assert!(zip.ascend_until());
+        assert_eq!(zip.path(), b"");
+        assert_eq!(zip.ascend_until(), false);
     }
 
     pub const ZIPPER_INDEXED_MOVEMENT_TEST1_KEYS: &[&[u8]] = &[b"arrow", b"bow", b"cannon", b"romane", b"romanus", b"romulus", b"rubens", b"ruber", b"rubicon", b"rubicundus", b"rom'i"];

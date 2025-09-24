@@ -124,7 +124,7 @@ impl <V: TrieValue, A: Allocator> ZipperWriting<V, A> for NullZipper {
     fn graft<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) {}
     fn graft_map(&mut self, _map: PathMap<V, A>) {}
     fn join_into<Z: ZipperSubtries<V, A>>(&mut self, _read_zipper: &Z) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
-    fn join_map(&mut self, _map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
+    fn join_map_into(&mut self, _map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
     fn join_into_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, _src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { AlgebraicStatus::Element }
     fn join_k_path_into(&mut self, _byte_cnt: usize, _prune: bool) -> bool where V: Lattice { false }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, _prefix: K) -> bool { false }
