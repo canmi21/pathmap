@@ -356,7 +356,7 @@ use super::{OverlayZipper};
         }
     );
 
-    zipper_iteration_tests::zipper_iteration_tests!(arena_compact_zipper,
+    zipper_iteration_tests::zipper_iteration_tests!(overlay_zipper,
         |keys: &[&[u8]]| {
             let cutoff = keys.len() / 3 * 2;
             // eprintln!("a_keys={:?}\nb_keys={:?}", &keys[..cutoff], &keys[cutoff..]);
