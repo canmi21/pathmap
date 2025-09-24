@@ -212,36 +212,43 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         self.descend_to_byte(byte)
     }
 
-    /*
-    TODO: this implementation seems to be broken, we can use default impl.
     fn descend_until(&mut self) -> bool {
         use crate::utils::find_prefix_overlap;
-        let depth = self.overlay.path().len();
-        let desc_b = self.base.descend_until();
-        let path_b = &self.base.path()[depth..];
-        let desc_o = self.overlay.descend_until();
-        let path_o = &self.overlay.path()[depth..];
-        if !desc_b && !desc_o {
+        let start_depth = self.a.path().len();
+        let desc_a = self.a.descend_until();
+        let desc_b = self.b.descend_until();
+        let path_a = &self.a.path()[start_depth..];
+        let path_b = &self.b.path()[start_depth..];
+        if !desc_a && !desc_b {
             return false;
         }
-        if !desc_b && desc_o {
-            self.base.descend_to(path_o);
-            return true;
+        if !desc_a && desc_b {
+            if self.a.child_count() == 0 && !self.a.is_val() {
+                self.a.descend_to(path_b);
+                return true;
+            } else {
+                self.b.ascend(self.b.path().len() - start_depth);
+                return false;
+            }
         }
-        if desc_b && !desc_o {
-            self.overlay.descend_to(path_b);
-            return true;
+        if desc_a && !desc_b {
+            if self.b.child_count() == 0 && !self.b.is_val() {
+                self.b.descend_to(path_a);
+                return true;
+            } else {
+                self.a.ascend(self.a.path().len() - start_depth);
+                return false;
+            }
         }
-        let overlap = find_prefix_overlap(path_b, path_o);
+        let overlap = find_prefix_overlap(path_a, path_b);
+        if path_a.len() > overlap {
+            self.a.ascend(path_a.len() - overlap);
+        }
         if path_b.len() > overlap {
-            self.base.ascend(path_b.len() - overlap);
-        }
-        if path_o.len() > overlap {
-            self.overlay.ascend(path_o.len() - overlap);
+            self.b.ascend(path_b.len() - overlap);
         }
         overlap > 0
     }
-    */
 
     fn ascend(&mut self, steps: usize) -> bool {
         self.a.ascend(steps) | self.b.ascend(steps)
@@ -343,7 +350,7 @@ use super::{OverlayZipper};
         |keys: &[&[u8]]| {
             let cutoff = keys.len() / 3 * 2;
             // eprintln!("keys={:?}", &keys);
-            // eprintln!("a_keys={:?}\nb_keys={:?}", &keys[..cutoff], &keys[cutoff..]);
+            eprintln!("a_keys={:?}\nb_keys={:?}", &keys[..cutoff], &keys[cutoff..]);
             let a = keys[..cutoff].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             let b = keys[cutoff..].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             (a, b)
