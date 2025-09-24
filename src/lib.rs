@@ -94,9 +94,6 @@ pub mod experimental;
 #[cfg(feature = "arena_compact")]
 pub mod arena_compact;
 
-/// Overlay zipper
-pub mod overlay;
-
 /// Track outstanding zippers to be sure they don't conflict
 #[cfg(feature = "zipper_tracking")]
 pub mod zipper_tracking;
@@ -131,6 +128,7 @@ mod trie_node;
 mod write_zipper;
 mod product_zipper;
 mod prefix_zipper;
+mod overlay;
 mod trie_ref;
 mod dense_byte_node;
 pub(crate) mod line_list_node;

@@ -1,57 +1,76 @@
+
+//GOAT, Internal discussion about the API we eventually want.
+//
+//It strikes me that "overlay" is *almost* join.  The main difference being the treatment of values. One
+// possible direction is to embrace this and upgrade this to a full "JoinZipper" that performs a join
+// on-the-fly.
+//
+//However, with the rearchitecture of the algebraic ops towards support for policies and subtrie algebra,
+// that might make this too complicated.  In either case, I'd prefer to wait until that change fully shakes
+// out before trying to mess with this zipper.  Also the algebraic traits are (and will be) defined with
+// the expectations that new trie storage can be created, and thus it seems tricky to shoe-horn that into
+// a zipper API.
+//
+//A half-step might be to change the mapping function into a "merging" function,
+// e.g. `Fn(Option<&VBase>, Option<&VOverlay>) -> VOverlay`  Although this also breaks the trait contract
+// with ZipperValues, etc. because we don't have a place to store the newly created value
+//
+
 use crate::utils::{BitMask, ByteMask};
 use crate::zipper::{Zipper, ZipperMoving, ZipperIteration, ZipperValues};
 
-pub struct OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
+/// Zipper that traverses a virtual trie formed by fusing the tries of two other zippers
+pub struct OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
     where
-        Base: ZipperValues<VBase> + ZipperMoving,
-        Overlay: ZipperValues<VOverlay> + ZipperMoving,
-        Mapping: Fn(&VBase) -> &VOverlay,
+        Mapping: for<'a> Fn(Option<&'a AV>, Option<&'a BV>) -> Option<&'a OutV>,
 {
-    base: Base,
-    overlay: Overlay,
+    a: AZipper,
+    b: BZipper,
     mapping: Mapping,
-    _marker: core::marker::PhantomData<(VBase, VOverlay)>,
+    _marker: core::marker::PhantomData<(AV, BV, OutV)>,
 }
 
-fn identity_ref<V>(x: &V) -> &V { x }
+fn identity_ref<'a, V>(a_val: Option<&'a V>, b_val: Option<&'a V>) -> Option<&'a V> { a_val.or(b_val) }
 
-impl<Value, Base, Overlay>
-    OverlayZipper<Value, Value, Base, Overlay, fn(&Value) -> &Value>
+impl<V, AZipper, BZipper> OverlayZipper<V, V, V, AZipper, BZipper, for<'a> fn(Option<&'a V>, Option<&'a V>) -> Option<&'a V>>
     where
-        Base: ZipperValues<Value> + ZipperMoving,
-        Overlay: ZipperValues<Value> + ZipperMoving,
+        AZipper: ZipperMoving,
+        BZipper: ZipperMoving,
 {
-    pub fn new(base: Base, overlay: Overlay) -> Self {
-        Self {
-            base, overlay,
-            mapping: identity_ref,
-            _marker: core::marker::PhantomData,
-        }
+    /// Create a new `OverlayZipper` from two other zippers, using a default value mapping function
+    ///
+    /// In cases where both source zippers supply a value, the value from `AZipper` will be supplied by
+    /// the `OverlayZipper`.
+    pub fn new(a: AZipper, b: BZipper) -> Self {
+        Self::with_mapping(a, b, identity_ref)
     }
 }
 
-impl<VBase, VOverlay, Base, Overlay, Mapping>
-    OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
+impl<AV, BV, OutV, AZipper, BZipper, Mapping>
+    OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
     where
-        Base: ZipperValues<VBase> + ZipperMoving,
-        Overlay: ZipperValues<VOverlay> + ZipperMoving,
-        Mapping: Fn(&VBase) -> &VOverlay,
+        AZipper: ZipperMoving,
+        BZipper: ZipperMoving,
+        Mapping: for<'a> Fn(Option<&'a AV>, Option<&'a BV>) -> Option<&'a OutV>,
 {
-    pub fn with_mapping(base: Base, overlay: Overlay, mapping: Mapping) -> Self {
+    /// Create a new `OverlayZipper` from two other zippers, using a the supplied value mapping function
+    pub fn with_mapping(mut a: AZipper, mut b: BZipper, mapping: Mapping) -> Self {
+        a.reset();
+        b.reset();
         Self {
-            base, overlay,
+            a, b,
             mapping,
             _marker: core::marker::PhantomData,
         }
     }
 }
 
-impl<VBase, VOverlay, Base, Overlay, Mapping>
-    OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
+impl<AV, BV, OutV, AZipper, BZipper, Mapping>
+    OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
     where
-        Base: ZipperValues<VBase> + ZipperMoving,
-        Overlay: ZipperValues<VOverlay> + ZipperMoving,
-        Mapping: Fn(&VBase) -> &VOverlay,
+        AZipper: ZipperMoving + ZipperValues<AV>,
+        BZipper: ZipperMoving + ZipperValues<BV>,
+        Mapping: for<'a> Fn(Option<&'a AV>, Option<&'a BV>) -> Option<&'a OutV>,
 {
     fn to_sibling(&mut self, next: bool) -> bool {
         let path = self.path();
@@ -73,63 +92,59 @@ impl<VBase, VOverlay, Base, Overlay, Mapping>
     }
 }
 
-impl<VBase, VOverlay, Base, Overlay, Mapping> ZipperValues<VOverlay>
-    for OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
+impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperValues<OutV>
+    for OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
     where
-        Base: ZipperValues<VBase> + ZipperMoving,
-        Overlay: ZipperValues<VOverlay> + ZipperMoving,
-        Mapping: Fn(&VBase) -> &VOverlay,
+        AZipper: ZipperValues<AV>,
+        BZipper: ZipperValues<BV>,
+        Mapping: for<'a> Fn(Option<&'a AV>, Option<&'a BV>) -> Option<&'a OutV>,
 {
-    fn val(&self) -> Option<&VOverlay> {
-        if let Some(val) = self.overlay.val() {
-            Some(val)
-        } else if let Some(val) = self.base.val() {
-            Some((self.mapping)(val))
-        } else {
-            None
-        }
+    fn val(&self) -> Option<&OutV> {
+        (self.mapping)(self.a.val(), self.b.val())
     }
 }
 
-impl<VBase, VOverlay, Base, Overlay, Mapping> Zipper
-    for OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
+impl<AV, BV, OutV, AZipper, BZipper, Mapping> Zipper
+    for OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
     where
-        Base: ZipperValues<VBase> + ZipperMoving,
-        Overlay: ZipperValues<VOverlay> + ZipperMoving,
-        Mapping: Fn(&VBase) -> &VOverlay,
+        AZipper: Zipper + ZipperValues<AV>,
+        BZipper: Zipper + ZipperValues<BV>,
+        Mapping: for<'a> Fn(Option<&'a AV>, Option<&'a BV>) -> Option<&'a OutV>,
 {
     fn path_exists(&self) -> bool {
-        self.overlay.path_exists() || self.base.path_exists()
+        self.a.path_exists() || self.b.path_exists()
     }
     fn is_val(&self) -> bool {
-        self.overlay.is_val() || self.base.is_val()
+        //NOTE: the mapping function has the ability to nullify the value, so we need ZipperValues to implement this correctly
+        // self.a.is_val() || self.b.is_val()
+        self.val().is_some()
     }
     fn child_count(&self) -> usize {
         self.child_mask().count_bits()
     }
     fn child_mask(&self) -> ByteMask {
-        self.overlay.child_mask() | self.base.child_mask()
+        self.a.child_mask() | self.b.child_mask()
     }
 }
 
-impl<VBase, VOverlay, Base, Overlay, Mapping> ZipperMoving
-    for OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
+impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
+    for OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
     where
-        Base: ZipperValues<VBase> + ZipperMoving,
-        Overlay: ZipperValues<VOverlay> + ZipperMoving,
-        Mapping: Fn(&VBase) -> &VOverlay,
+        AZipper: ZipperMoving + ZipperValues<AV>,
+        BZipper: ZipperMoving + ZipperValues<BV>,
+        Mapping: for<'a> Fn(Option<&'a AV>, Option<&'a BV>) -> Option<&'a OutV>,
 {
     fn at_root(&self) -> bool {
-        self.overlay.at_root() || self.base.at_root()
+        self.a.at_root() || self.b.at_root()
     }
 
     fn reset(&mut self) {
-        self.overlay.reset();
-        self.base.reset();
+        self.a.reset();
+        self.b.reset();
     }
 
     fn path(&self) -> &[u8] {
-        self.overlay.path()
+        self.a.path()
     }
 
     fn val_count(&self) -> usize {
@@ -138,52 +153,51 @@ impl<VBase, VOverlay, Base, Overlay, Mapping> ZipperMoving
 
     fn descend_to<P: AsRef<[u8]>>(&mut self, path: P) -> bool {
         let path = path.as_ref();
-        self.overlay.descend_to(path) | self.base.descend_to(path)
+        self.a.descend_to(path) | self.b.descend_to(path)
     }
 
     fn descend_to_existing<P: AsRef<[u8]>>(&mut self, path: P) -> usize {
         let path = path.as_ref();
-        let depth_b = self.base.descend_to_existing(path);
-        let depth_o = self.overlay.descend_to_existing(path);
-        if depth_b > depth_o {
-            self.overlay.descend_to(&path[depth_o..depth_b]);
+        let depth_a = self.a.descend_to_existing(path);
+        let depth_b = self.b.descend_to_existing(path);
+        if depth_a > depth_b {
+            self.b.descend_to(&path[depth_b..depth_a]);
+            depth_a
+        } else if depth_b > depth_a {
+            self.a.descend_to(&path[depth_a..depth_b]);
             depth_b
-        } else if depth_o > depth_b {
-            self.base.descend_to(&path[depth_b..depth_o]);
-            depth_o
         } else {
-            depth_b
+            depth_a
         }
     }
 
-    #[allow(deprecated)]
-    fn descend_to_value<K: AsRef<[u8]>>(&mut self, path: K) -> usize {
+    fn descend_to_val<K: AsRef<[u8]>>(&mut self, path: K) -> usize {
         let path = path.as_ref();
-        let depth_b = self.base.descend_to_value(path);
-        let depth_o = self.overlay.descend_to_value(path);
-        if depth_b < depth_o {
-            if self.base.is_val() {
-                self.overlay.ascend(depth_o - depth_b);
-                depth_b
+        let depth_a = self.a.descend_to_val(path);
+        let depth_o = self.b.descend_to_val(path);
+        if depth_a < depth_o {
+            if self.a.is_val() {
+                self.b.ascend(depth_o - depth_a);
+                depth_a
             } else {
-                self.base.descend_to(&path[depth_b..depth_o]);
+                self.a.descend_to(&path[depth_a..depth_o]);
                 depth_o
             }
-        } else if depth_o < depth_b {
-            if self.overlay.is_val() {
-                self.base.ascend(depth_b - depth_o);
+        } else if depth_o < depth_a {
+            if self.b.is_val() {
+                self.a.ascend(depth_a - depth_o);
                 depth_o
             } else {
-                self.base.descend_to(&path[depth_o..depth_b]);
-                depth_b
+                self.a.descend_to(&path[depth_o..depth_a]);
+                depth_a
             }
         } else {
-            depth_b
+            depth_a
         }
     }
 
     fn descend_to_byte(&mut self, k: u8) -> bool {
-        self.base.descend_to(&[k]) | self.overlay.descend_to(&[k])
+        self.a.descend_to(&[k]) | self.b.descend_to(&[k])
     }
 
     fn descend_first_byte(&mut self) -> bool {
@@ -230,7 +244,7 @@ impl<VBase, VOverlay, Base, Overlay, Mapping> ZipperMoving
     */
 
     fn ascend(&mut self, steps: usize) -> bool {
-        self.base.ascend(steps) | self.overlay.ascend(steps)
+        self.a.ascend(steps) | self.b.ascend(steps)
     }
 
     fn ascend_byte(&mut self) -> bool {
@@ -238,40 +252,39 @@ impl<VBase, VOverlay, Base, Overlay, Mapping> ZipperMoving
     }
 
     fn ascend_until(&mut self) -> bool {
-        assert_eq!(self.base.path().len(), self.overlay.path().len());
+        debug_assert_eq!(self.a.path(), self.b.path());
         // eprintln!("asc_until i {:?} {:?}", self.base.path(), self.overlay.path());
-        let asc_b = self.base.ascend_until();
-        let path_b = self.base.path();
+        let asc_a = self.a.ascend_until();
+        let path_a = self.a.path();
+        let depth_a = path_a.len();
+        let asc_b = self.b.ascend_until();
+        let path_b = self.b.path();
         let depth_b = path_b.len();
-        let asc_o = self.overlay.ascend_until();
-        let path_o = self.overlay.path();
-        let depth_o = path_o.len();
-        if !(asc_o || asc_b) {
+        if !(asc_b || asc_a) {
             return false;
         }
-        // eprintln!("asc_until o {path_b:?} {path_o:?}");
-        if depth_o > depth_b {
-            self.base.descend_to(&path_o[depth_b..]);
-        } else if depth_b > depth_o {
-            self.overlay.descend_to(&path_b[depth_o..]);
+        // eprintln!("asc_until {path_a:?} {path_b:?}");
+        if depth_b > depth_a {
+            self.a.descend_to(&path_b[depth_a..]);
+        } else if depth_a > depth_b {
+            self.b.descend_to(&path_a[depth_b..]);
         }
-        // asc_b || asc_o
         true
     }
 
     fn ascend_until_branch(&mut self) -> bool {
-        let asc_b = self.base.ascend_until_branch();
-        let path_b = self.base.path();
+        let asc_a = self.a.ascend_until_branch();
+        let path_a = self.a.path();
+        let depth_a = path_a.len();
+        let asc_b = self.b.ascend_until_branch();
+        let path_b = self.b.path();
         let depth_b = path_b.len();
-        let asc_o = self.overlay.ascend_until_branch();
-        let path_o = self.overlay.path();
-        let depth_o = path_o.len();
-        if depth_o > depth_b {
-            self.base.descend_to(&path_o[depth_b..]);
-        } else if depth_b > depth_o {
-            self.overlay.descend_to(&path_b[depth_o..]);
+        if depth_b > depth_a {
+            self.a.descend_to(&path_b[depth_a..]);
+        } else if depth_a > depth_b {
+            self.b.descend_to(&path_a[depth_b..]);
         }
-        asc_b || asc_o
+        asc_a || asc_b
     }
 
     fn to_next_sibling_byte(&mut self) -> bool {
@@ -283,12 +296,12 @@ impl<VBase, VOverlay, Base, Overlay, Mapping> ZipperMoving
     }
 }
 
-impl<VBase, VOverlay, Base, Overlay, Mapping> ZipperIteration
-    for OverlayZipper<VBase, VOverlay, Base, Overlay, Mapping>
+impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperIteration
+    for OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
     where
-        Base: ZipperValues<VBase> + ZipperMoving,
-        Overlay: ZipperValues<VOverlay> + ZipperMoving,
-        Mapping: Fn(&VBase) -> &VOverlay,
+        AZipper: ZipperMoving + ZipperValues<AV>,
+        BZipper: ZipperMoving + ZipperValues<BV>,
+        Mapping: for<'a> Fn(Option<&'a AV>, Option<&'a BV>) -> Option<&'a OutV>,
 { }
 
 #[cfg(test)]
@@ -319,9 +332,9 @@ use super::{OverlayZipper};
     //     assert_eq!(oz.keys(), keys);
     // }
 
-    type Mapping = fn(&()) -> &();
+    type Mapping = for<'a> fn(Option<&'a ()>, Option<&'a ()>) -> Option<&'a ()>;
     type OZ<'a, V, A=GlobalAlloc> = OverlayZipper<
-        V, V,
+        V, V, V,
         ReadZipperUntracked<'a, 'static, V, A>,
         ReadZipperUntracked<'a, 'static, V, A>,
         Mapping
@@ -330,7 +343,7 @@ use super::{OverlayZipper};
         |keys: &[&[u8]]| {
             let cutoff = keys.len() / 3 * 2;
             // eprintln!("keys={:?}", &keys);
-            eprintln!("keys={:?}, {:?}", &keys[..cutoff], &keys[cutoff..]);
+            // eprintln!("a_keys={:?}\nb_keys={:?}", &keys[..cutoff], &keys[cutoff..]);
             let a = keys[..cutoff].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             let b = keys[cutoff..].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             (a, b)
@@ -346,7 +359,7 @@ use super::{OverlayZipper};
     zipper_iteration_tests::zipper_iteration_tests!(arena_compact_zipper,
         |keys: &[&[u8]]| {
             let cutoff = keys.len() / 3 * 2;
-            eprintln!("keys={:?}, {:?}", &keys[..cutoff], &keys[cutoff..]);
+            // eprintln!("a_keys={:?}\nb_keys={:?}", &keys[..cutoff], &keys[cutoff..]);
             let a = keys[..cutoff].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             let b = keys[cutoff..].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             (a, b)
