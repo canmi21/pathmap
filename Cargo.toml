@@ -6,6 +6,10 @@ rust-version = "1.88"
 description = "A key-value store with prefix compression, structural sharing, and powerful algebraic operations"
 exclude = ["benches/", "pathmap-book/", ".*"]
 
+[lib]
+name = "pathmap"
+path = "src/lib.rs"
+
 [dependencies]
 maybe-dangling = "0.1.1"
 dyn-clone = "1.0.17"
