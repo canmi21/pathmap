@@ -11,11 +11,11 @@
     - [Paths and Absolute Paths](1.02.03_zipper_paths.md)
     - [Focus Moving](1.02.04_zipper_moving.md)
     - [Iteration](./1.02.05_zipper_iter.md)
-    - [Modifying the Space](./1.02.06_zipper_writing.md)
-    - [Algebra on Subspaces](./1.02.07_zipper_algebra.md)
+    - [Modifying the Trie](./1.02.06_zipper_writing.md)
+    - [Algebra on Subtries](./1.02.07_zipper_algebra.md)
 - [Concurrent Zippers](./1.03.00_multi_zipper.md)
     - [Multi-threading](./1.03.01_multithreading.md)
-- [Abstract Spaces](./1.04.00_abstract_zippers.md)
+- [Abstract Zippers and Virtual Tries](./1.04.00_abstract_zippers.md)
 - [Morphisms](./1.05.00_morphisms.md)
 
 # Building a Database on Pathmap
