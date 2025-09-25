@@ -585,6 +585,16 @@ impl<V: Clone + Send + Sync + Unpin, K: AsRef<[u8]>> FromIterator<(K, V)> for Pa
     }
 }
 
+impl<'a, V: Clone + Send + Sync + Unpin, K: AsRef<[u8]>> FromIterator<&'a (K, V)> for PathMap<V> {
+    fn from_iter<I: IntoIterator<Item=&'a (K, V)>>(iter: I) -> Self {
+        let mut map = Self::new();
+        for (key, val) in iter {
+            map.set_val_at(key, val.clone());
+        }
+        map
+    }
+}
+
 impl<V: Clone + Send + Sync + Unpin, K: AsRef<[u8]>> From<(K, V)> for PathMap<V> {
     fn from(pair: (K, V)) -> Self {
         let mut map = Self::new();

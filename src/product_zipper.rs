@@ -5,9 +5,8 @@ use crate::trie_node::*;
 use crate::zipper::*;
 use zipper_priv::*;
 
-/// A [Zipper] type that moves through a Cartesian product space created by extending each value at the
-/// end of a path in a primary space with the root of a secondardary space, and doing it recursively for
-/// as many spaces as needed
+/// A [Zipper] type that moves through a Cartesian product trie created by extending each path in a primary
+/// trie with the root of the next secondardary trie, doing it recursively for all provided tries
 pub struct ProductZipper<'factor_z, 'trie, V: Clone + Send + Sync, A: Allocator = GlobalAlloc> {
     z: read_zipper_core::ReadZipperCore<'trie, 'static, V, A>,
     /// All of the seconday factors beyond the primary factor
@@ -344,12 +343,12 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     fn root_prefix_path(&self) -> &[u8] { self.z.root_prefix_path() }
 }
 
-/// A [Zipper] type that moves through a Cartesian product space created by extending each value at the
-/// end of a path in a primary space with the root of a secondardary space, and doing it recursively for
-/// as many spaces as needed
+/// A [Zipper] type that moves through a Cartesian product trie created by extending each path in a primary
+/// trie with the root of the next secondardary trie, doing it recursively for all provided tries
 ///
 /// Compared to [ProductZipper], this is a generic virtual zipper that works without
-/// inspecting the inner workings of primary and secondary zippers.
+/// inspecting the inner workings of primary and secondary zippers.  `ProductZipperG` is more general,
+/// while `ProductZipper` is faster in situations where it can be used.
 ///
 /// NOTE: In the future, this generic type will be renamed to `ProductZipper`, and the existing
 /// [ProductZipper] will be renamed something else or removed entirely.
@@ -370,9 +369,6 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ,
         SecondaryZ: ZipperMoving,
 {
     /// Creates a new `ProductZipper` from the provided zippers
-    ///
-    /// WARNING: passing `other_zippers` that are not at node roots may lead to a panic.  This is
-    /// an implementation issue, but would be very difficult to fix and may not be worth fixing.
     pub fn new<ZipperList>(primary: PrimaryZ, other_zippers: ZipperList) -> Self
         where
             ZipperList: IntoIterator<Item=SecondaryZ>,
