@@ -288,18 +288,29 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperValues<V> for ProductZipper<'_, 'trie, V, A> {
     fn val(&self) -> Option<&V> {
-        self.z.get_val()
+        unsafe{ self.z.get_val() }
     }
 }
 
-impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyValues<'trie, V> for ProductZipper<'factor_z, 'trie, V, A> {
-    fn get_val(&self) -> Option<&'trie V> { self.z.get_val() }
-}
+/// A [`witness`](ZipperReadOnlyConditionalValues::witness) type used by [`ProductZipper`]
+pub struct ProductZipperWitness<V: Clone + Send + Sync, A: Allocator>((ReadZipperWitness<V, A>, Vec<TrieRefOwned<V, A>>));
 
 impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyConditionalValues<'trie, V> for ProductZipper<'factor_z, 'trie, V, A> {
-    type WitnessT = ();
-    fn witness<'w>(&self) -> Self::WitnessT { () }
-    fn get_val_with_witness<'w>(&self, _witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w { self.get_val() }
+    type WitnessT = ProductZipperWitness<V, A>;
+    fn witness<'w>(&self) -> Self::WitnessT {
+        let primary_witness = self.z.witness();
+        let secondary_witnesses = self.secondaries.iter().filter_map(|trie_ref| {
+            match trie_ref {
+                TrieRef::Owned(trie_ref) => Some(trie_ref.clone()),
+                TrieRef::Borrowed(_) => None
+            }
+        }).collect();
+        ProductZipperWitness((primary_witness, secondary_witnesses))
+    }
+    fn get_val_with_witness<'w>(&self, _witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w {
+        //SAFETY: We know the witnesses are keeping the nodes we're borrowing from alive
+        unsafe{ self.z.get_val() }
+    }
 }
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper for ProductZipper<'_, 'trie, V, A> {
@@ -597,13 +608,21 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperReadOnlyConditionalValues<'trie, V>
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperMoving + ZipperReadOnlyValues<'trie, V>,
-        SecondaryZ: ZipperMoving + ZipperReadOnlyValues<'trie, V>,
+        PrimaryZ: ZipperMoving + ZipperReadOnlyConditionalValues<'trie, V>,
+        SecondaryZ: ZipperMoving + ZipperReadOnlyConditionalValues<'trie, V>,
 {
-    type WitnessT = ();
-    fn witness<'w>(&self) -> Self::WitnessT { () }
-    fn get_val_with_witness<'w>(&self, _witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w {
-        self.get_val()
+    type WitnessT = (PrimaryZ::WitnessT, Vec<SecondaryZ::WitnessT>);
+    fn witness<'w>(&self) -> Self::WitnessT {
+        let primary_witness = self.primary.witness();
+        let secondary_witnesses = self.secondary.iter().map(|secondary| secondary.witness()).collect();
+        (primary_witness, secondary_witnesses)
+    }
+    fn get_val_with_witness<'w>(&self, witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w {
+        if let Some(idx) = self.factor_idx(true) {
+            self.secondary[idx].get_val_with_witness(&witness.1[idx])
+        } else {
+            self.primary.get_val_with_witness(&witness.0)
+        }
     }
 }
 
@@ -809,25 +828,25 @@ mod tests {
         //Descend within the first factor
         assert!(pz.descend_to(b"AA"));
         assert_eq!(pz.path(), b"AA");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 3);
         assert!(pz.descend_to(b"a"));
         assert_eq!(pz.path(), b"AAa");
-        assert_eq!(pz.get_val(), Some(&0));
+        assert_eq!(pz.val(), Some(&0));
         assert_eq!(pz.child_count(), 3);
 
         //Step to the next factor
         assert!(pz.descend_to(b"DD"));
         assert_eq!(pz.path(), b"AAaDD");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 1);
         assert!(pz.descend_to(b"d"));
         assert_eq!(pz.path(), b"AAaDDd");
-        assert_eq!(pz.get_val(), Some(&1000));
+        assert_eq!(pz.val(), Some(&1000));
         assert_eq!(pz.child_count(), 0);
         assert!(!pz.descend_to(b"GGg"));
         assert_eq!(pz.path(), b"AAaDDdGGg");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 0);
 
         //Test Reset, if the zipper was in another factor
@@ -835,67 +854,67 @@ mod tests {
         assert_eq!(pz.path(), b"");
         assert!(pz.descend_to(b"AA"));
         assert_eq!(pz.path(), b"AA");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 3);
 
         //Try to descend to a non-existent path that would be within the first factor
         assert!(!pz.descend_to(b"aBBb"));
         assert_eq!(pz.path(), b"AAaBBb");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 0);
 
         //Now descend to the second factor in one jump
         pz.reset();
         assert!(pz.descend_to(b"AAaDD"));
         assert_eq!(pz.path(), b"AAaDD");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 1);
         pz.reset();
         assert!(pz.descend_to(b"AAaDDd"));
         assert_eq!(pz.path(), b"AAaDDd");
-        assert_eq!(pz.get_val(), Some(&1000));
+        assert_eq!(pz.val(), Some(&1000));
         assert_eq!(pz.child_count(), 0);
         assert!(!pz.descend_to(b"GG"));
         assert_eq!(pz.path(), b"AAaDDdGG");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 0);
 
         //Make sure we can ascend out of a secondary factor; in this sub-test we'll hit the path middles
         assert!(pz.ascend(1));
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.path(), b"AAaDDdG");
         assert_eq!(pz.child_count(), 0);
         assert!(pz.ascend(3));
         assert_eq!(pz.path(), b"AAaD");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 1);
         assert!(pz.ascend(2));
         assert_eq!(pz.path(), b"AA");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 3);
         assert!(!pz.ascend(3));
         assert_eq!(pz.path(), b"");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 1);
         assert!(pz.at_root());
 
         assert!(!pz.descend_to(b"AAaDDdGG"));
         assert_eq!(pz.path(), b"AAaDDdGG");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 0);
 
         //Now try to hit the path transition points
         assert!(pz.ascend(2));
         assert_eq!(pz.path(), b"AAaDDd");
-        assert_eq!(pz.get_val(), Some(&1000));
+        assert_eq!(pz.val(), Some(&1000));
         assert_eq!(pz.child_count(), 0);
         assert!(pz.ascend(3));
         assert_eq!(pz.path(), b"AAa");
-        assert_eq!(pz.get_val(), Some(&0));
+        assert_eq!(pz.val(), Some(&0));
         assert_eq!(pz.child_count(), 3);
         assert!(pz.ascend(3));
         assert_eq!(pz.path(), b"");
-        assert_eq!(pz.get_val(), None);
+        assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 1);
         assert!(pz.at_root());
     }
