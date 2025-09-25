@@ -60,12 +60,6 @@ impl<A: Zipper + ZipperMoving, B: Zipper + ZipperMoving> ZipperMoving for DiffZi
             println!("DiffZipper: reset")
         }
     }
-    fn path(&self) -> &[u8] {
-        let a = self.a.path();
-        let b = self.b.path();
-        assert_eq!(a, b);
-        a
-    }
     fn val_count(&self) -> usize {
         let a = self.a.val_count();
         let b = self.b.val_count();
@@ -189,6 +183,15 @@ impl<A: Zipper + ZipperMoving, B: Zipper + ZipperMoving> ZipperMoving for DiffZi
         if self.log_moves {
             println!("DiffZipper: to_prev_sibling_byte")
         }
+        assert_eq!(a, b);
+        a
+    }
+}
+
+impl<A: ZipperPath, B: ZipperPath> ZipperPath for DiffZipper<A, B> {
+    fn path(&self) -> &[u8] {
+        let a = self.a.path();
+        let b = self.b.path();
         assert_eq!(a, b);
         a
     }

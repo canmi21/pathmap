@@ -279,7 +279,7 @@ pub fn for_each_deserialized_path<R: std::io::Read, F: FnMut(usize, &[u8]) -> st
 
 #[cfg(test)]
 mod test {
-  use crate::zipper::{ZipperIteration, ZipperValues, ZipperMoving};
+  use crate::zipper::{ZipperIteration, ZipperValues, ZipperPath};
   use super::*;
 
   #[cfg(not(miri))] // miri really hates the zlib-ng-sys C API

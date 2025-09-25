@@ -17,7 +17,7 @@
 //
 
 use crate::utils::{BitMask, ByteMask};
-use crate::zipper::{Zipper, ZipperMoving, ZipperIteration, ZipperValues};
+use crate::zipper::{Zipper, ZipperMoving, ZipperPath, ZipperIteration, ZipperValues};
 
 /// Zipper that traverses a virtual trie formed by fusing the tries of two other zippers
 pub struct OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
@@ -68,8 +68,8 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping>
 impl<AV, BV, OutV, AZipper, BZipper, Mapping>
     OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
     where
-        AZipper: ZipperMoving + ZipperValues<AV>,
-        BZipper: ZipperMoving + ZipperValues<BV>,
+        AZipper: ZipperMoving + ZipperValues<AV> + ZipperPath,
+        BZipper: ZipperMoving + ZipperValues<BV> + ZipperPath,
         Mapping: for<'a> Fn(Option<&'a AV>, Option<&'a BV>) -> Option<&'a OutV>,
 {
     fn to_sibling(&mut self, next: bool) -> bool {
@@ -130,8 +130,8 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> Zipper
 impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
     for OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
     where
-        AZipper: ZipperMoving + ZipperValues<AV>,
-        BZipper: ZipperMoving + ZipperValues<BV>,
+        AZipper: ZipperMoving + ZipperValues<AV> + ZipperPath,
+        BZipper: ZipperMoving + ZipperValues<BV> + ZipperPath,
         Mapping: for<'a> Fn(Option<&'a AV>, Option<&'a BV>) -> Option<&'a OutV>,
 {
     fn at_root(&self) -> bool {
@@ -141,10 +141,6 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
     fn reset(&mut self) {
         self.a.reset();
         self.b.reset();
-    }
-
-    fn path(&self) -> &[u8] {
-        self.a.path()
     }
 
     fn val_count(&self) -> usize {
@@ -303,11 +299,23 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
     }
 }
 
+impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperPath
+    for OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
+    where
+        AZipper: ZipperMoving + ZipperValues<AV> + ZipperPath,
+        BZipper: ZipperMoving + ZipperValues<BV> + ZipperPath,
+        Mapping: for<'a> Fn(Option<&'a AV>, Option<&'a BV>) -> Option<&'a OutV>,
+{
+    fn path(&self) -> &[u8] {
+        self.a.path()
+    }
+}
+
 impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperIteration
     for OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
     where
-        AZipper: ZipperMoving + ZipperValues<AV>,
-        BZipper: ZipperMoving + ZipperValues<BV>,
+        AZipper: ZipperMoving + ZipperValues<AV> + ZipperPath,
+        BZipper: ZipperMoving + ZipperValues<BV> + ZipperPath,
         Mapping: for<'a> Fn(Option<&'a AV>, Option<&'a BV>) -> Option<&'a OutV>,
 { }
 

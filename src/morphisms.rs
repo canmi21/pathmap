@@ -628,7 +628,7 @@ where
     V: 'static + Clone + Send + Sync + Unpin,
     W: Default,
     I: IntoIterator<Item=W>,
-    WZ: ZipperWriting<V, A> + zipper::ZipperMoving,
+    WZ: ZipperWriting<V, A> + zipper::ZipperMoving + zipper::ZipperPath,
     CoAlgF: Copy + FnMut(W, &[u8]) -> (&'a [u8], ByteMask, I, Option<V>),
 {
     let (prefix, bm, ws, mv) = coalg_f(w, wz.path());

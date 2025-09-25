@@ -183,10 +183,6 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         self.factor_paths.clear();
         self.z.reset()
     }
-    #[inline]
-    fn path(&self) -> &[u8] {
-        self.z.path()
-    }
     fn val_count(&self) -> usize {
         //GOAT!!!  I think val_count properly belongs in the morphisms module
         unimplemented!()
@@ -285,6 +281,13 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     }
 }
 
+impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperPath for ProductZipper<'_, 'trie, V, A> {
+    #[inline]
+    fn path(&self) -> &[u8] {
+        self.z.path()
+    }
+}
+
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperIteration for ProductZipper<'_, 'trie, V, A> { } //Use the default impl for all methods
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperValues<V> for ProductZipper<'_, 'trie, V, A> {
@@ -366,8 +369,8 @@ pub struct ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
 impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperMoving,
-        SecondaryZ: ZipperMoving,
+        PrimaryZ: ZipperMoving + ZipperPath,
+        SecondaryZ: ZipperMoving + ZipperPath,
 {
     /// Creates a new `ProductZipper` from the provided zippers
     ///
@@ -514,8 +517,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperAbsolutePath
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperAbsolutePath,
-        SecondaryZ: ZipperMoving,
+        PrimaryZ: ZipperAbsolutePath + ZipperPath,
+        SecondaryZ: ZipperMoving + ZipperPath,
 {
     fn origin_path(&self) -> &[u8] { self.primary.origin_path() }
     fn root_prefix_path(&self) -> &[u8] { self.primary.root_prefix_path() }
@@ -525,8 +528,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperConcretePriv
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperMoving + ZipperConcretePriv,
-        SecondaryZ: ZipperMoving + ZipperConcretePriv,
+        PrimaryZ: ZipperMoving + ZipperPath + ZipperConcretePriv,
+        SecondaryZ: ZipperMoving + ZipperPath + ZipperConcretePriv,
 {
     fn shared_node_id(&self) -> Option<u64> {
         if let Some(idx) = self.factor_idx(true) {
@@ -541,8 +544,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperConcrete
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperMoving + ZipperConcrete,
-        SecondaryZ: ZipperMoving + ZipperConcrete,
+        PrimaryZ: ZipperMoving + ZipperPath + ZipperConcrete,
+        SecondaryZ: ZipperMoving + ZipperPath + ZipperConcrete,
 {
     fn is_shared(&self) -> bool {
         if let Some(idx) = self.factor_idx(true) {
@@ -569,8 +572,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperValues<V>
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperMoving + ZipperValues<V>,
-        SecondaryZ: ZipperMoving + ZipperValues<V>,
+        PrimaryZ: ZipperMoving + ZipperPath + ZipperValues<V>,
+        SecondaryZ: ZipperMoving + ZipperPath + ZipperValues<V>,
 {
     fn val(&self) -> Option<&V> {
         if let Some(idx) = self.factor_idx(true) {
@@ -585,8 +588,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperReadOnlyValues<'trie, V>
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperMoving + ZipperReadOnlyValues<'trie, V>,
-        SecondaryZ: ZipperMoving + ZipperReadOnlyValues<'trie, V>,
+        PrimaryZ: ZipperMoving + ZipperPath + ZipperReadOnlyValues<'trie, V>,
+        SecondaryZ: ZipperMoving + ZipperPath + ZipperReadOnlyValues<'trie, V>,
 {
     fn get_val(&self) -> Option<&'trie V> {
         if let Some(idx) = self.factor_idx(true) {
@@ -601,8 +604,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperReadOnlyConditionalValues<'trie, V>
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperMoving + ZipperReadOnlyValues<'trie, V>,
-        SecondaryZ: ZipperMoving + ZipperReadOnlyValues<'trie, V>,
+        PrimaryZ: ZipperMoving + ZipperPath + ZipperReadOnlyValues<'trie, V>,
+        SecondaryZ: ZipperMoving + ZipperPath + ZipperReadOnlyValues<'trie, V>,
 {
     type WitnessT = ();
     fn witness<'w>(&self) -> Self::WitnessT { () }
@@ -614,8 +617,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperReadOnlyConditionalValues<'trie, V>
 impl<'trie, PrimaryZ, SecondaryZ, V> Zipper for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperMoving + Zipper,
-        SecondaryZ: ZipperMoving + Zipper,
+        PrimaryZ: ZipperMoving + ZipperPath + Zipper,
+        SecondaryZ: ZipperMoving + ZipperPath + Zipper,
 {
     fn path_exists(&self) -> bool {
         if let Some(idx) = self.factor_idx(true) {
@@ -650,8 +653,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> Zipper for ProductZipperG<'trie, PrimaryZ, 
 impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperMoving,
-        SecondaryZ: ZipperMoving,
+        PrimaryZ: ZipperMoving + ZipperPath,
+        SecondaryZ: ZipperMoving + ZipperPath,
 {
     fn at_root(&self) -> bool {
         self.path().is_empty()
@@ -662,10 +665,6 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
             secondary.reset();
         }
         self.primary.reset();
-    }
-    #[inline]
-    fn path(&self) -> &[u8] {
-        self.primary.path()
     }
     fn val_count(&self) -> usize {
         unimplemented!("method will probably get removed")
@@ -771,6 +770,18 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
     #[inline]
     fn ascend_until_branch(&mut self) -> bool {
         self.ascend_cond(false)
+    }
+}
+
+impl<'trie, PrimaryZ, SecondaryZ, V> ZipperPath for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
+    where
+        V: Clone + Send + Sync,
+        PrimaryZ: ZipperMoving + ZipperPath,
+        SecondaryZ: ZipperMoving + ZipperPath,
+{
+    #[inline]
+    fn path(&self) -> &[u8] {
+        self.primary.path()
     }
 }
 

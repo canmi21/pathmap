@@ -57,7 +57,7 @@ pub struct PrefixZipper<'prefix, Z> {
 
 impl<'prefix, Z>  PrefixZipper<'prefix, Z>
     where
-        Z: ZipperMoving
+        Z: ZipperMoving + ZipperPath
 {
     /// Creates a new `PrefixZipper` wrapping the supplied `source` zipper and prepending the
     /// supplied `prefix`
@@ -244,7 +244,7 @@ impl<'prefix, 'source, Z, V> ZipperReadOnlyConditionalValues<'source, V>
 }
 
 impl<'prefix, Z> ZipperPathBuffer for PrefixZipper<'prefix, Z>
-    where Z: ZipperMoving
+    where Z: ZipperMoving + ZipperPath
 {
     unsafe fn origin_path_assert_len(&self, len: usize) -> &[u8] {
         assert!(self.path.capacity() >= len);
@@ -294,7 +294,7 @@ impl<'prefix, Z> Zipper for PrefixZipper<'prefix, Z>
 
 impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
     where
-        Z: ZipperMoving
+        Z: ZipperMoving + ZipperPath
 {
     fn at_root(&self) -> bool {
         match self.position {
@@ -309,11 +309,6 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
         self.path.extend_from_slice(&self.prefix[..self.origin_depth]);
         self.source.reset();
         self.set_valid(0);
-    }
-
-    #[inline]
-    fn path(&self) -> &[u8] {
-        &self.path[self.origin_depth..]
     }
 
     fn val_count(&self) -> usize {
@@ -453,6 +448,16 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
     }
 }
 
+impl<'prefix, Z> ZipperPath for PrefixZipper<'prefix, Z>
+    where
+        Z: ZipperMoving + ZipperPath
+{
+    #[inline]
+    fn path(&self) -> &[u8] {
+        &self.path[self.origin_depth..]
+    }
+}
+
 /// An interface for a [Zipper] to support accessing the full path buffer used to create the zipper
 impl<'prefix, Z> ZipperAbsolutePath for PrefixZipper<'prefix, Z>
     where Z: ZipperAbsolutePath
@@ -489,8 +494,7 @@ impl<'prefix, Z, V> ZipperForking<V> for PrefixZipper<'prefix, Z>
 mod tests {
     use super::PrefixZipper;
     use crate::trie_map::PathMap;
-    use crate::zipper::ZipperMoving;
-    use crate::zipper::ZipperAbsolutePath;
+    use crate::zipper::{ZipperMoving, ZipperPath, ZipperAbsolutePath};
     const PATHS1: &[(&[u8], u64)] = &[
         (b"0000", 0),
         (b"00000", 1),

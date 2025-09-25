@@ -347,7 +347,6 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperSubtries<V, A>
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving for WriteZipperTracked<'a, 'path, V, A> {
     fn at_root(&self) -> bool { self.z.at_root() }
     fn reset(&mut self) { self.z.reset() }
-    fn path(&self) -> &[u8] { self.z.path() }
     fn val_count(&self) -> usize { self.z.val_count() }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool { self.z.descend_to(k) }
     fn descend_to_byte(&mut self, k: u8) -> bool { self.z.descend_to_byte(k) }
@@ -361,7 +360,9 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     fn ascend_until(&mut self) -> bool { self.z.ascend_until() }
     fn ascend_until_branch(&mut self) -> bool { self.z.ascend_until_branch() }
 }
-
+impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperPath for WriteZipperTracked<'a, 'path, V, A> {
+    fn path(&self) -> &[u8] { self.z.path() }
+}
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> zipper_priv::ZipperPriv for WriteZipperTracked<'a, 'path, V, A> {
     type V = V;
     type A = A;
@@ -502,7 +503,6 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperSubtries<V, A>
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving for WriteZipperUntracked<'a, 'path, V, A> {
     fn at_root(&self) -> bool { self.z.at_root() }
     fn reset(&mut self) { self.z.reset() }
-    fn path(&self) -> &[u8] { self.z.path() }
     fn val_count(&self) -> usize { self.z.val_count() }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool { self.z.descend_to(k) }
     fn descend_to_byte(&mut self, k: u8) -> bool { self.z.descend_to_byte(k) }
@@ -515,6 +515,9 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     fn ascend_byte(&mut self) -> bool { self.z.ascend_byte() }
     fn ascend_until(&mut self) -> bool { self.z.ascend_until() }
     fn ascend_until_branch(&mut self) -> bool { self.z.ascend_until_branch() }
+}
+impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperPath for WriteZipperUntracked<'a, 'path, V, A> {
+    fn path(&self) -> &[u8] { self.z.path() }
 }
 
 impl<'a, 'k, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> zipper_priv::ZipperPriv for WriteZipperUntracked<'a, 'k, V, A> {
@@ -680,7 +683,6 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperSubtries<V, A> for Writ
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperMoving for WriteZipperOwned<V, A> {
     fn at_root(&self) -> bool { self.z.at_root() }
     fn reset(&mut self) { self.z.reset() }
-    fn path(&self) -> &[u8] { self.z.path() }
     fn val_count(&self) -> usize { self.z.val_count() }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool { self.z.descend_to(k) }
     fn descend_to_byte(&mut self, k: u8) -> bool { self.z.descend_to_byte(k) }
@@ -693,6 +695,9 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperMoving for WriteZipperO
     fn ascend_byte(&mut self) -> bool { self.z.ascend_byte() }
     fn ascend_until(&mut self) -> bool { self.z.ascend_until() }
     fn ascend_until_branch(&mut self) -> bool { self.z.ascend_until_branch() }
+}
+impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperPath for WriteZipperOwned<V, A> {
+    fn path(&self) -> &[u8] { self.z.path() }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> zipper_priv::ZipperPriv for WriteZipperOwned<V, A> {
@@ -960,14 +965,6 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
         self.key.prefix_idx.clear();
     }
 
-    fn path(&self) -> &[u8] {
-        if self.key.prefix_buf.len() > 0 {
-            &self.key.prefix_buf[self.key.origin_path.len()..]
-        } else {
-            &[]
-        }
-    }
-
     fn val_count(&self) -> usize {
         let focus = self.get_focus();
         if focus.is_none() {
@@ -1045,6 +1042,58 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
         }
         debug_assert!(self.key.node_key().len() > 0); //We should never finish with a zero-length node-key
         true
+    }
+    fn to_next_sibling_byte(&mut self) -> bool {
+        let cur_byte = match self.path().last() {
+            Some(byte) => *byte,
+            None => return false
+        };
+        if !self.ascend_byte() {
+            return false
+        }
+        let mask = self.child_mask();
+        match mask.next_bit(cur_byte) {
+            Some(byte) => {
+                let descended = self.descend_to_byte(byte);
+                debug_assert!(descended);
+                true
+            },
+            None => {
+                self.descend_to_byte(cur_byte);
+                false
+            }
+        }
+    }
+    fn to_prev_sibling_byte(&mut self) -> bool {
+        let cur_byte = match self.path().last() {
+            Some(byte) => *byte,
+            None => return false
+        };
+        if !self.ascend_byte() {
+            return false
+        }
+        let mask = self.child_mask();
+        match mask.prev_bit(cur_byte) {
+            Some(byte) => {
+                let descended = self.descend_to_byte(byte);
+                debug_assert!(descended);
+                true
+            },
+            None => {
+                let descended = self.descend_to_byte(cur_byte);
+                debug_assert!(descended);
+                false
+            }
+        }
+    }
+}
+impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperPath for WriteZipperCore<'a, 'path, V, A> {
+    fn path(&self) -> &[u8] {
+        if self.key.prefix_buf.len() > 0 {
+            &self.key.prefix_buf[self.key.origin_path.len()..]
+        } else {
+            &[]
+        }
     }
 }
 
