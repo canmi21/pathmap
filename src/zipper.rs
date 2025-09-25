@@ -19,6 +19,7 @@ pub use crate::zipper_head::*;
 pub use crate::product_zipper::{ProductZipper, ProductZipperG};
 pub use crate::overlay_zipper::{OverlayZipper};
 pub use crate::prefix_zipper::{PrefixZipper};
+pub use crate::track_path::{TrackPath};
 
 use crate::zipper_tracking::*;
 
@@ -3942,6 +3943,7 @@ pub(crate) mod zipper_iteration_tests {
         //Scan over the nested second symbols in the path (upper case letters)
         zipper.reset();
         assert!(zipper.descend_to(b"1a1"));
+        assert_eq!(zipper.path(), b"1a1");
         assert_eq!(zipper.descend_first_k_path(1), true);
         assert_eq!(zipper.path(), b"1a1A");
         assert_eq!(zipper.to_next_k_path(1), true);

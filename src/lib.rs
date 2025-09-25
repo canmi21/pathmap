@@ -90,6 +90,9 @@ pub mod utils;
 /// Extensions to the API that may or may not become permanant
 pub mod experimental;
 
+/// Wrapper to allow tracking path for a blind zipper
+pub mod track_path;
+
 /// Compact representation of the trie
 #[cfg(feature = "arena_compact")]
 pub mod arena_compact;
