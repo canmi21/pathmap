@@ -46,39 +46,40 @@ impl ZipperMoving for FullZipper {
         self.path.push(k);
         true
     }
-    fn descend_indexed_byte(&mut self, idx: usize) -> bool {
+    fn descend_indexed_byte(&mut self, idx: usize) -> Option<u8> {
         assert!(idx < 256);
         self.path.push(idx as u8);
-        true
+        Some(idx as u8)
     }
-    fn descend_first_byte(&mut self) -> bool {
+    fn descend_first_byte(&mut self) -> Option<u8> {
         self.path.push(0);
-        true
+        Some(0)
     }
-    fn descend_until(&mut self) -> bool {
+    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
         self.path.push(0); // not sure?
+        if let Some(dst) = dst { dst.push(0) }
         true
     }
-    fn ascend(&mut self, steps: usize) -> bool {
+    fn ascend(&mut self, steps: usize) -> Result<(), usize> {
         if steps > self.path.len() {
             self.path.clear();
-            false
+            Err(steps - self.path.len())
         } else {
             self.path.truncate(self.path.len() - steps);
-            true
+            Ok(())
         }
     }
     fn ascend_byte(&mut self) -> bool {
         self.path.pop().is_some()
     }
-    fn ascend_until(&mut self) -> bool {
-        self.path.pop().is_some() // not sure?
+    fn ascend_until(&mut self) -> Option<usize> {
+        self.path.pop().map(|_| 1) // not sure?
     }
-    fn ascend_until_branch(&mut self) -> bool {
-        self.path.pop().is_some() // not sure? What's the difference with the previous?
+    fn ascend_until_branch(&mut self) -> Option<usize> {
+        self.path.pop().map(|_| 1) // not sure? What's the difference with the previous?
     }
-    fn to_next_sibling_byte(&mut self) -> bool { self.to_sibling(true) }
-    fn to_prev_sibling_byte(&mut self) -> bool { self.to_sibling(false) }
+    fn to_next_sibling_byte(&mut self) -> Option<u8> { self.to_sibling(true) }
+    fn to_prev_sibling_byte(&mut self) -> Option<u8> { self.to_sibling(false) }
 }
 
 impl ZipperPath for FullZipper {
@@ -86,16 +87,16 @@ impl ZipperPath for FullZipper {
 }
 
 impl FullZipper {
-    fn to_sibling(&mut self, next: bool) -> bool {
-        if self.path.is_empty() { return false } // right?
+    fn to_sibling(&mut self, next: bool) -> Option<u8> {
+        if self.path.is_empty() { return None } // right?
         if next {
             let last = self.path.last_mut().unwrap();
-            if *last != 255 { *last = *last + 1; true }
-            else { false }
+            if *last != 255 { *last = *last + 1; Some(*last) }
+            else { None }
         } else {
             let first = self.path.first_mut().unwrap();
-            if *first != 0 { *first = *first - 1; true }
-            else { false }
+            if *first != 0 { *first = *first - 1; Some(*first) }
+            else { None }
         }
     }
 }

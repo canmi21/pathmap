@@ -406,7 +406,7 @@ fn cata_side_effect_body<'a, Z, V: 'a, W, Err, AlgF, const JUMPING: bool>(mut z:
     z.prepare_buffers();
     //Push a stack frame for the root, and start on the first branch off the root
     stack.push(StackFrame::from(&z));
-    if !z.descend_first_byte() {
+    if !z.descend_first_byte().is_some() {
         //Empty trie is a special case
         return alg_f(&ByteMask::EMPTY, &mut [], 0, z.val(), z.origin_path())
     }
@@ -415,7 +415,7 @@ fn cata_side_effect_body<'a, Z, V: 'a, W, Err, AlgF, const JUMPING: bool>(mut z:
         //Descend to the next forking point, or leaf
         let mut is_leaf = false;
         while z.child_count() < 2 {
-            if !z.descend_until() {
+            if !z.descend_until(None) {
                 is_leaf = true;
                 break;
             }
@@ -461,7 +461,7 @@ fn cata_side_effect_body<'a, Z, V: 'a, W, Err, AlgF, const JUMPING: bool>(mut z:
 
             //Position to descend the next child branch
             let descended = z.descend_indexed_byte(stack[frame_idx].child_idx as usize);
-            debug_assert!(descended);
+            debug_assert!(descended.is_some());
         } else {
             //Push a new stack frame for this branch
             Stack::push_state_raw(&mut stack, &mut frame_idx, &z);
@@ -491,7 +491,7 @@ fn ascend_to_fork<'a, Z, V: 'a, W, Err, AlgF, const JUMPING: bool>(z: &mut Z,
             let old_path_len = z.origin_path().len();
             let old_val = z.get_val_with_witness(&z_witness);
             let ascended = z.ascend_until();
-            debug_assert!(ascended);
+            debug_assert!(ascended.is_some());
 
             let origin_path = unsafe{ z.origin_path_assert_len(old_path_len) };
             let jump_len = if z.child_count() != 1 || z.is_val() {
@@ -641,7 +641,8 @@ where
         new_map_from_ana_jumping(wz, w, coalg_f);
         wz.ascend_byte();
     }
-    wz.ascend(prefix_len);
+    let ascended = wz.ascend(prefix_len);
+    debug_assert_eq!(ascended, Ok(()));
 }
 
 /// A trait to dictate if and how the value should be cached.
@@ -734,7 +735,7 @@ fn into_cata_cached_body<'a, Z, V: 'a, W, E, AlgF, Cache, const JUMPING: bool>(
             // Descend until leaf or branch
             let mut is_leaf = false;
             'descend: while zipper.child_count() < 2 {
-                if !zipper.descend_until() {
+                if !zipper.descend_until(None) {
                     is_leaf = true;
                     break 'descend;
                 }
@@ -926,7 +927,8 @@ pub(crate) fn new_map_from_ana_in<V, W, AlgF, A: Allocator>(w: W, mut alg_f: Alg
                 // Path from a graft, we shouldn't descend
                 WOrNode::Node(node) => {
                     z.core().graft_internal(Some(node));
-                    z.ascend(child_path_len);
+                    let ascended = z.ascend(child_path_len);
+                    debug_assert_eq!(ascended, Ok(()));
                 }
             }
         } else {
@@ -934,7 +936,8 @@ pub(crate) fn new_map_from_ana_in<V, W, AlgF, A: Allocator>(w: W, mut alg_f: Alg
             if frame_idx == 0 {
                 break
             }
-            z.ascend(stack[frame_idx].1);
+            let ascended = z.ascend(stack[frame_idx].1);
+            debug_assert_eq!(ascended, Ok(()));
             stack[frame_idx].0.reset();
             frame_idx -= 1;
         }
