@@ -858,6 +858,10 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     fn to_next_step(&mut self) -> bool { self.z.to_next_step() }
 }
 
+impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyValues<'trie, V> for ReadZipperTracked<'trie, '_, V, A> {
+    fn get_val(&self) -> Option<&'trie V> { self.z.get_val() }
+}
+
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperReadOnlyConditionalValues<'trie, V> for ReadZipperTracked<'trie, '_, V, A> {
     type WitnessT = ReadZipperWitness<V, A>;
     fn witness<'w>(&self) -> ReadZipperWitness<V, A> { self.z.witness() }

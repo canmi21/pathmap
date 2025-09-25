@@ -429,7 +429,7 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
             Ok(()) => steps,
         };
         self.path.truncate(self.path.len() - ascended);
-        ascended > 0
+        ascended == steps
     }
     #[inline]
     fn ascend_byte(&mut self) -> bool {
