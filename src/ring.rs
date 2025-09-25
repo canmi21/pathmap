@@ -640,7 +640,7 @@ pub(crate) trait HeteroLattice<OtherT> {
         in_place_default_impl(result, self, other, |_s| {}, |e| Self::convert(e))
     }
     fn pmeet(&self, other: &OtherT) -> AlgebraicResult<Self> where Self: Sized;
-    fn join_all(xs: &[&Self]) -> Self where Self: Sized;
+    // fn join_all(xs: &[&Self]) -> Self where Self: Sized; //HeteroLattice will entirely disappear with the policy refactor, so it's not worth worying about this anymore
     fn convert(other: OtherT) -> Self;
 }
 
