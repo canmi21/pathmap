@@ -10,8 +10,8 @@ use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, L
 use crate::gxhash::{self, gxhash128};
 
 //GOAT-old-names
-#[deprecated]
-pub type BytesTrieMap<V, A = GlobalAlloc> = PathMap<V, A>;
+// #[deprecated]
+// pub type BytesTrieMap<V, A = GlobalAlloc> = PathMap<V, A>;
 
 /// A map type that uses byte slices `&[u8]` as keys
 ///

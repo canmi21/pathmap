@@ -71,8 +71,7 @@ static GLOBAL: Jemalloc = Jemalloc;
 pub mod ring;
 
 /// A collection indexed by paths of bytes, supporting [algebraic](crate::ring) operations
-//GOAT-old-names, this mod shouldn't be pub, because it only contains one public object which is re-exported here
-pub mod trie_map;
+mod trie_map;
 pub use trie_map::PathMap;
 
 /// Cursors that can move over a trie, to inspect and modify contained elements or entire branches
