@@ -9,11 +9,7 @@ use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, L
 
 use crate::gxhash::{self, gxhash128};
 
-//GOAT-old-names
-// #[deprecated]
-// pub type BytesTrieMap<V, A = GlobalAlloc> = PathMap<V, A>;
-
-/// A map type that uses byte slices `&[u8]` as keys
+/// A map type that uses a trie based on byte slices (`&[u8]`) known as "paths"
 ///
 /// This type is implemented using some of the approaches explained in the
 /// ["Bitwise trie with bitmap" Wikipedia article](https://en.wikipedia.org/wiki/Bitwise_trie_with_bitmap).
