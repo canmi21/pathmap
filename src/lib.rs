@@ -133,6 +133,7 @@ pub mod tree_serialization;
 mod trie_node;
 mod write_zipper;
 mod product_zipper;
+mod empty_zipper;
 mod prefix_zipper;
 mod overlay_zipper;
 mod trie_ref;

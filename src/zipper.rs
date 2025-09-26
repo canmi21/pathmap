@@ -19,6 +19,7 @@ pub use crate::zipper_head::*;
 pub use crate::product_zipper::{ProductZipper, ProductZipperG};
 pub use crate::overlay_zipper::{OverlayZipper};
 pub use crate::prefix_zipper::{PrefixZipper};
+pub use crate::empty_zipper::{EmptyZipper};
 
 use crate::zipper_tracking::*;
 
@@ -248,6 +249,8 @@ pub trait ZipperMoving: Zipper {
     ///
     /// If there is a value at the focus, the zipper will descend to the next value or branch, however the
     /// zipper will not descend further if this method is called with the focus already on a branch.
+    ///
+    /// Does nothing and returns `false` if the zipper's focus is on a non-existent path.
     fn descend_until(&mut self) -> bool {
         let mut descended = false;
         while self.child_count() == 1 {
@@ -491,7 +494,7 @@ pub trait ZipperIteration: ZipperMoving {
         }
     }
 
-    /// Descends the zipper's focus `k`` bytes, following the first child at each branch, and continuing
+    /// Descends the zipper's focus `k` bytes, following the first child at each branch, and continuing
     /// with depth-first exploration until a path that is `k` bytes from the focus has been found
     ///
     /// Returns `true` if the zipper has sucessfully descended `k` steps, or `false` otherwise.  If this
