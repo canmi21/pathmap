@@ -479,7 +479,6 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         }
     }
 
-    const INVIS_HASH: u128 = 0b00001110010011001111100111000110011110101111001101110110011100001011010011010011001000100111101000001100011111110100001000000111;
     /// Hash the logical `PathMap` and all its values with the provided hash function (which can return INVIS_HASH to ignore values).
     pub fn hash<VHash : Fn(&V) -> u128>(&self, vhash: VHash) -> u128 {
         unsafe {
@@ -1339,6 +1338,25 @@ mod tests {
 
         assert_eq!(map.remove_val_at("how do you do", true), Some("how do you do".to_string()));
         assert_eq!(map.remove_val_at("hello", true), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn val_count_root_value() {
+        let mut map = PathMap::new();
+        map.insert(b"", ());
+        map.insert(b"a", ());
+        assert_eq!(map.val_count(), 2);
+    }
+
+    #[test]
+    fn subtract_root_value() {
+        let mut map = PathMap::new();
+        map.insert(b"b", ());
+        map.insert(b"a", ());
+        map.insert(b"", ());
+        let mut map2 = map.clone();
+        map.write_zipper().subtract_into(&map2.read_zipper(), true);
+        assert_eq!(map.iter().count(), 0)
     }
 }
 
