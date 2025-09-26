@@ -1354,15 +1354,50 @@ mod tests {
 
     /// Validates that an identity subtract leaves an empty map, including with no root value
     #[test]
-    fn map_subtract_test1() {
+    fn map_root_val_test1() {
         let mut map = PathMap::new();
         map.insert(b"b", ());
         map.insert(b"a", ());
         map.insert(b"", ());
-        let map2 = map.clone();
 
-        let result_map = map.subtract(&map2);
-        assert_eq!(result_map.iter().count(), 0)
+        //Validate subtract of identity clears the root val
+        let ident_map = map.clone();
+        let result_map = map.subtract(&ident_map);
+        assert_eq!(result_map.iter().count(), 0);
+
+        //Validate subtract of empty keeps the root val
+        let empty_map = PathMap::new();
+        let result_map = map.subtract(&empty_map);
+        assert_eq!(result_map.iter().count(), 3);
+
+        //Validate subtract of just_root clears it
+        let mut just_root_map = PathMap::new();
+        just_root_map.insert(b"", ());
+        let result_map = map.subtract(&just_root_map);
+        assert_eq!(result_map.iter().count(), 2);
+
+        //Validate subtract of all_but_root keeps it
+        let mut all_but_root_map = PathMap::new();
+        all_but_root_map.insert(b"b", ());
+        all_but_root_map.insert(b"a", ());
+        let result_map = map.subtract(&all_but_root_map);
+        assert_eq!(result_map.iter().count(), 1);
+
+        //Validate meet with empty clears the root val
+        let result_map = map.meet(&empty_map);
+        assert_eq!(result_map.iter().count(), 0);
+
+        //Validate meet with identity leaves the root val
+        let result_map = map.meet(&ident_map);
+        assert_eq!(result_map.iter().count(), 3);
+
+        //Validate meet with just_root keeps it
+        let result_map = map.meet(&just_root_map);
+        assert_eq!(result_map.iter().count(), 1);
+
+        //Validate meet with all_but_root removes it
+        let result_map = map.meet(&all_but_root_map);
+        assert_eq!(result_map.iter().count(), 2);
     }
 }
 
