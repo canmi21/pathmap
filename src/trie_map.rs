@@ -473,14 +473,17 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
     ///
     /// WARNING: This is not a cheap method. It may have an order-N cost
     pub fn val_count(&self) -> usize {
+        let root_val = unsafe{ &*self.root_val.get() }.is_some() as usize;
         match self.root() {
-            Some(root) => val_count_below_root(root.as_tagged()),
-            None => 0
+            Some(root) => val_count_below_root(root.as_tagged()) + root_val,
+            None => root_val
         }
     }
 
-    const INVIS_HASH: u128 = 0b00001110010011001111100111000110011110101111001101110110011100001011010011010011001000100111101000001100011111110100001000000111;
-    /// Hash the logical `PathMap` and all its values with the provided hash function (which can return INVIS_HASH to ignore values).
+    pub const INVIS_HASH: u128 = 0b00001110010011001111100111000110011110101111001101110110011100001011010011010011001000100111101000001100011111110100001000000111;
+
+    /// Hash the logical `PathMap` and all its values with the provided hash function (which can return [PathMap::INVIS_HASH] to ignore values).
+    //GOAT, do we need to do anything to make sure Merkleization and this hash method are in harmony?
     pub fn hash<VHash : Fn(&V) -> u128>(&self, vhash: VHash) -> u128 {
         unsafe {
         self.read_zipper().into_cata_cached(|bm, hs, mv, _| {
@@ -590,6 +593,16 @@ impl<'a, V: Clone + Send + Sync + Unpin, K: AsRef<[u8]>> FromIterator<&'a (K, V)
         let mut map = Self::new();
         for (key, val) in iter {
             map.set_val_at(key, val.clone());
+        }
+        map
+    }
+}
+
+impl<'a> FromIterator<&'a [u8]> for PathMap<()> {
+    fn from_iter<I: IntoIterator<Item=&'a [u8]>>(iter: I) -> Self {
+        let mut map = Self::new();
+        for key in iter {
+            map.set_val_at(key, ());
         }
         map
     }
@@ -1339,6 +1352,62 @@ mod tests {
 
         assert_eq!(map.remove_val_at("how do you do", true), Some("how do you do".to_string()));
         assert_eq!(map.remove_val_at("hello", true), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn val_count_root_value() {
+        let mut map = PathMap::new();
+        map.insert(b"", ());
+        map.insert(b"a", ());
+        assert_eq!(map.val_count(), 2);
+    }
+
+    /// Validates that alg ops on whole maps do the right thing WRT the existence of the root value
+    #[test]
+    fn map_root_val_test1() {
+        let mut map = PathMap::new();
+        map.insert(b"b", ());
+        map.insert(b"a", ());
+        map.insert(b"", ());
+
+        //Validate subtract of identity clears the root val
+        let ident_map = map.clone();
+        let result_map = map.subtract(&ident_map);
+        assert_eq!(result_map.iter().count(), 0);
+
+        //Validate subtract of empty keeps the root val
+        let empty_map = PathMap::new();
+        let result_map = map.subtract(&empty_map);
+        assert_eq!(result_map.iter().count(), 3);
+
+        //Validate subtract of just_root clears it
+        let mut just_root_map = PathMap::new();
+        just_root_map.insert(b"", ());
+        let result_map = map.subtract(&just_root_map);
+        assert_eq!(result_map.iter().count(), 2);
+
+        //Validate subtract of all_but_root keeps it
+        let mut all_but_root_map = PathMap::new();
+        all_but_root_map.insert(b"b", ());
+        all_but_root_map.insert(b"a", ());
+        let result_map = map.subtract(&all_but_root_map);
+        assert_eq!(result_map.iter().count(), 1);
+
+        //Validate meet with empty clears the root val
+        let result_map = map.meet(&empty_map);
+        assert_eq!(result_map.iter().count(), 0);
+
+        //Validate meet with identity leaves the root val
+        let result_map = map.meet(&ident_map);
+        assert_eq!(result_map.iter().count(), 3);
+
+        //Validate meet with just_root keeps it
+        let result_map = map.meet(&just_root_map);
+        assert_eq!(result_map.iter().count(), 1);
+
+        //Validate meet with all_but_root removes it
+        let result_map = map.meet(&all_but_root_map);
+        assert_eq!(result_map.iter().count(), 2);
     }
 }
 
