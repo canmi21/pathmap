@@ -598,6 +598,16 @@ impl<'a, V: Clone + Send + Sync + Unpin, K: AsRef<[u8]>> FromIterator<&'a (K, V)
     }
 }
 
+impl<'a> FromIterator<&'a [u8]> for PathMap<()> {
+    fn from_iter<I: IntoIterator<Item=&'a [u8]>>(iter: I) -> Self {
+        let mut map = Self::new();
+        for key in iter {
+            map.set_val_at(key, ());
+        }
+        map
+    }
+}
+
 impl<V: Clone + Send + Sync + Unpin, K: AsRef<[u8]>> From<(K, V)> for PathMap<V> {
     fn from(pair: (K, V)) -> Self {
         let mut map = Self::new();
@@ -1352,7 +1362,7 @@ mod tests {
         assert_eq!(map.val_count(), 2);
     }
 
-    /// Validates that an identity subtract leaves an empty map, including with no root value
+    /// Validates that alg ops on whole maps do the right thing WRT the existence of the root value
     #[test]
     fn map_root_val_test1() {
         let mut map = PathMap::new();

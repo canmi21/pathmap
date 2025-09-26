@@ -969,11 +969,12 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     }
 
     fn val_count(&self) -> usize {
+        let root_val = self.is_val() as usize;
         let focus = self.get_focus();
         if focus.is_none() {
-            0
+            root_val
         } else {
-            val_count_below_root(focus.as_tagged()) + (self.is_val() as usize)
+            val_count_below_root(focus.as_tagged()) + root_val
         }
     }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool {
@@ -4076,6 +4077,20 @@ mod tests {
         let expected_mask: ByteMask = [b'f', b'v'].into_iter().collect();
         assert_eq!(node.as_tagged().node_branches_mask(&[]), expected_mask);
         assert!(matches!(wz.get_focus(), AbstractNodeRef::BorrowedRc(_))); //Make sure we get the ODRc
+    }
+
+    /// Tests the zipper `val_count` method, including with root values
+    const ZIPPER_VAL_COUNT_TEST1_KEYS: &[&[u8]] = &[b"", b"arrow"];
+    #[test]
+    fn write_zipper_val_count_test1() {
+        let mut map: PathMap<()> = ZIPPER_VAL_COUNT_TEST1_KEYS.into_iter().cloned().collect();
+        let mut zipper = map.write_zipper();
+
+        assert_eq!(zipper.path(), b"");
+        assert_eq!(zipper.val_count(), 2);
+        assert_eq!(zipper.descend_until(), true);
+        assert_eq!(zipper.path(), b"arrow");
+        assert_eq!(zipper.val_count(), 1);
     }
 
     crate::zipper::zipper_moving_tests::zipper_moving_tests!(write_zipper,
