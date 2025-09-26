@@ -479,7 +479,10 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         }
     }
 
-    /// Hash the logical `PathMap` and all its values with the provided hash function (which can return INVIS_HASH to ignore values).
+    pub const INVIS_HASH: u128 = 0b00001110010011001111100111000110011110101111001101110110011100001011010011010011001000100111101000001100011111110100001000000111;
+
+    /// Hash the logical `PathMap` and all its values with the provided hash function (which can return [PathMap::INVIS_HASH] to ignore values).
+    //GOAT, do we need to do anything to make sure Merkleization and this hash method are in harmony?
     pub fn hash<VHash : Fn(&V) -> u128>(&self, vhash: VHash) -> u128 {
         unsafe {
         self.read_zipper().into_cata_cached(|bm, hs, mv, _| {
@@ -1354,7 +1357,7 @@ mod tests {
         map.insert(b"b", ());
         map.insert(b"a", ());
         map.insert(b"", ());
-        let mut map2 = map.clone();
+        let map2 = map.clone();
         map.write_zipper().subtract_into(&map2.read_zipper(), true);
         assert_eq!(map.iter().count(), 0)
     }
