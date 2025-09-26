@@ -473,9 +473,10 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
     ///
     /// WARNING: This is not a cheap method. It may have an order-N cost
     pub fn val_count(&self) -> usize {
+        let root_val = unsafe{ &*self.root_val.get() }.is_some() as usize;
         match self.root() {
-            Some(root) => val_count_below_root(root.as_tagged()),
-            None => 0
+            Some(root) => val_count_below_root(root.as_tagged()) + root_val,
+            None => root_val
         }
     }
 
@@ -1351,15 +1352,17 @@ mod tests {
         assert_eq!(map.val_count(), 2);
     }
 
+    /// Validates that an identity subtract leaves an empty map, including with no root value
     #[test]
-    fn subtract_root_value() {
+    fn map_subtract_test1() {
         let mut map = PathMap::new();
         map.insert(b"b", ());
         map.insert(b"a", ());
         map.insert(b"", ());
         let map2 = map.clone();
-        map.write_zipper().subtract_into(&map2.read_zipper(), true);
-        assert_eq!(map.iter().count(), 0)
+
+        let result_map = map.subtract(&map2);
+        assert_eq!(result_map.iter().count(), 0)
     }
 }
 

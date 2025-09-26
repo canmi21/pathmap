@@ -2624,7 +2624,7 @@ mod tests {
     }
 
     #[test]
-    fn write_zipper_join_test() {
+    fn write_zipper_join_into_test() {
         let a_keys = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
         let mut a: PathMap<u64> = a_keys.iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
         assert_eq!(a.val_count(), 12);
@@ -2731,7 +2731,7 @@ mod tests {
     }
 
     #[test]
-    fn write_zipper_meet_test1() {
+    fn write_zipper_meet_into_test1() {
         let a_keys = ["12345", "1aaaa", "1bbbb", "1cccc", "1dddd"];
         let b_keys = ["12345", "1zzzz"];
         let a: PathMap<()> = a_keys.iter().map(|k| (k, ())).collect();
@@ -2774,7 +2774,7 @@ mod tests {
     /// designed to shake out bugs in the abstract-meet function, such as the bug where the `ListNode` `self`
     /// was a perfect subset of the `DenseNode` `other`, but the `COUNTER_IDENT` flag was set in error.
     #[test]
-    fn write_zipper_meet_test2() {
+    fn write_zipper_meet_into_test2() {
         let a_keys = [
             vec![193, 11],
             vec![194, 1, 0],
@@ -2833,6 +2833,30 @@ mod tests {
         assert!(wz.ascend(3));
         assert!(wz.descend_to([194, 7, 163]));
         assert!(wz.val().is_some());
+    }
+
+    /// Tests whether the [WriteZipper::meet_into] operation will remove the root value
+    #[test]
+    fn write_zipper_meet_into_test3() {
+        let mut map = PathMap::new();
+        map.insert(b"b", ());
+        map.insert(b"a", ());
+        map.insert(b"", ());
+        let map2 = PathMap::new();
+        map.write_zipper().meet_into(&map2.read_zipper(), true);
+        assert_eq!(map.iter().count(), 0)
+    }
+
+    /// Tests whether the [WriteZipper::subtract_into] operation will remove the root value
+    #[test]
+    fn write_zipper_subtract_into_test1() {
+        let mut map = PathMap::new();
+        map.insert(b"b", ());
+        map.insert(b"a", ());
+        map.insert(b"", ());
+        let map2 = map.clone();
+        map.write_zipper().subtract_into(&map2.read_zipper(), true);
+        assert_eq!(map.iter().count(), 0)
     }
 
     #[test]
