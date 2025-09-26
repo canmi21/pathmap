@@ -1444,7 +1444,6 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     /// See [ZipperWriting::join_map_into]
     pub fn join_map_into(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice {
         let (src_root_node, src_root_val) = map.into_root();
-
         #[cfg(not(feature = "graft_root_vals"))]
         let _ = src_root_val;
         #[cfg(feature = "graft_root_vals")]
@@ -1564,41 +1563,70 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     }
     /// See [ZipperWriting::meet_into]
     pub fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: Lattice {
-        match self.get_focus().try_as_tagged() {
+        let src_root_val = read_zipper.val();
+        #[cfg(not(feature = "graft_root_vals"))]
+        let _ = src_root_val;
+        #[cfg(feature = "graft_root_vals")]
+        let (val_status, val_was_none) = match (self.get_val_mut(), src_root_val) {
+            (Some(self_val), Some(src_val)) => {
+                let new_status = match self_val.pmeet(src_val) {
+                    AlgebraicResult::Element(new_val) => {self.set_val(new_val); AlgebraicStatus::Element },
+                    AlgebraicResult::None => {self.remove_val(prune); AlgebraicStatus::None },
+                    AlgebraicResult::Identity(_) => { AlgebraicStatus::Identity }
+                };
+                (new_status, false)
+            },
+            (None, Some(_)) => { (AlgebraicStatus::None, true) },
+            (Some(_), None) => { self.remove_val(prune); (AlgebraicStatus::None, false) },
+            (None, None) => { (AlgebraicStatus::None, true) },
+        };
+
+        let node_was_none;
+        let node_status = match self.get_focus().try_as_tagged() {
             Some(self_node) => {
+                node_was_none = false;
                 let src = read_zipper.get_focus();
                 if src.is_none() {
                     self.graft_internal(None);
                     if prune {
                         self.prune_path();
                     }
-                    return AlgebraicStatus::None
-                }
-                match self_node.pmeet_dyn(src.as_tagged()) {
-                    AlgebraicResult::Element(intersection) => {
-                        self.graft_internal(Some(intersection));
-                        AlgebraicStatus::Element
-                    },
-                    AlgebraicResult::None => {
-                        self.graft_internal(None);
-                        if prune {
-                            self.prune_path();
-                        }
-                        AlgebraicStatus::None
-                    },
-                    AlgebraicResult::Identity(mask) => {
-                        if mask & SELF_IDENT > 0 {
-                            AlgebraicStatus::Identity
-                        } else {
-                            debug_assert_eq!(mask, COUNTER_IDENT); //It's gotta be self or other
-                            self.graft_internal(Some(src.into_option().unwrap()));
+                    AlgebraicStatus::None
+                } else {
+                    match self_node.pmeet_dyn(src.as_tagged()) {
+                        AlgebraicResult::Element(intersection) => {
+                            self.graft_internal(Some(intersection));
                             AlgebraicStatus::Element
-                        }
-                    },
+                        },
+                        AlgebraicResult::None => {
+                            self.graft_internal(None);
+                            if prune {
+                                self.prune_path();
+                            }
+                            AlgebraicStatus::None
+                        },
+                        AlgebraicResult::Identity(mask) => {
+                            if mask & SELF_IDENT > 0 {
+                                AlgebraicStatus::Identity
+                            } else {
+                                debug_assert_eq!(mask, COUNTER_IDENT); //It's gotta be self or other
+                                self.graft_internal(Some(src.into_option().unwrap()));
+                                AlgebraicStatus::Element
+                            }
+                        },
+                    }
                 }
             },
-            None => AlgebraicStatus::None
-        }
+            None => {
+                node_was_none = true;
+                AlgebraicStatus::None
+            }
+        };
+
+        #[cfg(not(feature = "graft_root_vals"))]
+        return node_status;
+        #[cfg(feature = "graft_root_vals")]
+        return node_status.merge(val_status, node_was_none, val_was_none)
     }
     /// See [WriteZipper::meet_2]
     pub fn meet_2<ZA: ZipperSubtries<V, A>, ZB: ZipperSubtries<V, A>>(&mut self, rz_a: &ZA, rz_b: &ZB) -> AlgebraicStatus where V: Lattice {
@@ -1641,37 +1669,68 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     }
     /// See [ZipperWriting::subtract_into]
     pub fn subtract_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: DistributiveLattice {
+        let src_root_val = read_zipper.val();
+        #[cfg(not(feature = "graft_root_vals"))]
+        let _ = src_root_val;
+        #[cfg(feature = "graft_root_vals")]
+        let (val_status, val_was_none) = match (self.get_val_mut(), src_root_val) {
+            (Some(self_val), Some(src_val)) => {
+                let new_status = match self_val.psubtract(src_val) {
+                    AlgebraicResult::Element(new_val) => {self.set_val(new_val); AlgebraicStatus::Element },
+                    AlgebraicResult::None => {self.remove_val(prune); AlgebraicStatus::None },
+                    AlgebraicResult::Identity(_) => { AlgebraicStatus::Identity }
+                };
+                (new_status, false)
+            },
+            (None, Some(_)) => { (AlgebraicStatus::None, true) },
+            (Some(_), None) => { (AlgebraicStatus::Identity, false) },
+            (None, None) => { (AlgebraicStatus::None, true) },
+        };
+
+        let node_was_none;
         let src = read_zipper.get_focus();
         let self_focus = self.get_focus();
-        if src.is_none() {
+        let node_status = if src.is_none() {
             if self_focus.is_none() {
-                return AlgebraicStatus::None
+                node_was_none = true;
+                AlgebraicStatus::None
             } else {
-                return AlgebraicStatus::Identity
+                node_was_none = false;
+                AlgebraicStatus::Identity
             }
-        }
-        match self_focus.try_as_tagged() {
-            Some(self_node) => {
-                match self_node.psubtract_dyn(src.as_tagged()) {
-                    AlgebraicResult::Element(diff) => {
-                        self.graft_internal(Some(diff));
-                        AlgebraicStatus::Element
-                    },
-                    AlgebraicResult::None => {
-                        self.graft_internal(None);
-                        if prune {
-                            self.prune_path();
-                        }
-                        AlgebraicStatus::None
-                    },
-                    AlgebraicResult::Identity(mask) => {
-                        debug_assert_eq!(mask, SELF_IDENT); //subtract is non-commutative
-                        AlgebraicStatus::Identity
-                    },
+        } else {
+            match self_focus.try_as_tagged() {
+                Some(self_node) => {
+                    node_was_none = false;
+                    match self_node.psubtract_dyn(src.as_tagged()) {
+                        AlgebraicResult::Element(diff) => {
+                            self.graft_internal(Some(diff));
+                            AlgebraicStatus::Element
+                        },
+                        AlgebraicResult::None => {
+                            self.graft_internal(None);
+                            if prune {
+                                self.prune_path();
+                            }
+                            AlgebraicStatus::None
+                        },
+                        AlgebraicResult::Identity(mask) => {
+                            debug_assert_eq!(mask, SELF_IDENT); //subtract is non-commutative
+                            AlgebraicStatus::Identity
+                        },
+                    }
+                },
+                None => {
+                    node_was_none = true;
+                    AlgebraicStatus::None
                 }
-            },
-            None => AlgebraicStatus::None
-        }
+            }
+        };
+
+        #[cfg(not(feature = "graft_root_vals"))]
+        return node_status;
+        #[cfg(feature = "graft_root_vals")]
+        return node_status.merge(val_status, node_was_none, val_was_none)
     }
     /// See [WriteZipper::restrict]
     pub fn restrict<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z) -> AlgebraicStatus {
@@ -2836,28 +2895,90 @@ mod tests {
         assert!(wz.val().is_some());
     }
 
-    /// Tests whether the [WriteZipper::meet_into] operation will remove the root value
+    /// Tests whether the [WriteZipper::meet_into] operation will do the right thing with the root value
     #[test]
     fn write_zipper_meet_into_test3() {
+        //Validate meet with empty clears the root val
         let mut map = PathMap::new();
         map.insert(b"b", ());
         map.insert(b"a", ());
         map.insert(b"", ());
-        let map2 = PathMap::new();
-        map.write_zipper().meet_into(&map2.read_zipper(), true);
-        assert_eq!(map.iter().count(), 0)
+        let empty_map = PathMap::new();
+        assert_eq!(map.write_zipper().meet_into(&empty_map.read_zipper(), true), AlgebraicStatus::None);
+        assert_eq!(map.iter().count(), 0);
+
+        //Validate meet with identity leaves the root val alone
+        let mut map = PathMap::new();
+        map.insert(b"b", ());
+        map.insert(b"a", ());
+        map.insert(b"", ());
+        let ident_map = map.clone();
+        assert_eq!(map.write_zipper().meet_into(&ident_map.read_zipper(), true), AlgebraicStatus::Identity);
+        assert_eq!(map.iter().count(), 3);
+
+        //Validate meet with just_root keeps the root val and removes the rest
+        let mut map = PathMap::new();
+        map.insert(b"b", ());
+        map.insert(b"a", ());
+        map.insert(b"", ());
+        let mut just_root_map = PathMap::new();
+        just_root_map.insert(b"", ());
+        assert_eq!(map.write_zipper().meet_into(&just_root_map.read_zipper(), true), AlgebraicStatus::Element);
+        assert_eq!(map.iter().count(), 1);
+
+        //Validate meet with all_but_root removes the root
+        let mut map = PathMap::new();
+        map.insert(b"b", ());
+        map.insert(b"a", ());
+        map.insert(b"", ());
+        let mut all_but_root_map = PathMap::new();
+        all_but_root_map.insert(b"b", ());
+        all_but_root_map.insert(b"a", ());
+        assert_eq!(map.write_zipper().meet_into(&all_but_root_map.read_zipper(), true), AlgebraicStatus::Element);
+        assert_eq!(map.iter().count(), 2);
     }
 
-    /// Tests whether the [WriteZipper::subtract_into] operation will remove the root value
+    /// Tests whether the [WriteZipper::subtract_into] operation will do the right thing with the root value
     #[test]
     fn write_zipper_subtract_into_test1() {
+        //Validate subtract of identity clears the root val
         let mut map = PathMap::new();
         map.insert(b"b", ());
         map.insert(b"a", ());
         map.insert(b"", ());
-        let map2 = map.clone();
-        map.write_zipper().subtract_into(&map2.read_zipper(), true);
-        assert_eq!(map.iter().count(), 0)
+        let ident_map = map.clone();
+        assert_eq!(map.write_zipper().subtract_into(&ident_map.read_zipper(), true), AlgebraicStatus::None);
+        assert_eq!(map.iter().count(), 0);
+
+        //Validate subtract of empty keeps the root val
+        let mut map = PathMap::new();
+        map.insert(b"b", ());
+        map.insert(b"a", ());
+        map.insert(b"", ());
+        let empty_map = PathMap::new();
+        assert_eq!(map.write_zipper().subtract_into(&empty_map.read_zipper(), true), AlgebraicStatus::Identity);
+        assert_eq!(map.iter().count(), 3);
+
+        //Validate subtract of just_root clears the root val
+        let mut map = PathMap::new();
+        map.insert(b"b", ());
+        map.insert(b"a", ());
+        map.insert(b"", ());
+        let mut just_root_map = PathMap::new();
+        just_root_map.insert(b"", ());
+        assert_eq!(map.write_zipper().subtract_into(&just_root_map.read_zipper(), true), AlgebraicStatus::Element);
+        assert_eq!(map.iter().count(), 2);
+
+        //Validate subtract of all_but_root keeps it
+        let mut map = PathMap::new();
+        map.insert(b"b", ());
+        map.insert(b"a", ());
+        map.insert(b"", ());
+        let mut all_but_root_map = PathMap::new();
+        all_but_root_map.insert(b"b", ());
+        all_but_root_map.insert(b"a", ());
+        assert_eq!(map.write_zipper().subtract_into(&all_but_root_map.read_zipper(), true), AlgebraicStatus::Element);
+        assert_eq!(map.iter().count(), 1);
     }
 
     #[test]

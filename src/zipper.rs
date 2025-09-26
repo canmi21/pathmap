@@ -4580,5 +4580,4 @@ mod tests {
         assert_eq!(zipper.path(), b"arrow");
         assert_eq!(zipper.val_count(), 1);
     }
-
 }
