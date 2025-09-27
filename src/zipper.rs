@@ -243,6 +243,16 @@ pub trait ZipperMoving: Zipper {
         self.descend_indexed_byte(0)
     }
 
+    /// Descends the zipper's focus one step into the last child branch
+    ///
+    /// NOTE: This method should have identical behavior to passing `child_count() - 1` to [descend_indexed_byte](ZipperMoving::descend_indexed_byte),
+    /// although with less overhead
+    fn descend_last_byte(&mut self) -> bool {
+        let cc = self.child_count();
+        if cc == 0 { false }
+        else { self.descend_indexed_byte( cc- 1) }
+    }
+
     /// Descends the zipper's focus until a branch or a value is encountered.  Returns `true` if the focus
     /// moved otherwise returns `false`
     ///
@@ -489,6 +499,17 @@ pub trait ZipperIteration: ZipperMoving {
                 }
             }
         }
+    }
+
+    /// Returns `true` if the zipper has sucessfully descended to the last path, or `false` if there were none.  If this
+    /// method returns `false` then the zipper will be in its original position.
+    fn descend_last_path(&mut self) -> bool {
+        let mut any = false;
+        while self.descend_last_byte() {
+            any = true;
+            self.descend_until();
+        }
+        any
     }
 
     /// Descends the zipper's focus `k`` bytes, following the first child at each branch, and continuing
@@ -4579,5 +4600,15 @@ mod tests {
         assert_eq!(zipper.descend_until(), true);
         assert_eq!(zipper.path(), b"arrow");
         assert_eq!(zipper.val_count(), 1);
+    }
+
+    #[test]
+    fn descend_last_path() {
+        let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
+        let btm: PathMap<u64> = rs.into_iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
+
+        let mut rz = btm.read_zipper();
+        assert!(rz.descend_last_path());
+        assert_eq!(rz.path(), b"rubicundus");
     }
 }
