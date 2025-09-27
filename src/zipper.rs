@@ -501,8 +501,14 @@ pub trait ZipperIteration: ZipperMoving {
         }
     }
 
-    /// Returns `true` if the zipper has sucessfully descended to the last path, or `false` if there were none.  If this
-    /// method returns `false` then the zipper will be in its original position.
+    /// Descends the zipper to the end of the last path (last by sort order) reachable by descent
+    /// from the current focus.
+    ///
+    /// This is equivalent to calling [ZipperMoving::descend_last_byte] in a loop.
+    ///
+    /// Returns `true` if the zipper has sucessfully descended, or `false` if the zipper was already
+    /// at the end of a path.  If this method returns `false` then the zipper will be in its original
+    /// position.
     fn descend_last_path(&mut self) -> bool {
         let mut any = false;
         while self.descend_last_byte() {
