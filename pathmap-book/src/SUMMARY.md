@@ -3,6 +3,7 @@
 # Concepts and Basic Usage
 
 - [PathMap Intro](./1.00.00_intro.md)
+    - [Basic Structure](./1.00.01_basics.md)
 - [Algebraic Operations](./1.01.00_algebraic_ops.md)
     - [Traits and Values](./1.01.01_algebraic_traits.md)
 - [Zippers](./1.02.00_zippers.md)

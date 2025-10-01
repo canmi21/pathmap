@@ -4435,11 +4435,11 @@ mod tests {
 
         let mut parent_zipper = family.read_zipper_at_path(parent_path.as_bytes());
 
-        assert!(family.contains_path(parent_path));
+        assert!(family.path_exists_at(parent_path));
 
         let mut full_parent_path = parent_path.as_bytes().to_vec();
         full_parent_path.extend(parent_zipper.path());
-        assert!(family.contains_path(&full_parent_path));
+        assert!(family.path_exists_at(&full_parent_path));
 
         while parent_zipper.to_next_val() {
             let mut full_parent_path = parent_path.as_bytes().to_vec();
