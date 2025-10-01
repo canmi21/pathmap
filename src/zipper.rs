@@ -20,6 +20,7 @@ pub use crate::product_zipper::{ProductZipper, ProductZipperG};
 pub use crate::overlay_zipper::{OverlayZipper};
 pub use crate::prefix_zipper::{PrefixZipper};
 pub use crate::empty_zipper::{EmptyZipper};
+pub use pathmap_derive::PolyZipper;
 
 use crate::zipper_tracking::*;
 

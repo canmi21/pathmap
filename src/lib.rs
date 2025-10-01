@@ -101,13 +101,6 @@ pub mod zipper_tracking;
 #[cfg(not(feature = "zipper_tracking"))]
 mod zipper_tracking;
 
-// TODO: Reason for gating behind "arena_compact" feature:
-// doesn't make sense to use PolyZipper otherwise. perhaps this feature flag
-// shoul be removed entirely.
-/// Polymorphic zipper which can switch between different zipper kinds
-#[cfg(feature = "arena_compact")]
-mod poly_zipper;
-
 /// Used to create multiple simultaneous zippers from the same parent
 mod zipper_head;
 
