@@ -144,10 +144,59 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
     //     }
     // };
 
+    // Generate ZipperMoving trait implementation
+    let zipper_moving_impl = {
+        let variant_arms = &variant_arms;
+        quote! {
+            impl #impl_generics pathmap::zipper::ZipperMoving for #enum_name #ty_generics
+            where
+                #(#inner_types: pathmap::zipper::ZipperMoving,)*
+                #where_clause
+            {
+                fn path(&self) -> &[u8] {
+                    match self {
+                        #(#variant_arms => inner.path(),)*
+                    }
+                }
+
+                fn val_count(&self) -> usize {
+                    match self {
+                        #(#variant_arms => inner.val_count(),)*
+                    }
+                }
+
+                fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool {
+                    match self {
+                        #(#variant_arms => inner.descend_to(k),)*
+                    }
+                }
+
+                fn ascend(&mut self, steps: usize) -> bool {
+                    match self {
+                        #(#variant_arms => inner.ascend(steps),)*
+                    }
+                }
+
+                fn ascend_until(&mut self) -> bool {
+                    match self {
+                        #(#variant_arms => inner.ascend_until(),)*
+                    }
+                }
+
+                fn ascend_until_branch(&mut self) -> bool {
+                    match self {
+                        #(#variant_arms => inner.ascend_until_branch(),)*
+                    }
+                }
+            }
+        }
+    };
+
     let expanded = quote! {
         #(#from_impls)*
         #zipper_impl
         #zipper_values_impl
+        #zipper_moving_impl
         // #zipper_forking_impl
     };
 
