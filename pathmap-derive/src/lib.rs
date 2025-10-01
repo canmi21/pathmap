@@ -113,10 +113,42 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
         }
     };
 
+    //GOAT, Fix this.  I can't seem to figure out how to align the `'a` and the `'read_z` lifetimes
+    // // Generate ZipperForking trait implementation
+    // let zipper_forking_impl = {
+    //     let variant_arms = &variant_arms;
+    //     let first_inner_type = &inner_types[0];
+    //     let other_inner_types = &inner_types[1..];
+
+    //     // Create modified generics with additional lifetime
+    //     let mut forking_generics = generics.clone();
+    //     forking_generics.params.insert(0, syn::parse_quote!('read_z));
+    //     let (forking_impl_generics, _, _) = forking_generics.split_for_impl();
+
+    //     quote! {
+    //         impl #forking_impl_generics pathmap::zipper::ZipperForking<V> for #enum_name #ty_generics
+    //         where
+    //             #(#inner_types: pathmap::zipper::ZipperForking<V>,)*
+    //             #(#other_inner_types: pathmap::zipper::ZipperForking<V, ReadZipperT<'read_z> = <#first_inner_type as pathmap::zipper::ZipperForking<V>>::ReadZipperT<'read_z>>,)*
+    //             Self: 'read_z,
+    //             #where_clause
+    //         {
+    //             type ReadZipperT<'a> = <#first_inner_type as pathmap::zipper::ZipperForking<V>>::ReadZipperT<'a> where Self: 'a;
+
+    //             fn fork_read_zipper<'a>(&'a self) -> Self::ReadZipperT<'a> {
+    //                 match self {
+    //                     #(#variant_arms => inner.fork_read_zipper(),)*
+    //                 }
+    //             }
+    //         }
+    //     }
+    // };
+
     let expanded = quote! {
         #(#from_impls)*
         #zipper_impl
         #zipper_values_impl
+        // #zipper_forking_impl
     };
 
     TokenStream::from(expanded)
