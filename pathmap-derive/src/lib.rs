@@ -2,17 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Data, Fields};
 
-/// Derive macro to define an enum to act as a polymorphic zipper, which can switch between different zipper kinds
-///
-/// ```
-/// use pathmap::zipper::{PolyZipper, ReadZipperTracked, ReadZipperUntracked};
-///
-/// #[derive(PolyZipper)]
-/// enum MyPolyZipper<'trie, 'path, V: Clone + Send + Sync> {
-///     Tracked(ReadZipperTracked<'trie, 'path, V>),
-///     Untracked(ReadZipperUntracked<'trie, 'path, V>),
-/// }
-/// ```
+/// See [`pathmap::zipper::PolyZipper`] for documentation
 #[proc_macro_derive(PolyZipper)]
 pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -59,8 +49,74 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
         }
     });
 
+    let variant_arms: Vec<_> = variants.iter().map(|variant| {
+        let variant_name = &variant.ident;
+        quote! { Self::#variant_name(inner) }
+    }).collect();
+
+    let inner_types: Vec<_> = variants.iter().map(|variant| {
+        match &variant.fields {
+            Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+                &fields.unnamed[0].ty
+            }
+            _ => panic!("Each variant must have exactly one unnamed field"),
+        }
+    }).collect();
+
+    // Generate Zipper trait implementation
+    let zipper_impl = {
+        let variant_arms = &variant_arms;
+        quote! {
+            impl #impl_generics pathmap::zipper::Zipper for #enum_name #ty_generics #where_clause {
+                fn path_exists(&self) -> bool {
+                    match self {
+                        #(#variant_arms => inner.path_exists(),)*
+                    }
+                }
+
+                fn is_val(&self) -> bool {
+                    match self {
+                        #(#variant_arms => inner.is_val(),)*
+                    }
+                }
+
+                fn child_count(&self) -> usize {
+                    match self {
+                        #(#variant_arms => inner.child_count(),)*
+                    }
+                }
+
+                fn child_mask(&self) -> pathmap::utils::ByteMask {
+                    match self {
+                        #(#variant_arms => inner.child_mask(),)*
+                    }
+                }
+            }
+        }
+    };
+
+    // Generate ZipperValues trait implementation
+    let zipper_values_impl = {
+        let variant_arms = &variant_arms;
+        quote! {
+            impl #impl_generics pathmap::zipper::ZipperValues<V> for #enum_name #ty_generics
+            where
+                #(#inner_types: pathmap::zipper::ZipperValues<V>,)*
+                #where_clause
+            {
+                fn val(&self) -> Option<&V> {
+                    match self {
+                        #(#variant_arms => inner.val(),)*
+                    }
+                }
+            }
+        }
+    };
+
     let expanded = quote! {
         #(#from_impls)*
+        #zipper_impl
+        #zipper_values_impl
     };
 
     TokenStream::from(expanded)
