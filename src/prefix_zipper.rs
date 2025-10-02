@@ -179,9 +179,9 @@ impl<'prefix, Z>  PrefixZipper<'prefix, Z>
     }
 }
 
-impl<'prefix, Z> ZipperConcretePriv for PrefixZipper<'prefix, Z>
+impl<'prefix, Z> ZipperConcrete for PrefixZipper<'prefix, Z>
     where
-        Z: ZipperConcretePriv
+        Z: ZipperConcrete
 {
     fn shared_node_id(&self) -> Option<u64> {
         match self.position {
@@ -189,12 +189,6 @@ impl<'prefix, Z> ZipperConcretePriv for PrefixZipper<'prefix, Z>
             _ => None,
         }
     }
-}
-
-impl<'prefix, Z> ZipperConcrete for PrefixZipper<'prefix, Z>
-    where
-        Z: ZipperConcrete
-{
     fn is_shared(&self) -> bool {
         match self.position {
             PrefixPos::Source => self.source.is_shared(),

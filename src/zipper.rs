@@ -587,9 +587,21 @@ pub trait ZipperAbsolutePath: ZipperMoving {
 /// Implemented on zippers that traverse in-memory trie structures, as opposed to virtual
 /// spaces or abstract projections.
 ///
-/// Sometimes `ZipperConcrete` is implemented on projection zippers, such as [ProductZipper],
+/// In some cases `ZipperConcrete` can be implemented on projection zippers, such as [ProductZipper],
 /// because it is composed of concrete tries
-pub trait ZipperConcrete: zipper_priv::ZipperConcretePriv {
+pub trait ZipperConcrete {
+    /// Get an identifier unique to the node at the zipper's focus, if the zipper's focus is at the
+    /// root of a node in memory.  When zipper's focus is inside of a node, returns `None`.
+    ///
+    /// NOTE: The returned value is not a logical hash of the contents, but is based on
+    /// the node's memory address.  Therefore it is not stable across runs and can't be
+    /// used to infer logical or structural equality.  Furthermore, it is subject to
+    /// change when the content of the node is modified.
+    ///
+    /// However when returned identifiers are equal it means the zipper has arrived at the same node
+    /// in memory, even if it got there via different parent paths through the trie.
+    fn shared_node_id(&self) -> Option<u64>;
+
     /// Returns `true` if the zipper's focus is at a location that may be accessed via two or
     /// more distinct paths
     ///
@@ -695,23 +707,8 @@ pub(crate) mod zipper_priv {
         /// pollute the API, given we already have [ZipperReadOnly] and [ZipperMoving])
         fn take_core(&mut self) -> Option<ReadZipperCore<'a, 'static, V, A>>;
     }
-
-    pub trait ZipperConcretePriv {
-        /// Get an identifier unique to the node at the zipper's focus, if the zipper's focus is at the
-        /// root of a node in memory.  When zipper's focus is inside of a node, returns `None`.
-        ///
-        /// NOTE: The returned value is not a logical hash of the contents, but is based on
-        /// the node's memory address.  Therefore it is not stable across runs and can't be
-        /// used to infer logical or structural equality.  Furthermore, it is subject to
-        /// change when the content of the node is modified.
-        ///
-        /// However when returned identifiers are equal it means the zipper has arrived at the same node
-        /// in memory, even if it got there via different parent paths through the trie.
-        fn shared_node_id(&self) -> Option<u64>;
-    }
 }
 use zipper_priv::*;
-pub use zipper_priv::ZipperConcretePriv;
 
 impl<Z> Zipper for &mut Z where Z: Zipper {
     fn path_exists(&self) -> bool { (**self).path_exists() }
@@ -788,7 +785,10 @@ impl<'a, V: Clone + Send + Sync + 'a, Z, A: Allocator + 'a> ZipperReadOnlySubtri
     fn trie_ref_at_path<K: AsRef<[u8]>>(&self, path: K) -> Self::TrieRefT { (**self).trie_ref_at_path(path) }
 }
 
-impl<Z> ZipperConcrete for &mut Z where Z: ZipperConcrete, Self: ZipperConcretePriv {
+impl<Z> ZipperConcrete for &mut Z where Z: ZipperConcrete {
+    #[inline]
+    fn shared_node_id(&self) -> Option<u64> { (**self).shared_node_id() }
+    #[inline]
     fn is_shared(&self) -> bool { (**self).is_shared() }
 }
 
@@ -808,11 +808,6 @@ impl<Z> ZipperPathBuffer for &mut Z where Z: ZipperPathBuffer {
 impl<'a, V: Clone + Send + Sync, Z, A: Allocator> ZipperReadOnlyPriv<'a, V, A> for &mut Z where Z: ZipperReadOnlyPriv<'a, V, A> {
     fn borrow_raw_parts<'z>(&'z self) -> (TaggedNodeRef<'z, V, A>, &'z [u8], Option<&'z V>) { (**self).borrow_raw_parts() }
     fn take_core(&mut self) -> Option<ReadZipperCore<'a, 'static, V, A>> { (**self).take_core() }
-}
-
-impl<Z> ZipperConcretePriv for &mut Z where Z: ZipperConcretePriv {
-    #[inline]
-    fn shared_node_id(&self) -> Option<u64> { (**self).shared_node_id() }
 }
 
 // ***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---***---
@@ -892,6 +887,9 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyS
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipperTracked<'_, '_, V, A> {
+    #[inline]
+    fn shared_node_id(&self) -> Option<u64> { self.z.shared_node_id() }
+    #[inline]
     fn is_shared(&self) -> bool { self.z.is_shared() }
 }
 
@@ -902,11 +900,6 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyP
         core::mem::swap(&mut temp_core, &mut self.z);
         Some(temp_core.make_static_path())
     }
-}
-
-impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcretePriv for ReadZipperTracked<'_, '_, V, A> {
-    #[inline]
-    fn shared_node_id(&self) -> Option<u64> { self.z.shared_node_id() }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> zipper_priv::ZipperPriv for ReadZipperTracked<'_, '_, V, A> {
@@ -1044,6 +1037,9 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyS
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipperUntracked<'_, '_, V, A> {
+    #[inline]
+    fn shared_node_id(&self) -> Option<u64> { self.z.shared_node_id() }
+    #[inline]
     fn is_shared(&self) -> bool { self.z.is_shared() }
 }
 
@@ -1054,11 +1050,6 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyP
         core::mem::swap(&mut temp_core, &mut self.z);
         Some(temp_core.make_static_path())
     }
-}
-
-impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcretePriv for ReadZipperUntracked<'_, '_, V, A> {
-    #[inline]
-    fn shared_node_id(&self) -> Option<u64> { self.z.shared_node_id() }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> zipper_priv::ZipperPriv for ReadZipperUntracked<'_, '_, V, A> {
@@ -1238,6 +1229,9 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator> ZipperReadOnlySubtries<'a
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipperOwned<V, A> {
+    #[inline]
+    fn shared_node_id(&self) -> Option<u64> { self.z.shared_node_id() }
+    #[inline]
     fn is_shared(&self) -> bool { self.z.is_shared() }
 }
 
@@ -1248,11 +1242,6 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator> ZipperReadOnlyPriv<'a, V,
         core::mem::swap(&mut temp_core, &mut self.z);
         Some(temp_core.make_static_path())
     }
-}
-
-impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcretePriv for ReadZipperOwned<V, A> {
-    #[inline]
-    fn shared_node_id(&self) -> Option<u64> { self.z.shared_node_id() }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> zipper_priv::ZipperPriv for ReadZipperOwned<V, A> {
@@ -1982,6 +1971,10 @@ pub(crate) mod read_zipper_core {
 
     impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ReadZipperCore<'_, '_, V, A> {
         #[inline]
+        fn shared_node_id(&self) -> Option<u64> {
+            read_zipper_shared_node_id(self)
+        }
+        #[inline]
         fn is_shared(&self) -> bool {
             let key = self.node_key();
             if key.len() > 0 {
@@ -1994,13 +1987,6 @@ pub(crate) mod read_zipper_core {
                     false //root
                 }
             }
-        }
-    }
-
-    impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcretePriv for ReadZipperCore<'_, '_, V, A> {
-        #[inline]
-        fn shared_node_id(&self) -> Option<u64> {
-            read_zipper_shared_node_id(self)
         }
     }
 

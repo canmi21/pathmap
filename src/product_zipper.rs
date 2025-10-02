@@ -329,11 +329,8 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for ProductZipper<'_, '_, V, A> {
-    fn is_shared(&self) -> bool { self.z.is_shared() }
-}
-
-impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcretePriv for ProductZipper<'_, '_, V, A> {
     fn shared_node_id(&self) -> Option<u64> { self.z.shared_node_id() }
+    fn is_shared(&self) -> bool { self.z.is_shared() }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> zipper_priv::ZipperPriv for ProductZipper<'_, '_, V, A> {
@@ -528,12 +525,12 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperAbsolutePath
     fn root_prefix_path(&self) -> &[u8] { self.primary.root_prefix_path() }
 }
 
-impl<'trie, PrimaryZ, SecondaryZ, V> ZipperConcretePriv
+impl<'trie, PrimaryZ, SecondaryZ, V> ZipperConcrete
     for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
     where
         V: Clone + Send + Sync,
-        PrimaryZ: ZipperMoving + ZipperConcretePriv,
-        SecondaryZ: ZipperMoving + ZipperConcretePriv,
+        PrimaryZ: ZipperMoving + ZipperConcrete,
+        SecondaryZ: ZipperMoving + ZipperConcrete,
 {
     fn shared_node_id(&self) -> Option<u64> {
         if let Some(idx) = self.factor_idx(true) {
@@ -542,15 +539,6 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperConcretePriv
             self.primary.shared_node_id()
         }
     }
-}
-
-impl<'trie, PrimaryZ, SecondaryZ, V> ZipperConcrete
-    for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
-    where
-        V: Clone + Send + Sync,
-        PrimaryZ: ZipperMoving + ZipperConcrete,
-        SecondaryZ: ZipperMoving + ZipperConcrete,
-{
     fn is_shared(&self) -> bool {
         if let Some(idx) = self.factor_idx(true) {
             self.secondary[idx].is_shared()

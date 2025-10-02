@@ -132,6 +132,8 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
     };
 
     // Generate witness enum type
+    //GOAT TODO: I think we could get into trouble if the witness types have fewer generics than
+    // the outer PolyZipper enum.  So we probably should add a phantom case too.
     let witness_enum_name = syn::Ident::new(&format!("{}Witness", enum_name), enum_name.span());
     let variant_names: Vec<_> = variants.iter().map(|variant| &variant.ident).collect();
 
@@ -160,14 +162,22 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
                 fn get_val_with_witness<'w>(&self, witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w {
                     match (self, witness) {
                         #((Self::#variant_names(inner), #witness_enum_name::#variant_names(w)) => inner.get_val_with_witness(w),)*
-                        _ => None,
+                        _ => {
+                            debug_assert!(false, "Witness variant must match zipper + variant");
+                            None
+                        },
                     }
                 }
             }
         }
     };
 
-    //GOAT, Fix this.  I can't seem to figure out how to align the `'a` and the `'read_z` lifetimes without changing the trait definition
+    //GOAT, Fix this.  I can't seem to figure out how to align the `'a` and the `'read_z` lifetimes without changing the trait definition,
+    // and ideally we'd want to return a new enum-based zipper.  The elegant way to do that would be to actually invoke
+    // the PolyZipper macro recursively to get maximum support on the new zipper, but there are a bunch of obnoxious details
+    // to make that work. - like what to do about the recursion so we don't have infinite recursion in the macro, and how
+    // to map the lifetimes required by the trait onto the lifetimes of the new zippers.
+    //
     // // Generate ZipperForking trait implementation
     // let zipper_forking_impl = {
     //     let variant_arms = &variant_arms;
@@ -246,6 +256,29 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
         }
     };
 
+    // Generate ZipperConcrete trait implementation
+    let zipper_concrete_impl = {
+        let variant_arms = &variant_arms;
+        quote! {
+            impl #impl_generics pathmap::zipper::ZipperConcrete for #enum_name #ty_generics
+            where
+                #(#inner_types: pathmap::zipper::ZipperConcrete,)*
+                #where_clause
+            {
+                fn shared_node_id(&self) -> Option<u64> {
+                    match self {
+                        #(#variant_arms => inner.shared_node_id(),)*
+                    }
+                }
+                fn is_shared(&self) -> bool {
+                    match self {
+                        #(#variant_arms => inner.is_shared(),)*
+                    }
+                }
+            }
+        }
+    };
+
     let expanded = quote! {
         #(#from_impls)*
         #zipper_impl
@@ -255,6 +288,7 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
         #zipper_read_only_conditional_values_impl
         // #zipper_forking_impl
         #zipper_moving_impl
+        #zipper_concrete_impl
     };
 
     TokenStream::from(expanded)
