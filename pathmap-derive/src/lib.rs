@@ -131,30 +131,36 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
         }
     };
 
+    // Generate witness enum type
+    let witness_enum_name = syn::Ident::new(&format!("{}Witness", enum_name), enum_name.span());
+    let variant_names: Vec<_> = variants.iter().map(|variant| &variant.ident).collect();
+
+    let witness_enum = quote! {
+        pub enum #witness_enum_name #impl_generics #where_clause {
+            #(#variant_names(<#inner_types as pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V>>::WitnessT),)*
+        }
+    };
+
     // Generate ZipperReadOnlyConditionalValues trait implementation
     let zipper_read_only_conditional_values_impl = {
-        let variant_arms = &variant_arms;
-        let first_inner_type = &inner_types[0];
-        let other_inner_types = &inner_types[1..];
-
         quote! {
             impl #impl_generics pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V> for #enum_name #ty_generics
             where
                 #(#inner_types: pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V>,)*
-                #(#other_inner_types: pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V, WitnessT = <#first_inner_type as pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V>>::WitnessT>,)*
                 #where_clause
             {
-                type WitnessT = <#first_inner_type as pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V>>::WitnessT;
+                type WitnessT = #witness_enum_name #ty_generics;
 
                 fn witness<'w>(&self) -> Self::WitnessT {
                     match self {
-                        #(#variant_arms => inner.witness(),)*
+                        #(Self::#variant_names(inner) => #witness_enum_name::#variant_names(inner.witness()),)*
                     }
                 }
 
                 fn get_val_with_witness<'w>(&self, witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w {
-                    match self {
-                        #(#variant_arms => inner.get_val_with_witness(witness),)*
+                    match (self, witness) {
+                        #((Self::#variant_names(inner), #witness_enum_name::#variant_names(w)) => inner.get_val_with_witness(w),)*
+                        _ => None,
                     }
                 }
             }
@@ -245,6 +251,7 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
         #zipper_impl
         #zipper_values_impl
         #zipper_read_only_values_impl
+        #witness_enum
         #zipper_read_only_conditional_values_impl
         // #zipper_forking_impl
         #zipper_moving_impl
