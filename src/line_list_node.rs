@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use local_or_heap::LocalOrHeap;
 
-use crate::utils::{BitMask, ByteMask, find_prefix_overlap};
+use crate::utils::{BitMask, ByteMask, find_prefix_overlap, starts_with};
 use crate::alloc::Allocator;
 use crate::trie_node::*;
 use crate::ring::*;
@@ -521,7 +521,7 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
         if self.is_used::<0>() && self.is_child_ptr::<0>() {
             if unsafe { &self.val_or_child0.child }.is_empty() {
                 let node_key_0 = unsafe{ self.key_unchecked::<0>() };
-                if key.starts_with(node_key_0) {
+                if starts_with(key, node_key_0) {
                     self.take_payload::<0>();
                 }
             }
@@ -529,7 +529,7 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
         if self.is_used::<1>() && self.is_child_ptr::<1>() {
             if unsafe { &self.val_or_child1.child }.is_empty() {
                 let node_key_1 = unsafe{ self.key_unchecked::<1>() };
-                if key.starts_with(node_key_1) {
+                if starts_with(key, node_key_1) {
                     self.take_payload::<1>();
                 }
             }
@@ -1655,7 +1655,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
     #[inline]
     fn node_contains_partial_key(&self, key: &[u8]) -> bool {
         let (key0, key1) = self.get_both_keys();
-        if key0.starts_with(key) || key1.starts_with(key) {
+        if starts_with(key0, key) || starts_with(key1, key) {
             return true;
         }
         false
@@ -1700,7 +1700,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
         debug_assert!(results.len() >= keys.len());
         for ((key, expect_val), (result_key_len, payload_ref)) in keys.into_iter().zip(results.iter_mut()) {
             if self.is_used::<0>() {
-                if key.starts_with(node_key_0) {
+                if starts_with(key, node_key_0) {
                     let node_key_len = node_key_0.len();
                     if self.is_child_ptr::<0>() {
                         if !*expect_val || node_key_len < key.len() {
@@ -1718,7 +1718,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
                 }
             }
             if self.is_used::<1>() {
-                if key.starts_with(node_key_1) {
+                if starts_with(key, node_key_1) {
                     let node_key_len = node_key_1.len();
                     if self.is_child_ptr::<1>() {
                         if !*expect_val || node_key_len < key.len() {
@@ -1841,9 +1841,9 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
     fn node_remove_all_branches(&mut self, key: &[u8], prune: bool) -> bool {
         let key_len = key.len();
         let (key0, key1) = self.get_both_keys();
-        let key0_starts_with = key0.starts_with(key);
+        let key0_starts_with = starts_with(key0, key);
         let remove_0 = key0_starts_with && (key0.len() > key_len || self.is_child_ptr::<0>());
-        let remove_1 = key1.starts_with(key) && (key1.len() > key_len || self.is_child_ptr::<1>());
+        let remove_1 = starts_with(key1, key) && (key1.len() > key_len || self.is_child_ptr::<1>());
         self.remove_subtries(remove_0, remove_1, key0_starts_with, prune, key.len());
         remove_0 || remove_1
     }
@@ -1853,7 +1853,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
         let (key0, key1) = self.get_both_keys();
         let mut remove_0 = false;
         let mut remove_1 = false;
-        let key0_starts_with = key0.starts_with(key);
+        let key0_starts_with = starts_with(key0, key);
         if key0_starts_with {
             if key0.len() > key_len {
                 remove_0 = !mask.test_bit(key0[key_len]);
@@ -1863,7 +1863,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
                 debug_assert!(!self.is_child_ptr::<0>());
             }
         }
-        if key1.starts_with(key) {
+        if starts_with(key1, key) {
             if key1.len() > key_len {
                 remove_1 = !mask.test_bit(key1[key_len]);
             } else {
@@ -1984,10 +1984,10 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
     fn node_first_val_depth_along_key(&self, key: &[u8]) -> Option<usize> {
         debug_assert!(key.len() > 0);
         let (key0, key1) = self.get_both_keys();
-        if self.is_used_value_0() && key.starts_with(key0) {
+        if self.is_used_value_0() && starts_with(key, key0) {
             return Some(key0.len() - 1)
         }
-        if self.is_used_value_1() && key.starts_with(key1) {
+        if self.is_used_value_1() && starts_with(key, key1) {
             return Some(key1.len() - 1)
         }
         None
@@ -2000,7 +2000,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
         match n {
             0 => {
                 let (key0, key1) = self.get_both_keys();
-                if key0.starts_with(key) && key0.len() > key.len() {
+                if starts_with(key0, key) && key0.len() > key.len() {
                     if key0 != key1 {
                         if key.len() + 1 == key0.len() && self.is_child_ptr::<0>() {
                             return (Some(key0[key.len()]), unsafe{ Some(self.child_in_slot::<0>().as_tagged()) })
@@ -2009,7 +2009,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
                         }
                     }
                 }
-                if key1.starts_with(key) && key1.len() > key.len() {
+                if starts_with(key1, key) && key1.len() > key.len() {
                     if key.len() + 1 == key1.len() && self.is_child_ptr::<1>() {
                         return (Some(key1[key.len()]), unsafe{ Some(self.child_in_slot::<1>().as_tagged()) })
                     } else {
@@ -2104,7 +2104,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
         }
 
         //Case 4
-        if key0.starts_with(key) {
+        if starts_with(key0, key) {
             let remaining_key = remaining_key(key0, key.len());
             if self.is_child_ptr::<0>() {
                 return (Some(remaining_key), unsafe{ Some(self.child_in_slot::<0>().as_tagged()) })
@@ -2114,7 +2114,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
         }
 
         //Case 5
-        if key1.starts_with(key) {
+        if starts_with(key1, key) {
             let remaining_key = remaining_key(key1, key.len());
             if self.is_child_ptr::<1>() {
                 return (Some(remaining_key), unsafe{ Some(self.child_in_slot::<1>().as_tagged()) })
@@ -2140,12 +2140,12 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
         // k0="ahoy", k1="howdy", key="h", result = 1
         // k0="ahoy", k1="howdy", key="", result = 2
 
-        let c0 = if key0.len() > key_len && key0.starts_with(key) {
+        let c0 = if key0.len() > key_len && starts_with(key0, key) {
             Some(key0[key_len])
         } else {
             None
         };
-        let c1 = if key1.len() > key_len && key1.starts_with(key) {
+        let c1 = if key1.len() > key_len && starts_with(key1, key) {
             Some(key1[key_len])
         } else {
             None
@@ -2169,11 +2169,11 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
         let (key0, key1) = self.get_both_keys();
         let mut m = [0u64; 4];
 
-        if key0.len() > key.len() && key0.starts_with(key) {
+        if key0.len() > key.len() && starts_with(key0, key) {
             let k = key0[key.len()];
             m[((k & 0b11000000) >> 6) as usize] |= 1u64 << (k & 0b00111111);
         }
-        if key1.len() > key.len() && key1.starts_with(key) {
+        if key1.len() > key.len() && starts_with(key1, key) {
             let k = key1[key.len()];
             m[((k & 0b11000000) >> 6) as usize] |= 1u64 << (k & 0b00111111);
         }
@@ -2222,7 +2222,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
         let (key0, key1) = self.get_both_keys();
         match next {
             true => {
-                if key0.starts_with(key) && key1.starts_with(common_key) {
+                if starts_with(key0, key) && starts_with(key1, common_key) {
                     let key1_last_byte = match key1.get(last_key_byte_idx) {
                         Some(byte) => byte,
                         None => return (None, None)
@@ -2244,7 +2244,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
                 }
             },
             false => {
-                if key1.starts_with(key) && key0.starts_with(common_key) {
+                if starts_with(key1, key) && starts_with(key0, common_key) {
                     let key0_last_byte = match key0.get(last_key_byte_idx) {
                         Some(byte) => byte,
                         None => return (None, None)
@@ -2289,7 +2289,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
         }
         //Otherwise check to see if we need to make a sub-node.  If we do,
         // We know the new node will have only 1 slot filled
-        if key0.len() > key.len() && key0.starts_with(key) {
+        if key0.len() > key.len() && starts_with(key0, key) {
             let new_key = &key0[key.len()..];
             //If the new node's key is 7 Bytes or fewer, we can make a TinyRefNode
             if new_key.len() <= 7 {
@@ -2303,7 +2303,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
                 return AbstractNodeRef::OwnedRc(TrieNodeODRc::new_in(new_node, self.alloc.clone()));
             }
         }
-        if key1.len() > key.len() && key1.starts_with(key) {
+        if key1.len() > key.len() && starts_with(key1, key) {
             let new_key = &key1[key.len()..];
             //If the new node's key is 7 Bytes or fewer, we can make a TinyRefNode
             if new_key.len() <= 7 {
@@ -2346,7 +2346,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
 
         //Otherwise check to see if we need to make a sub-node.  If we do,
         // We know the new node will have only 1 slot filled
-        if key0.len() > key.len() && key0.starts_with(key) {
+        if key0.len() > key.len() && starts_with(key0, key) {
             let mut new_node = Self::new_in(self.alloc.clone());
             unsafe{ new_node.set_payload_0(&key0[key.len()..], self.is_child_ptr::<0>(), ValOrChildUnion{ _unused: () }) }
             new_node.val_or_child0 = if prune {
@@ -2358,7 +2358,7 @@ impl<V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for LineListNode<V, A>
             debug_assert!(validate_node(&new_node));
             return Some(TrieNodeODRc::new_in(new_node, self.alloc.clone()));
         }
-        if key1.len() > key.len() && key1.starts_with(key) {
+        if key1.len() > key.len() && starts_with(key1, key) {
             let mut new_node = Self::new_in(self.alloc.clone());
             unsafe{ new_node.set_payload_0(&key1[key.len()..], self.is_child_ptr::<1>(), ValOrChildUnion{ _unused: () }) }
             new_node.val_or_child0 = if prune {

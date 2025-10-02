@@ -715,7 +715,7 @@ where Storage: AsRef<[u8]>
             match cur_node {
                 Node::Line(line) => {
                     let lpath = self.get_line(line.path);
-                    if !path.starts_with(lpath) {
+                    if !starts_with(path, lpath) {
                         return None;
                     }
                     path = &path[lpath.len()..];
@@ -1068,6 +1068,7 @@ fn build_arena_tree<V, Z, F>(zipper: Z, map_val: F) -> ArenaCompactTree<Vec<u8>>
 
 use std::io::{BufWriter, Seek, SeekFrom};
 use std::fs::{File, OpenOptions};
+use crate::utils::starts_with;
 
 pub struct FileDumper {
     buf_writer: BufWriter<File>,

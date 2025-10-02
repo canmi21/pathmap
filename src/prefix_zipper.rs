@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use crate::utils::ByteMask;
+use crate::utils::{starts_with, ByteMask};
 use crate::zipper::*;
 
 enum PrefixPos {
@@ -81,7 +81,7 @@ impl<'prefix, Z>  PrefixZipper<'prefix, Z>
     }
 
     pub fn with_origin(mut self, origin: &[u8]) -> Result<Self, &'static str> {
-        if !self.prefix.starts_with(origin) {
+        if !starts_with(&*self.prefix, origin) {
             return Err("set_origin must be called within prefix");
         }
         self.origin_depth = origin.len();
@@ -94,7 +94,7 @@ impl<'prefix, Z>  PrefixZipper<'prefix, Z>
     /// The remaining portion of the `prefix` will be part of the [`path`](ZipperMoving::path).
     /// This method resets the zipper, and typically it is called immediately after creating the `PrefixZipper`.
     pub fn set_root_prefix_path(&mut self, root_prefix_path: &[u8]) -> Result<(), &'static str> {
-        if !self.prefix.starts_with(root_prefix_path) {
+        if !starts_with(&*self.prefix, root_prefix_path) {
             return Err("zipper's prefix must begin with root_prefix_path");
         }
         self.origin_depth = root_prefix_path.len();

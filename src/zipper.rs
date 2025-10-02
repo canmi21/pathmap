@@ -260,6 +260,16 @@ pub trait ZipperMoving: Zipper {
         self.descend_indexed_byte(0)
     }
 
+    /// Descends the zipper's focus one step into the last child branch
+    ///
+    /// NOTE: This method should have identical behavior to passing `child_count() - 1` to [descend_indexed_byte](ZipperMoving::descend_indexed_byte),
+    /// although with less overhead
+    fn descend_last_byte(&mut self) -> bool {
+        let cc = self.child_count();
+        if cc == 0 { false }
+        else { self.descend_indexed_byte( cc- 1) }
+    }
+
     /// Descends the zipper's focus until a branch or a value is encountered.  Returns `true` if the focus
     /// moved otherwise returns `false`
     ///
@@ -508,6 +518,23 @@ pub trait ZipperIteration: ZipperMoving {
                 }
             }
         }
+    }
+
+    /// Descends the zipper to the end of the last path (last by sort order) reachable by descent
+    /// from the current focus.
+    ///
+    /// This is equivalent to calling [ZipperMoving::descend_last_byte] in a loop.
+    ///
+    /// Returns `true` if the zipper has sucessfully descended, or `false` if the zipper was already
+    /// at the end of a path.  If this method returns `false` then the zipper will be in its original
+    /// position.
+    fn descend_last_path(&mut self) -> bool {
+        let mut any = false;
+        while self.descend_last_byte() {
+            any = true;
+            self.descend_until();
+        }
+        any
     }
 
     /// Descends the zipper's focus `k` bytes, following the first child at each branch, and continuing
@@ -4415,11 +4442,11 @@ mod tests {
 
         let mut parent_zipper = family.read_zipper_at_path(parent_path.as_bytes());
 
-        assert!(family.contains_path(parent_path));
+        assert!(family.path_exists_at(parent_path));
 
         let mut full_parent_path = parent_path.as_bytes().to_vec();
         full_parent_path.extend(parent_zipper.path());
-        assert!(family.contains_path(&full_parent_path));
+        assert!(family.path_exists_at(&full_parent_path));
 
         while parent_zipper.to_next_val() {
             let mut full_parent_path = parent_path.as_bytes().to_vec();
@@ -4586,5 +4613,15 @@ mod tests {
         assert_eq!(zipper.descend_until(), true);
         assert_eq!(zipper.path(), b"arrow");
         assert_eq!(zipper.val_count(), 1);
+    }
+
+    #[test]
+    fn descend_last_path() {
+        let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
+        let btm: PathMap<u64> = rs.into_iter().enumerate().map(|(i, k)| (k, i as u64)).collect();
+
+        let mut rz = btm.read_zipper();
+        assert!(rz.descend_last_path());
+        assert_eq!(rz.path(), b"rubicundus");
     }
 }

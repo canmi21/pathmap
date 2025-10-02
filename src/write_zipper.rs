@@ -3080,8 +3080,8 @@ mod tests {
         assert_eq!(wz.path(), b"abcdefghijklmnopq");
         drop(wz);
 
-        assert!(!map.contains_path(b"abcdefghijklmnopq"));
-        assert!(!map.contains_path(b"abc"));
+        assert!(!map.path_exists_at(b"abcdefghijklmnopq"));
+        assert!(!map.path_exists_at(b"abc"));
     }
 
     #[test]

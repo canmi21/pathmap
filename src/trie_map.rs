@@ -85,23 +85,6 @@ impl<V: Clone + Send + Sync + Unpin> PathMap<V, GlobalAlloc> {
     {
         Self::new_from_ana_in(w, alg_f, global_alloc())
     }
-
-    /// Optimize the `PathMap` by factoring shared subtries using a temporary [Merkle Tree](https://en.wikipedia.org/wiki/Merkle_tree)
-    pub fn merkleize(&mut self) -> MerkleizeResult
-        where V: core::hash::Hash
-    {
-        let Some(root) = self.root() else {
-            return MerkleizeResult::default();
-        };
-        let mut result = MerkleizeResult::default();
-        let mut memo = gxhash::HashMap::default();
-        let (hash, new_root) = merkleize_impl(&mut result, &mut memo, root, self.root_val());
-        result.hash = hash;
-        if let Some(new_root) = new_root {
-            *self.root.get_mut() = Some(new_root);
-        }
-        result
-    }
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
@@ -320,11 +303,17 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         zipper.is_val()
     }
 
-    /// Returns `true` if a path is contained within the map, or `false` otherwise
-    pub fn contains_path<K: AsRef<[u8]>>(&self, k: K) -> bool {
-        let k = k.as_ref();
-        let zipper = self.read_zipper_at_borrowed_path(k);
+    /// Returns `true` if `path` is contained within the map, or `false` otherwise
+    pub fn path_exists_at<K: AsRef<[u8]>>(&self, path: K) -> bool {
+        let path = path.as_ref();
+        let zipper = self.read_zipper_at_borrowed_path(path);
         zipper.path_exists()
+    }
+
+    /// Deprecated alias for [`PathMap::path_exists`]
+    #[deprecated]
+    pub fn contains_path<K: AsRef<[u8]>>(&self, k: K) -> bool {
+        self.path_exists_at(k)
     }
 
     /// Inserts `v` into the map at `path`.  Panics if `path` has a zero length
@@ -441,6 +430,21 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         self.get_val_or_set_mut_with_at(path, || default)
     }
 
+    /// Removes all downstream branches below `path`.  Does not affect a value at `path`
+    ///
+    /// Returns `true` if at least one branch was removed.
+    ///
+    /// If `prune` is `true`, the path will be pruned, otherwise it will be left dangling.
+    pub fn remove_branches_at<K: AsRef<[u8]>>(&mut self, path: K, prune: bool) -> bool {
+        let path = path.as_ref();
+        //NOTE: we're descending the zipper rather than creating it at the path so it will be allowed to
+        // prune the branches.  A WriteZipper can't move above its root, so it couldn't prune otherwise
+        //GOAT, come back and redo this withoug a temporary WZ
+        let mut zipper = self.write_zipper();
+        zipper.descend_to(path);
+        zipper.remove_branches(prune)
+    }
+
     /// Returns `true` if the map is empty, otherwise returns `false`
     pub fn is_empty(&self) -> bool {
         (match self.root() {
@@ -555,6 +559,23 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         };
 
         Self::new_with_root_in(subtracted_root_node, subtracted_root_val, self.alloc.clone())
+    }
+
+    /// Optimize the `PathMap` by factoring shared subtries using a temporary [Merkle Tree](https://en.wikipedia.org/wiki/Merkle_tree)
+    pub fn merkleize(&mut self) -> MerkleizeResult
+        where V: core::hash::Hash
+    {
+        let Some(root) = self.root() else {
+            return MerkleizeResult::default();
+        };
+        let mut result = MerkleizeResult::default();
+        let mut memo = gxhash::HashMap::default();
+        let (hash, new_root) = merkleize_impl(&mut result, &mut memo, root, self.root_val());
+        result.hash = hash;
+        if let Some(new_root) = new_root {
+            *self.root.get_mut() = Some(new_root);
+        }
+        result
     }
 }
 
@@ -877,10 +898,10 @@ mod tests {
         let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
         rs.iter().enumerate().for_each(|(i, r)| { btm.set_val_at(r.as_bytes(), i); });
 
-        assert_eq!(btm.contains_path(b"can"), true);
-        assert_eq!(btm.contains_path(b"cannon"), true);
-        assert_eq!(btm.contains_path(b"cannonade"), false);
-        assert_eq!(btm.contains_path(b""), true);
+        assert_eq!(btm.path_exists_at(b"can"), true);
+        assert_eq!(btm.path_exists_at(b"cannon"), true);
+        assert_eq!(btm.path_exists_at(b"cannonade"), false);
+        assert_eq!(btm.path_exists_at(b""), true);
     }
 
     #[test]
