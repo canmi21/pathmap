@@ -2,7 +2,20 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Data, Fields};
 
-/// See [`pathmap::zipper::PolyZipper`] for documentation
+/// Derive macro to define an enum to act as a polymorphic zipper, which can switch between different zipper kinds
+///
+/// NOTE: The generic parameter names: `'trie`, `'path`, `V`, and `A` have special meaning to the traits
+/// that require them.
+///
+/// ```
+/// use pathmap::zipper::{PolyZipper, ReadZipperTracked, ReadZipperUntracked};
+///
+/// #[derive(PolyZipper)]
+/// enum MyPolyZipper<'trie, 'path, V: Clone + Send + Sync + Unpin> {
+///     Tracked(ReadZipperTracked<'trie, 'path, V>),
+///     Untracked(ReadZipperUntracked<'trie, 'path, V>),
+/// }
+/// ```
 #[proc_macro_derive(PolyZipper)]
 pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -131,21 +144,23 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Generate witness enum type
-    //GOAT TODO: I think we could get into trouble if the witness types have fewer generics than
-    // the outer PolyZipper enum.  So we probably should add a phantom case too.
+    // Generate witness enum name and variant names for conditional traits
     let witness_enum_name = syn::Ident::new(&format!("{}Witness", enum_name), enum_name.span());
     let variant_names: Vec<_> = variants.iter().map(|variant| &variant.ident).collect();
 
-    let witness_enum = quote! {
-        pub enum #witness_enum_name #impl_generics #where_clause {
-            #(#variant_names(<#inner_types as pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V>>::WitnessT),)*
-        }
-    };
-
-    // Generate ZipperReadOnlyConditionalValues trait implementation
+    // Generate ZipperReadOnlyConditionalValues trait implementation with witness enum
     let zipper_read_only_conditional_values_impl = {
         quote! {
+            //GOAT TODO: I think we could get into trouble if the witness types have fewer generics than
+            // the outer PolyZipper enum.  So we probably should add a phantom case too.
+            pub enum #witness_enum_name #impl_generics
+            where
+                #(#inner_types: pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V>,)*
+                #where_clause
+            {
+                #(#variant_names(<#inner_types as pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V>>::WitnessT),)*
+            }
+
             impl #impl_generics pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V> for #enum_name #ty_generics
             where
                 #(#inner_types: pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V>,)*
@@ -279,16 +294,156 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
         }
     };
 
+    // Generate ZipperAbsolutePath trait implementation
+    let zipper_absolute_path_impl = {
+        let variant_arms = &variant_arms;
+        quote! {
+            impl #impl_generics pathmap::zipper::ZipperAbsolutePath for #enum_name #ty_generics
+            where
+                #(#inner_types: pathmap::zipper::ZipperAbsolutePath,)*
+                #where_clause
+            {
+                fn origin_path(&self) -> &[u8] {
+                    match self {
+                        #(#variant_arms => inner.origin_path(),)*
+                    }
+                }
+
+                fn root_prefix_path(&self) -> &[u8] {
+                    match self {
+                        #(#variant_arms => inner.root_prefix_path(),)*
+                    }
+                }
+            }
+        }
+    };
+
+    // Generate ZipperPathBuffer trait implementation
+    let zipper_path_buffer_impl = {
+        let variant_arms = &variant_arms;
+        quote! {
+            impl #impl_generics pathmap::zipper::ZipperPathBuffer for #enum_name #ty_generics
+            where
+                #(#inner_types: pathmap::zipper::ZipperPathBuffer,)*
+                #where_clause
+            {
+                unsafe fn origin_path_assert_len(&self, len: usize) -> &[u8] {
+                    match self {
+                        #(#variant_arms => unsafe { inner.origin_path_assert_len(len) },)*
+                    }
+                }
+
+                fn prepare_buffers(&mut self) {
+                    match self {
+                        #(#variant_arms => inner.prepare_buffers(),)*
+                    }
+                }
+
+                fn reserve_buffers(&mut self, path_len: usize, stack_depth: usize) {
+                    match self {
+                        #(#variant_arms => inner.reserve_buffers(path_len, stack_depth),)*
+                    }
+                }
+            }
+        }
+    };
+
+    // Generate ZipperIteration trait implementation
+    let zipper_iteration_impl = {
+        let variant_arms = &variant_arms;
+        quote! {
+            impl #impl_generics pathmap::zipper::ZipperIteration for #enum_name #ty_generics
+            where
+                #(#inner_types: pathmap::zipper::ZipperIteration,)*
+                #where_clause
+            {
+                fn to_next_val(&mut self) -> bool {
+                    match self {
+                        #(#variant_arms => inner.to_next_val(),)*
+                    }
+                }
+
+                fn descend_last_path(&mut self) -> bool {
+                    match self {
+                        #(#variant_arms => inner.descend_last_path(),)*
+                    }
+                }
+
+                fn descend_first_k_path(&mut self, k: usize) -> bool {
+                    match self {
+                        #(#variant_arms => inner.descend_first_k_path(k),)*
+                    }
+                }
+
+                fn to_next_k_path(&mut self, k: usize) -> bool {
+                    match self {
+                        #(#variant_arms => inner.to_next_k_path(k),)*
+                    }
+                }
+            }
+        }
+    };
+
+    // Generate ZipperReadOnlyIteration trait implementation
+    let zipper_read_only_iteration_impl = {
+        let variant_arms = &variant_arms;
+        quote! {
+            impl #impl_generics pathmap::zipper::ZipperReadOnlyIteration<'trie, V> for #enum_name #ty_generics
+            where
+                #(#inner_types: pathmap::zipper::ZipperReadOnlyIteration<'trie, V>,)*
+                #where_clause
+            {
+                fn to_next_get_val(&mut self) -> Option<&'trie V> {
+                    match self {
+                        #(#variant_arms => inner.to_next_get_val(),)*
+                    }
+                }
+
+                #[deprecated]
+                fn to_next_get_value(&mut self) -> Option<&'trie V> {
+                    match self {
+                        #(#variant_arms => inner.to_next_get_value(),)*
+                    }
+                }
+            }
+        }
+    };
+
+    // Generate ZipperReadOnlyConditionalIteration trait implementation
+    let zipper_read_only_conditional_iteration_impl = {
+        quote! {
+            impl #impl_generics pathmap::zipper::ZipperReadOnlyConditionalIteration<'trie, V> for #enum_name #ty_generics
+            where
+                #(#inner_types: pathmap::zipper::ZipperReadOnlyConditionalIteration<'trie, V>,)*
+                #where_clause
+            {
+                fn to_next_get_val_with_witness<'w>(&mut self, witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w {
+                    match (self, witness) {
+                        #((Self::#variant_names(inner), #witness_enum_name::#variant_names(w)) => inner.to_next_get_val_with_witness(w),)*
+                        _ => {
+                            debug_assert!(false, "Witness variant must match zipper variant");
+                            None
+                        },
+                    }
+                }
+            }
+        }
+    };
+
     let expanded = quote! {
         #(#from_impls)*
         #zipper_impl
         #zipper_values_impl
         #zipper_read_only_values_impl
-        #witness_enum
         #zipper_read_only_conditional_values_impl
         // #zipper_forking_impl
         #zipper_moving_impl
         #zipper_concrete_impl
+        #zipper_absolute_path_impl
+        #zipper_path_buffer_impl
+        #zipper_iteration_impl
+        #zipper_read_only_iteration_impl
+        #zipper_read_only_conditional_iteration_impl
     };
 
     TokenStream::from(expanded)

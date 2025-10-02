@@ -310,7 +310,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         zipper.path_exists()
     }
 
-    /// Deprecated alias for [`PathMap::path_exists`]
+    /// Deprecated alias for [`PathMap::path_exists_at`]
     #[deprecated]
     pub fn contains_path<K: AsRef<[u8]>>(&self, k: K) -> bool {
         self.path_exists_at(k)

@@ -20,24 +20,30 @@ pub use crate::product_zipper::{ProductZipper, ProductZipperG};
 pub use crate::overlay_zipper::{OverlayZipper};
 pub use crate::prefix_zipper::{PrefixZipper};
 pub use crate::empty_zipper::{EmptyZipper};
-
-/// Derive macro to define an enum to act as a polymorphic zipper, which can switch between different zipper kinds
-///
-/// NOTE: The generic parameter names: `'trie`, `'path`, `V`, and `A` have special meaning to the traits
-/// that require them.
-///
-/// ```
-/// use pathmap::zipper::{PolyZipper, ReadZipperTracked, ReadZipperUntracked};
-///
-/// #[derive(PolyZipper)]
-/// enum MyPolyZipper<'trie, 'path, V: Clone + Send + Sync + Unpin> {
-///     Tracked(ReadZipperTracked<'trie, 'path, V>),
-///     Untracked(ReadZipperUntracked<'trie, 'path, V>),
-/// }
-/// ```
 pub use pathmap_derive::PolyZipper;
-
 use crate::zipper_tracking::*;
+
+
+
+// mod goat {
+//     use crate as pathmap;
+//     use pathmap::*;
+//     use pathmap::zipper::*;
+
+//     #[derive(PolyZipper)]
+//     enum MyPolyZipper<'trie, 'path, V: Clone + Send + Sync + Unpin> {
+//         Tracked(ReadZipperTracked<'trie, 'path, V>),
+//         Untracked(ReadZipperUntracked<'trie, 'path, V>),
+//     }
+
+//     #[test]
+//     pub fn goat_f() {
+//         let map = PathMap::<()>::new();
+        
+//         let x = MyPolyZipper::from(map.read_zipper());
+//     }
+// }
+
 
 /// The most fundamantal interface for a zipper, compatible with all zipper types
 pub trait Zipper {
