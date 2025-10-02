@@ -113,7 +113,55 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
         }
     };
 
-    //GOAT, Fix this.  I can't seem to figure out how to align the `'a` and the `'read_z` lifetimes
+    // Generate ZipperReadOnlyValues trait implementation
+    let zipper_read_only_values_impl = {
+        let variant_arms = &variant_arms;
+        quote! {
+            impl #impl_generics pathmap::zipper::ZipperReadOnlyValues<'trie, V> for #enum_name #ty_generics
+            where
+                #(#inner_types: pathmap::zipper::ZipperReadOnlyValues<'trie, V>,)*
+                #where_clause
+            {
+                fn get_val(&self) -> Option<&'trie V> {
+                    match self {
+                        #(#variant_arms => inner.get_val(),)*
+                    }
+                }
+            }
+        }
+    };
+
+    // Generate ZipperReadOnlyConditionalValues trait implementation
+    let zipper_read_only_conditional_values_impl = {
+        let variant_arms = &variant_arms;
+        let first_inner_type = &inner_types[0];
+        let other_inner_types = &inner_types[1..];
+
+        quote! {
+            impl #impl_generics pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V> for #enum_name #ty_generics
+            where
+                #(#inner_types: pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V>,)*
+                #(#other_inner_types: pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V, WitnessT = <#first_inner_type as pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V>>::WitnessT>,)*
+                #where_clause
+            {
+                type WitnessT = <#first_inner_type as pathmap::zipper::ZipperReadOnlyConditionalValues<'trie, V>>::WitnessT;
+
+                fn witness<'w>(&self) -> Self::WitnessT {
+                    match self {
+                        #(#variant_arms => inner.witness(),)*
+                    }
+                }
+
+                fn get_val_with_witness<'w>(&self, witness: &'w Self::WitnessT) -> Option<&'w V> where 'trie: 'w {
+                    match self {
+                        #(#variant_arms => inner.get_val_with_witness(witness),)*
+                    }
+                }
+            }
+        }
+    };
+
+    //GOAT, Fix this.  I can't seem to figure out how to align the `'a` and the `'read_z` lifetimes without changing the trait definition
     // // Generate ZipperForking trait implementation
     // let zipper_forking_impl = {
     //     let variant_arms = &variant_arms;
@@ -196,8 +244,10 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
         #(#from_impls)*
         #zipper_impl
         #zipper_values_impl
-        #zipper_moving_impl
+        #zipper_read_only_values_impl
+        #zipper_read_only_conditional_values_impl
         // #zipper_forking_impl
+        #zipper_moving_impl
     };
 
     TokenStream::from(expanded)
