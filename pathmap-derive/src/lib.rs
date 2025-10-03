@@ -2,16 +2,26 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Data, Fields};
 
-/// Derive macro to define an enum to act as a polymorphic zipper, which can switch between different zipper kinds
+/// Derive macro to implement *most* zipper traits on an enum designed to act as a polymorphic zipper
 ///
-/// NOTE: The generic parameter names: `'trie`, `'path`, `V`, and `A` have special meaning to the traits
-/// that require them.
+/// A polymorphic zipper is a zipper that can represent different underlying zipper kinds, and dispatch
+/// to the appropriate type at runtime.  Similar in concept to an `&dyn` reference.
 ///
+/// USAGE: The generic parameter names: `'trie`, `'path`, `V`, and `A` have special meaning to
+/// the traits that require them.  `V` must be specified as a generic type paremeter, even if
+/// you intend to specify a default type.
+///
+/// NOTE: This macro does not derive an impl for [`ZipperForking`](pathmap::zipper::ZipperForking)
+/// because the mapping between child zipper types and the output type is not always straightforward.
+/// Therefore it is recommended to implement `ZipperForking` yourself.
+///
+/// [`ZipperWriting`] and other write zipper trait are also not supported currently. That decision is
+/// not fundamental and additional impls could be added in the future.
 /// ```
 /// use pathmap::zipper::{PolyZipper, ReadZipperTracked, ReadZipperUntracked};
 ///
 /// #[derive(PolyZipper)]
-/// enum MyPolyZipper<'trie, 'path, V: Clone + Send + Sync + Unpin> {
+/// enum MyPolyZipper<'trie, 'path, V: Clone + Send + Sync + Unpin = ()> {
 ///     Tracked(ReadZipperTracked<'trie, 'path, V>),
 ///     Untracked(ReadZipperUntracked<'trie, 'path, V>),
 /// }
@@ -187,7 +197,10 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
         }
     };
 
-    //GOAT, Fix this.  I can't seem to figure out how to align the `'a` and the `'read_z` lifetimes without changing the trait definition,
+    //GOAT, this is probably dead code given the decision (described in the PolyZipper docs)
+    // not to support a `ZipperForking` impl
+    //
+    //I can't seem to figure out how to align the `'a` and the `'read_z` lifetimes without changing the trait definition,
     // and ideally we'd want to return a new enum-based zipper.  The elegant way to do that would be to actually invoke
     // the PolyZipper macro recursively to get maximum support on the new zipper, but there are a bunch of obnoxious details
     // to make that work. - like what to do about the recursion so we don't have infinite recursion in the macro, and how
