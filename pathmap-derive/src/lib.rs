@@ -59,7 +59,7 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
                 }
             }
 
-            impl #impl_generics TryFrom<#enum_name #ty_generics> for #inner_type #where_clause {
+            impl #impl_generics core::convert::TryFrom<#enum_name #ty_generics> for #inner_type #where_clause {
                 type Error = ();
 
                 fn try_from(value: #enum_name #ty_generics) -> Result<Self, Self::Error> {
