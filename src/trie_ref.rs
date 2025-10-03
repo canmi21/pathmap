@@ -330,6 +330,9 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyS
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for TrieRefBorrowed<'_, V, A> {
+    fn shared_node_id(&self) -> Option<u64> {
+        read_zipper_core::read_zipper_shared_node_id(self)
+    }
     fn is_shared(&self) -> bool {
         false //We don't have enough info in the TrieRef to get back to the parent node.  This will change in the future when we move values at zero-length paths into the nodes themselves 
     }
@@ -342,10 +345,6 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperReadOnlyPriv<'
     fn take_core(&mut self) -> Option<read_zipper_core::ReadZipperCore<'a, 'static, V, A>> {
         None
     }
-}
-
-impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcretePriv for TrieRefBorrowed<'_, V, A> {
-    fn shared_node_id(&self) -> Option<u64> { read_zipper_core::read_zipper_shared_node_id(self) }
 }
 
 /// An owned read-only reference to a location in a trie.  See [TrieRef]
@@ -656,6 +655,9 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyS
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for TrieRefOwned<V, A> {
+    fn shared_node_id(&self) -> Option<u64> {
+        read_zipper_core::read_zipper_shared_node_id(self)
+    }
     fn is_shared(&self) -> bool {
         false //We don't have enough info in the TrieRef to get back to the parent node.  This will change in the future when we move values at zero-length paths into the nodes themselves 
     }
@@ -669,10 +671,6 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperReadOnlyPriv<'
     fn take_core(&mut self) -> Option<read_zipper_core::ReadZipperCore<'a, 'static, V, A>> {
         None
     }
-}
-
-impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcretePriv for TrieRefOwned<V, A> {
-    fn shared_node_id(&self) -> Option<u64> { read_zipper_core::read_zipper_shared_node_id(self) }
 }
 
 /// An abstract wrapper type over [TrieRefBorrowed] and [TrieRefOwned], with capabilities that are the intersection
@@ -795,6 +793,12 @@ impl<'a, V: Clone + Send + Sync + Unpin + 'a, A: Allocator + 'a> ZipperReadOnlyS
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcrete for TrieRef<'_, V, A> {
+    fn shared_node_id(&self) -> Option<u64> {
+        match self {
+            TrieRef::Borrowed(trie_ref) => trie_ref.shared_node_id(),
+            TrieRef::Owned(trie_ref) => trie_ref.shared_node_id(),
+        }
+    }
     fn is_shared(&self) -> bool {
         match self {
             TrieRef::Borrowed(trie_ref) => trie_ref.is_shared(),
@@ -812,15 +816,6 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperReadOnlyPriv<'
     }
     fn take_core(&mut self) -> Option<read_zipper_core::ReadZipperCore<'a, 'static, V, A>> {
         None
-    }
-}
-
-impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperConcretePriv for TrieRef<'_, V, A> {
-    fn shared_node_id(&self) -> Option<u64> {
-        match self {
-            TrieRef::Borrowed(trie_ref) => trie_ref.shared_node_id(),
-            TrieRef::Owned(trie_ref) => trie_ref.shared_node_id(),
-        }
     }
 }
 

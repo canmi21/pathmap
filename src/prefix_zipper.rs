@@ -179,9 +179,9 @@ impl<'prefix, Z>  PrefixZipper<'prefix, Z>
     }
 }
 
-impl<'prefix, Z> ZipperConcretePriv for PrefixZipper<'prefix, Z>
+impl<'prefix, Z> ZipperConcrete for PrefixZipper<'prefix, Z>
     where
-        Z: ZipperConcretePriv
+        Z: ZipperConcrete
 {
     fn shared_node_id(&self) -> Option<u64> {
         match self.position {
@@ -189,12 +189,6 @@ impl<'prefix, Z> ZipperConcretePriv for PrefixZipper<'prefix, Z>
             _ => None,
         }
     }
-}
-
-impl<'prefix, Z> ZipperConcrete for PrefixZipper<'prefix, Z>
-    where
-        Z: ZipperConcrete
-{
     fn is_shared(&self) -> bool {
         match self.position {
             PrefixPos::Source => self.source.is_shared(),
@@ -429,7 +423,7 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
             Ok(()) => steps,
         };
         self.path.truncate(self.path.len() - ascended);
-        ascended > 0
+        ascended == steps
     }
     #[inline]
     fn ascend_byte(&mut self) -> bool {

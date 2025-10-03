@@ -85,7 +85,7 @@ use crate::{
     zipper::{
         Zipper, ZipperValues, ZipperForking, ZipperAbsolutePath, ZipperIteration,
         ZipperMoving, ZipperPathBuffer, ZipperReadOnlyValues,
-        ZipperConcretePriv, ZipperConcrete, ZipperReadOnlyConditionalValues,
+        ZipperConcrete, ZipperReadOnlyConditionalValues,
     },
 };
 
@@ -1702,18 +1702,13 @@ where Storage: AsRef<[u8]>
     }
 }
 
-impl<'tree, Storage, Value> ZipperConcretePriv for ACTZipper<'tree, Storage, Value>
+impl<'tree, Storage, Value> ZipperConcrete for ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     fn shared_node_id(&self) -> Option<u64> {
         // TODO: no way to detect now
         None
     }
-}
-
-impl<'tree, Storage, Value> ZipperConcrete for ACTZipper<'tree, Storage, Value>
-where Storage: AsRef<[u8]>
-{
     fn is_shared(&self) -> bool {
         // TODO: no way to detect now
         false

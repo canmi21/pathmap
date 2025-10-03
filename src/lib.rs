@@ -101,6 +101,9 @@ pub mod zipper_tracking;
 #[cfg(not(feature = "zipper_tracking"))]
 mod zipper_tracking;
 
+/// Only includes PolyZipper tests.  The real implementation is in the `pathmap-derive` crate
+mod poly_zipper;
+
 /// Used to create multiple simultaneous zippers from the same parent
 mod zipper_head;
 
@@ -126,6 +129,7 @@ pub mod tree_serialization;
 mod trie_node;
 mod write_zipper;
 mod product_zipper;
+mod empty_zipper;
 mod prefix_zipper;
 mod overlay_zipper;
 mod trie_ref;
