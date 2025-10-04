@@ -598,7 +598,11 @@ mod tests {
             // test_key_len(16777216); //2^24 bytes
             // test_key_len(67108864); //2^26 bytes
             // test_key_len(268435456); //2^28 bytes
-            // test_key_len(1073741824); //2^30 bytes //Still no failure at 1GB keys
+            // test_key_len(1073741824); //2^30 bytes - 1GB keys
+            // test_key_len(2147483648); //2^31 bytes - 2GB keys
+            // test_key_len(4294967296); //2^32 bytes - 4GB keys
+            // test_key_len(8589934592); //2^33 bytes - 8GB keys
+            // test_key_len(17179869184); //2^34 bytes - Still no failure at 16GB keys
         }
     }
 
