@@ -2,30 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Data, Fields};
 
-/// Derive macro to implement *most* zipper traits on an enum designed to act as a polymorphic zipper
-///
-/// A polymorphic zipper is a zipper that can represent different underlying zipper kinds, and dispatch
-/// to the appropriate type at runtime.  Similar in concept to an `&dyn` reference.
-///
-/// USAGE: The generic parameter names: `'trie`, `'path`, `V`, and `A` have special meaning to
-/// the traits that require them.  `V` must be specified as a generic type paremeter, even if
-/// you intend to specify a default type.
-///
-/// NOTE: This macro does not derive an impl for [`ZipperForking`](pathmap::zipper::ZipperForking)
-/// because the mapping between child zipper types and the output type is not always straightforward.
-/// Therefore it is recommended to implement `ZipperForking` yourself.
-///
-/// [`ZipperWriting`] and other write zipper trait are also not supported currently. That decision is
-/// not fundamental and additional impls could be added in the future.
-/// ```
-/// use pathmap::zipper::{PolyZipper, ReadZipperTracked, ReadZipperUntracked};
-///
-/// #[derive(PolyZipper)]
-/// enum MyPolyZipper<'trie, 'path, V: Clone + Send + Sync + Unpin = ()> {
-///     Tracked(ReadZipperTracked<'trie, 'path, V>),
-///     Untracked(ReadZipperUntracked<'trie, 'path, V>),
-/// }
-/// ```
+// See the docs for `PolyZipper` in `pathmap::zipper::PolyZipper`
 #[proc_macro_derive(PolyZipper)]
 pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

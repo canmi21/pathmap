@@ -109,3 +109,7 @@ harness = false
 [[bench]]
 name = "product_zipper"
 harness = false
+
+[workspace]
+members = ["pathmap-derive"]
+resolver = "2"

@@ -1,4 +1,48 @@
 
+#[cfg(doc)]
+use crate::zipper::*;
+
+/// Derive macro to implement *most* zipper traits on an enum designed to act as a polymorphic zipper
+///
+/// A polymorphic zipper is a zipper that can represent different underlying zipper kinds, and dispatch
+/// to the appropriate type at runtime.  Similar in concept to an `&dyn` reference.
+///
+/// The `PolyZipper` macro implements the following traits, provided they are implemented on each of the enum variants:
+/// * [`Zipper`]
+/// * [`ZipperAbsolutePath`]
+/// * [`ZipperConcrete`]
+/// * [`ZipperIteration`]
+/// * [`ZipperMoving`]
+/// * [`ZipperPathBuffer`]
+/// * [`ZipperReadOnlyConditionalIteration`]
+/// * [`ZipperReadOnlyConditionalValues`]
+/// * [`ZipperReadOnlyIteration`]
+/// * [`ZipperReadOnlyValues`]
+/// * [`ZipperValues`]
+///
+/// NOTE: This macro does not derive an impl for [`ZipperForking`]
+/// because the mapping between child zipper types and the output type is not always straightforward.
+/// Therefore it is recommended to implement `ZipperForking` yourself.
+///
+/// [`ZipperWriting`] and other write zipper trait are also not supported currently. That decision is
+/// not fundamental and additional impls could be added in the future.
+///
+/// ## USAGE:
+/// The generic parameter names: `'trie`, `'path`, `V`, and `A` have special meaning to
+/// the traits that require them.  `V` must be specified as a generic type paremeter, even if
+/// you intend to specify a default type.
+///
+/// ```
+/// use pathmap::zipper::{PolyZipper, ReadZipperTracked, ReadZipperUntracked};
+///
+/// #[derive(PolyZipper)]
+/// enum MyPolyZipper<'trie, 'path, V: Clone + Send + Sync + Unpin = ()> {
+///     Tracked(ReadZipperTracked<'trie, 'path, V>),
+///     Untracked(ReadZipperUntracked<'trie, 'path, V>),
+/// }
+/// ```
+pub use pathmap_derive::PolyZipper;
+
 #[cfg(test)]
 mod tests {
     use crate as pathmap;
