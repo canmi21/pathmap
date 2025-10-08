@@ -39,7 +39,7 @@ act_counters = ["arena_compact"] # LP: Question: Why isn't this code enabled by 
 viz = []
 
 [target.'cfg(not(any(miri,target_arch="riscv64")))'.dependencies]
-gxhash = {version="3.5", git="https://github.com/ogxd/gxhash"} # for dag_serialization
+gxhash = {version="3.5"} # for dag_serialization, merkleization, and caching catamorphism
 
 [target.'cfg(any(miri,target_arch="riscv64"))'.dependencies]
 xxhash-rust = { version = "0.8.15", features = ["xxh64", "xxh3", "const_xxh3"] } # Replacement for gxhash running under miri
