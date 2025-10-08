@@ -7,7 +7,7 @@ use std::ptr::null;
 use rand::distr::{Iter, Uniform};
 use crate::TrieValue;
 use crate::utils::{BitMask, ByteMask};
-use crate::zipper::{ReadZipperUntracked, Zipper, ZipperReadOnlyIteration, ZipperMoving, ZipperReadOnlyValues};
+use crate::zipper::*;
 
 use crate::gxhash::{HashMap, HashMapExt};
 
@@ -577,7 +577,7 @@ mod tests {
         assert_eq!(rz.get_val(), trie.get_val_at(&path[..]));
         path_fuzzer.clone().sample_iter(rng_.clone()).take(N_DESCENDS).for_each(|path| {
           rz.descend_to(&path[..]);
-          rz.ascend(path.len());
+          let _ = rz.ascend(path.len());
         });
         assert_eq!(rz.path(), &path[..]);
         assert_eq!(rz.get_val(), trie.get_val_at(&path[..]));
