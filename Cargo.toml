@@ -31,7 +31,7 @@ rand = { version = "0.9.0", optional = true }
 memmap2 = { version="0.9.5", optional = true }
 
 [features]
-default = ["graft_root_vals", "slim_ptrs"]
+default = ["graft_root_vals", "slim_ptrs", "serialization"]
 nightly = [] # Uses features in the nightly tool chain for better performance, and the allocator and coroutine APIs
 jemalloc = ["dep:tikv-jemallocator"] # Enables [jemalloc](https://jemalloc.net/) as the default allocator.  This dramatically improves scaling for write-heavy workloads and is generally recommended.  The only reason it is not the default is to avoid interference with the host application allocator.
 zipper_tracking = [] #Exports the zipper_tracking module publicly
@@ -47,6 +47,7 @@ slim_ptrs = [] # Enables use of a 64-bit inter-node pointer type (TrieNodeODRc)
 slim_dispatch = [] # Experiment. Enables the 64-bit pointers to back the TaggedNodeRef and TaggedNodeRefMut types, WILL BE REMOVED EVENTUALLY
 act_counters = ["arena_compact"] # LP: Question: Why isn't this code enabled by just counters + arena_compact???
 viz = []
+serialization = []
 
 [target.'cfg(not(any(miri,target_arch="riscv64")))'.dependencies]
 gxhash = {version="3.5"} # for dag_serialization, merkleization, and caching catamorphism
