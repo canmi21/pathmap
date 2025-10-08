@@ -7,6 +7,7 @@ use crate::trie_node::*;
 use crate::ring::*;
 use crate::dense_byte_node::{DenseByteNode, CellByteNode, test_bit_in_mask};
 use crate::tiny_node::TinyRefNode;
+use crate::utils::starts_with;
 
 /// A node type that only has a single value or onward link
 pub struct BridgeNode<V> {
@@ -555,7 +556,7 @@ impl<V: Clone + Send + Sync> TrieNode<V> for BridgeNode<V> {
     fn take_node_at_key(&mut self, key: &[u8]) -> Option<TrieNodeODRc<V>> {
         debug_assert!(!self.is_empty());
         let self_key = self.key();
-        if self_key.starts_with(key) {
+        if starts_with(self_key, key) {
             if self_key.len() == key.len() {
                 if self.is_child_ptr() {
                     let self_payload = self.take_payload();

@@ -9,11 +9,7 @@ use crate::ring::{AlgebraicResult, AlgebraicStatus, COUNTER_IDENT, SELF_IDENT, L
 
 use crate::gxhash::{self, gxhash128};
 
-//GOAT-old-names
-#[deprecated]
-pub type BytesTrieMap<V, A = GlobalAlloc> = PathMap<V, A>;
-
-/// A map type that uses byte slices `&[u8]` as keys
+/// A map type that uses a trie based on byte slices (`&[u8]`) known as "paths"
 ///
 /// This type is implemented using some of the approaches explained in the
 /// ["Bitwise trie with bitmap" Wikipedia article](https://en.wikipedia.org/wiki/Bitwise_trie_with_bitmap).
@@ -88,23 +84,6 @@ impl<V: Clone + Send + Sync + Unpin> PathMap<V, GlobalAlloc> {
         AlgF: FnMut(W, &mut Option<V>, &mut TrieBuilder<V, W, GlobalAlloc>, &[u8])
     {
         Self::new_from_ana_in(w, alg_f, global_alloc())
-    }
-
-    /// Optimize the `PathMap` by factoring shared subtries using a temporary [Merkle Tree](https://en.wikipedia.org/wiki/Merkle_tree)
-    pub fn merkleize(&mut self) -> MerkleizeResult
-        where V: core::hash::Hash
-    {
-        let Some(root) = self.root() else {
-            return MerkleizeResult::default();
-        };
-        let mut result = MerkleizeResult::default();
-        let mut memo = gxhash::HashMap::default();
-        let (hash, new_root) = merkleize_impl(&mut result, &mut memo, root, self.root_val());
-        result.hash = hash;
-        if let Some(new_root) = new_root {
-            *self.root.get_mut() = Some(new_root);
-        }
-        result
     }
 }
 
@@ -324,11 +303,17 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         zipper.is_val()
     }
 
-    /// Returns `true` if a path is contained within the map, or `false` otherwise
-    pub fn contains_path<K: AsRef<[u8]>>(&self, k: K) -> bool {
-        let k = k.as_ref();
-        let zipper = self.read_zipper_at_borrowed_path(k);
+    /// Returns `true` if `path` is contained within the map, or `false` otherwise
+    pub fn path_exists_at<K: AsRef<[u8]>>(&self, path: K) -> bool {
+        let path = path.as_ref();
+        let zipper = self.read_zipper_at_borrowed_path(path);
         zipper.path_exists()
+    }
+
+    /// Deprecated alias for [`PathMap::path_exists_at`]
+    #[deprecated]
+    pub fn contains_path<K: AsRef<[u8]>>(&self, k: K) -> bool {
+        self.path_exists_at(k)
     }
 
     /// Inserts `v` into the map at `path`.  Panics if `path` has a zero length
@@ -445,6 +430,21 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         self.get_val_or_set_mut_with_at(path, || default)
     }
 
+    /// Removes all downstream branches below `path`.  Does not affect a value at `path`
+    ///
+    /// Returns `true` if at least one branch was removed.
+    ///
+    /// If `prune` is `true`, the path will be pruned, otherwise it will be left dangling.
+    pub fn remove_branches_at<K: AsRef<[u8]>>(&mut self, path: K, prune: bool) -> bool {
+        let path = path.as_ref();
+        //NOTE: we're descending the zipper rather than creating it at the path so it will be allowed to
+        // prune the branches.  A WriteZipper can't move above its root, so it couldn't prune otherwise
+        //GOAT, come back and redo this withoug a temporary WZ
+        let mut zipper = self.write_zipper();
+        zipper.descend_to(path);
+        zipper.remove_branches(prune)
+    }
+
     /// Returns `true` if the map is empty, otherwise returns `false`
     pub fn is_empty(&self) -> bool {
         (match self.root() {
@@ -477,14 +477,17 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
     ///
     /// WARNING: This is not a cheap method. It may have an order-N cost
     pub fn val_count(&self) -> usize {
+        let root_val = unsafe{ &*self.root_val.get() }.is_some() as usize;
         match self.root() {
-            Some(root) => val_count_below_root(root.as_tagged()),
-            None => 0
+            Some(root) => val_count_below_root(root.as_tagged()) + root_val,
+            None => root_val
         }
     }
 
-    const INVIS_HASH: u128 = 0b00001110010011001111100111000110011110101111001101110110011100001011010011010011001000100111101000001100011111110100001000000111;
-    /// Hash the logical `PathMap` and all its values with the provided hash function (which can return INVIS_HASH to ignore values).
+    pub const INVIS_HASH: u128 = 0b00001110010011001111100111000110011110101111001101110110011100001011010011010011001000100111101000001100011111110100001000000111;
+
+    /// Hash the logical `PathMap` and all its values with the provided hash function (which can return [PathMap::INVIS_HASH] to ignore values).
+    //GOAT, do we need to do anything to make sure Merkleization and this hash method are in harmony?
     pub fn hash<VHash : Fn(&V) -> u128>(&self, vhash: VHash) -> u128 {
         unsafe {
         self.read_zipper().into_cata_cached(|bm, hs, mv, _| {
@@ -557,6 +560,23 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
 
         Self::new_with_root_in(subtracted_root_node, subtracted_root_val, self.alloc.clone())
     }
+
+    /// Optimize the `PathMap` by factoring shared subtries using a temporary [Merkle Tree](https://en.wikipedia.org/wiki/Merkle_tree)
+    pub fn merkleize(&mut self) -> MerkleizeResult
+        where V: core::hash::Hash
+    {
+        let Some(root) = self.root() else {
+            return MerkleizeResult::default();
+        };
+        let mut result = MerkleizeResult::default();
+        let mut memo = gxhash::HashMap::default();
+        let (hash, new_root) = merkleize_impl(&mut result, &mut memo, root, self.root_val());
+        result.hash = hash;
+        if let Some(new_root) = new_root {
+            *self.root.get_mut() = Some(new_root);
+        }
+        result
+    }
 }
 
 
@@ -584,6 +604,26 @@ impl<V: Clone + Send + Sync + Unpin, K: AsRef<[u8]>> FromIterator<(K, V)> for Pa
         let mut map = Self::new();
         for (key, val) in iter {
             map.set_val_at(key, val);
+        }
+        map
+    }
+}
+
+impl<'a, V: Clone + Send + Sync + Unpin, K: AsRef<[u8]>> FromIterator<&'a (K, V)> for PathMap<V> {
+    fn from_iter<I: IntoIterator<Item=&'a (K, V)>>(iter: I) -> Self {
+        let mut map = Self::new();
+        for (key, val) in iter {
+            map.set_val_at(key, val.clone());
+        }
+        map
+    }
+}
+
+impl<'a> FromIterator<&'a [u8]> for PathMap<()> {
+    fn from_iter<I: IntoIterator<Item=&'a [u8]>>(iter: I) -> Self {
+        let mut map = Self::new();
+        for key in iter {
+            map.set_val_at(key, ());
         }
         map
     }
@@ -858,10 +898,10 @@ mod tests {
         let rs = ["arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
         rs.iter().enumerate().for_each(|(i, r)| { btm.set_val_at(r.as_bytes(), i); });
 
-        assert_eq!(btm.contains_path(b"can"), true);
-        assert_eq!(btm.contains_path(b"cannon"), true);
-        assert_eq!(btm.contains_path(b"cannonade"), false);
-        assert_eq!(btm.contains_path(b""), true);
+        assert_eq!(btm.path_exists_at(b"can"), true);
+        assert_eq!(btm.path_exists_at(b"cannon"), true);
+        assert_eq!(btm.path_exists_at(b"cannonade"), false);
+        assert_eq!(btm.path_exists_at(b""), true);
     }
 
     #[test]
@@ -1333,6 +1373,62 @@ mod tests {
 
         assert_eq!(map.remove_val_at("how do you do", true), Some("how do you do".to_string()));
         assert_eq!(map.remove_val_at("hello", true), Some("hello".to_string()));
+    }
+
+    #[test]
+    fn val_count_root_value() {
+        let mut map = PathMap::new();
+        map.insert(b"", ());
+        map.insert(b"a", ());
+        assert_eq!(map.val_count(), 2);
+    }
+
+    /// Validates that alg ops on whole maps do the right thing WRT the existence of the root value
+    #[test]
+    fn map_root_val_test1() {
+        let mut map = PathMap::new();
+        map.insert(b"b", ());
+        map.insert(b"a", ());
+        map.insert(b"", ());
+
+        //Validate subtract of identity clears the root val
+        let ident_map = map.clone();
+        let result_map = map.subtract(&ident_map);
+        assert_eq!(result_map.iter().count(), 0);
+
+        //Validate subtract of empty keeps the root val
+        let empty_map = PathMap::new();
+        let result_map = map.subtract(&empty_map);
+        assert_eq!(result_map.iter().count(), 3);
+
+        //Validate subtract of just_root clears it
+        let mut just_root_map = PathMap::new();
+        just_root_map.insert(b"", ());
+        let result_map = map.subtract(&just_root_map);
+        assert_eq!(result_map.iter().count(), 2);
+
+        //Validate subtract of all_but_root keeps it
+        let mut all_but_root_map = PathMap::new();
+        all_but_root_map.insert(b"b", ());
+        all_but_root_map.insert(b"a", ());
+        let result_map = map.subtract(&all_but_root_map);
+        assert_eq!(result_map.iter().count(), 1);
+
+        //Validate meet with empty clears the root val
+        let result_map = map.meet(&empty_map);
+        assert_eq!(result_map.iter().count(), 0);
+
+        //Validate meet with identity leaves the root val
+        let result_map = map.meet(&ident_map);
+        assert_eq!(result_map.iter().count(), 3);
+
+        //Validate meet with just_root keeps it
+        let result_map = map.meet(&just_root_map);
+        assert_eq!(result_map.iter().count(), 1);
+
+        //Validate meet with all_but_root removes it
+        let result_map = map.meet(&all_but_root_map);
+        assert_eq!(result_map.iter().count(), 2);
     }
 }
 

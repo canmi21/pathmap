@@ -34,7 +34,7 @@ The node contract expressed throught the [`TrieNode`] trait dictates that a node
 I think my preferred fix would be to change the trait methods to reflect the implications of values associated with node roots.
 
 For example, a ByteNode currently is defined (conceptually) as:
-```rust
+```rust, ignore
     pub struct ByteNode<V> {
         mask: [u64; 4],
         values: Vec<CoFree<V>>,
@@ -46,7 +46,7 @@ For example, a ByteNode currently is defined (conceptually) as:
 ```
 
 Under the new proposal, it'd be defined (conceptually) as:
-```rust
+```rust, ignore
     pub struct ByteNode<V> {
         root: Option<V>,
         mask: [u64; 4],

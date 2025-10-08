@@ -71,8 +71,7 @@ static GLOBAL: Jemalloc = Jemalloc;
 pub mod ring;
 
 /// A collection indexed by paths of bytes, supporting [algebraic](crate::ring) operations
-//GOAT-old-names, this mod shouldn't be pub, because it only contains one public object which is re-exported here
-pub mod trie_map;
+mod trie_map;
 pub use trie_map::PathMap;
 
 /// Cursors that can move over a trie, to inspect and modify contained elements or entire branches
@@ -105,6 +104,9 @@ pub mod zipper_tracking;
 #[cfg(not(feature = "zipper_tracking"))]
 mod zipper_tracking;
 
+/// Only includes PolyZipper tests.  The real implementation is in the `pathmap-derive` crate
+mod poly_zipper;
+
 /// Used to create multiple simultaneous zippers from the same parent
 mod zipper_head;
 
@@ -130,6 +132,7 @@ pub mod tree_serialization;
 mod trie_node;
 mod write_zipper;
 mod product_zipper;
+mod empty_zipper;
 mod prefix_zipper;
 mod overlay_zipper;
 mod trie_ref;
@@ -598,7 +601,11 @@ mod tests {
             // test_key_len(16777216); //2^24 bytes
             // test_key_len(67108864); //2^26 bytes
             // test_key_len(268435456); //2^28 bytes
-            // test_key_len(1073741824); //2^30 bytes //Still no failure at 1GB keys
+            // test_key_len(1073741824); //2^30 bytes - 1GB keys
+            // test_key_len(2147483648); //2^31 bytes - 2GB keys
+            // test_key_len(4294967296); //2^32 bytes - 4GB keys
+            // test_key_len(8589934592); //2^33 bytes - 8GB keys
+            // test_key_len(17179869184); //2^34 bytes - Still no failure at 16GB keys
         }
     }
 

@@ -85,7 +85,7 @@ use crate::{
     zipper::{
         Zipper, ZipperValues, ZipperForking, ZipperAbsolutePath, ZipperIteration,
         ZipperMoving, ZipperPathBuffer, ZipperReadOnlyValues,
-        ZipperConcretePriv, ZipperConcrete, ZipperReadOnlyConditionalValues,
+        ZipperConcrete, ZipperReadOnlyConditionalValues,
     },
 };
 
@@ -715,7 +715,7 @@ where Storage: AsRef<[u8]>
             match cur_node {
                 Node::Line(line) => {
                     let lpath = self.get_line(line.path);
-                    if !path.starts_with(lpath) {
+                    if !starts_with(path, lpath) {
                         return None;
                     }
                     path = &path[lpath.len()..];
@@ -1068,6 +1068,7 @@ fn build_arena_tree<V, Z, F>(zipper: Z, map_val: F) -> ArenaCompactTree<Vec<u8>>
 
 use std::io::{BufWriter, Seek, SeekFrom};
 use std::fs::{File, OpenOptions};
+use crate::utils::starts_with;
 
 pub struct FileDumper {
     buf_writer: BufWriter<File>,
@@ -1701,18 +1702,13 @@ where Storage: AsRef<[u8]>
     }
 }
 
-impl<'tree, Storage, Value> ZipperConcretePriv for ACTZipper<'tree, Storage, Value>
+impl<'tree, Storage, Value> ZipperConcrete for ACTZipper<'tree, Storage, Value>
 where Storage: AsRef<[u8]>
 {
     fn shared_node_id(&self) -> Option<u64> {
         // TODO: no way to detect now
         None
     }
-}
-
-impl<'tree, Storage, Value> ZipperConcrete for ACTZipper<'tree, Storage, Value>
-where Storage: AsRef<[u8]>
-{
     fn is_shared(&self) -> bool {
         // TODO: no way to detect now
         false

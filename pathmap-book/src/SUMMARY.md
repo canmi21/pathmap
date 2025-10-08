@@ -3,6 +3,7 @@
 # Concepts and Basic Usage
 
 - [PathMap Intro](./1.00.00_intro.md)
+    - [Basic Structure](./1.00.01_basics.md)
 - [Algebraic Operations](./1.01.00_algebraic_ops.md)
     - [Traits and Values](./1.01.01_algebraic_traits.md)
 - [Zippers](./1.02.00_zippers.md)
@@ -11,11 +12,13 @@
     - [Paths and Absolute Paths](1.02.03_zipper_paths.md)
     - [Focus Moving](1.02.04_zipper_moving.md)
     - [Iteration](./1.02.05_zipper_iter.md)
-    - [Modifying the Space](./1.02.06_zipper_writing.md)
-    - [Algebra on Subspaces](./1.02.07_zipper_algebra.md)
+    - [Modifying the Trie](./1.02.06_zipper_writing.md)
+    - [Algebra on Subtries](./1.02.07_zipper_algebra.md)
 - [Concurrent Zippers](./1.03.00_multi_zipper.md)
-- [Abstract Spaces](./1.04.00_abstract_zippers.md)
+    - [Multi-threading](./1.03.01_multithreading.md)
+- [Abstract Zippers and Virtual Tries](./1.04.00_abstract_zippers.md)
 - [Morphisms](./1.05.00_morphisms.md)
+- [Serialization and Deserialization](./1.06.00_serialize_deserilize.md)
 
 # Building a Database on Pathmap
 

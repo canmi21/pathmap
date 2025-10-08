@@ -868,3 +868,11 @@ fn find_prefix_overlap_test() {
         assert_eq!(overlap, test.2);
     }
 }
+
+#[inline(always)]
+pub fn starts_with(x: &[u8], y: &[u8]) -> bool {
+    if y.len() == 0 { return true }
+    if x.len() == 0 { return false }
+    if y.len() > x.len() { return false }
+    find_prefix_overlap(x, y) == y.len()
+}

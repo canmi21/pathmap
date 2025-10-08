@@ -1765,7 +1765,7 @@ mod tests {
             }
             invocations += 1;
         });
-        assert_eq!(map.val_count(), 5);
+        assert_eq!(map.val_count(), 6);
         assert_eq!(invocations, 6);
 
         // Generate all 3-lenght 'L' | 'R' permutations

@@ -3,12 +3,22 @@ name = "pathmap"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
+license = "MIT"
 description = "A key-value store with prefix compression, structural sharing, and powerful algebraic operations"
-exclude = ["benches/", "pathmap-book/", ".*"]
+repository = "https://github.com/adam-Vandervorst/pathMap/"
+keywords = ["trie", "MORK", "path", "algebra"]
+categories = ["algorithms", "data-structures", "database-implementations"]
+readme = "README.md"
+exclude = ["target/", "benches/", "pathmap-book/", ".*"]
+
+[lib]
+name = "pathmap"
+path = "src/lib.rs"
 
 [dependencies]
+pathmap-derive = { path = "./pathmap-derive" }
 maybe-dangling = "0.1.1"
-dyn-clone = "1.0.17"
+dyn-clone = "1.0.17" # NOTE, we can eliminate this when we eliminate `!slim_ptrs`
 local-or-heap = "0.1.0"
 reusing-vec = {version = "0.2.0", features = ["smallvec"]}
 smallvec = {version = "1.13.2", features = ["union"]}
@@ -99,3 +109,7 @@ harness = false
 [[bench]]
 name = "product_zipper"
 harness = false
+
+[workspace]
+members = ["pathmap-derive"]
+resolver = "2"

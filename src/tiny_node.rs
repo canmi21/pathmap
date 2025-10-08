@@ -11,7 +11,7 @@ use core::mem::MaybeUninit;
 use core::fmt::{Debug, Formatter};
 use std::collections::HashMap;
 
-use crate::utils::{ByteMask, find_prefix_overlap};
+use crate::utils::{ByteMask, find_prefix_overlap, starts_with};
 use crate::alloc::Allocator;
 use crate::trie_node::*;
 use crate::ring::*;
@@ -127,7 +127,7 @@ impl<'a, V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for TinyRefNode<'a
         find_prefix_overlap(self.key(), key)
     }
     fn node_contains_partial_key(&self, key: &[u8]) -> bool {
-        if self.key().starts_with(key) {
+        if starts_with(self.key(), key) {
             true
         } else {
             false
@@ -156,7 +156,7 @@ impl<'a, V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for TinyRefNode<'a
         let self_key = self.key();
         debug_assert!(results.len() >= keys.len());
         for ((key, expect_val), (result_key_len, payload_ref)) in keys.into_iter().zip(results.into_iter()) {
-            if key.starts_with(self_key) {
+            if starts_with(key, self_key) {
                 let self_key_len = self_key.len();
                 if self.is_child_ptr() {
                     if !*expect_val || self_key_len < key.len() {
@@ -227,7 +227,7 @@ impl<'a, V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for TinyRefNode<'a
     fn node_first_val_depth_along_key(&self, key: &[u8]) -> Option<usize> {
         debug_assert!(key.len() > 0);
         let node_key = self.key();
-        if self.is_used_val() && key.starts_with(node_key) {
+        if self.is_used_val() && starts_with(key, node_key) {
             Some(node_key.len() - 1)
         } else {
             None
@@ -267,7 +267,7 @@ impl<'a, V: Clone + Send + Sync, A: Allocator> TrieNode<V, A> for TinyRefNode<'a
         }
 
         //Otherwise check to see if we need to make a sub-node.
-        if node_key.len() > key.len() && node_key.starts_with(key) {
+        if node_key.len() > key.len() && starts_with(node_key, key) {
             let new_key = &node_key[key.len()..];
             let ref_node = TinyRefNode::new_in(self.is_child_ptr(), new_key, self.payload, self.alloc.clone());
             return AbstractNodeRef::BorrowedTiny(ref_node)

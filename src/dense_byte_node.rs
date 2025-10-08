@@ -1746,9 +1746,10 @@ impl<V: Clone + Send + Sync + Lattice, A: Allocator, Cf: CoFree<V=V, A=A>, Other
         let val = self.val().pmeet(&other.val());
         self.combine_algebraic_results(other, rec, val)
     }
-    fn join_all(_xs: &[&Self]) -> Self where Self: Sized {
-        unreachable!() //Currently not used
-    }
+    //GOAT, HeteroLattice will totally disappear when we do the policy refactor
+    // fn join_all(_xs: &[&Self]) -> Self where Self: Sized {
+    //     unreachable!() //Currently not used
+    // }
     fn convert(other: OtherCf) -> Self {
         Self::from_cf(other)
     }
@@ -2103,40 +2104,41 @@ impl<V: Clone + Send + Sync + Lattice, A: Allocator, Cf: CoFree<V=V, A=A>, Other
         }
     }
 
-    fn join_all(xs: &[&Self]) -> Self {
-        let alloc = xs[0].alloc.clone();
-        let mut jm: ByteMask = ByteMask::EMPTY;
-        for x in xs.iter() {
-            jm |= x.mask;
-        }
+    //GOAT, kept for now, for reference, but this code is unreachable using the current Lattice interface
+    // fn join_all(xs: &[&Self]) -> Self {
+    //     let alloc = xs[0].alloc.clone();
+    //     let mut jm: ByteMask = ByteMask::EMPTY;
+    //     for x in xs.iter() {
+    //         jm |= x.mask;
+    //     }
 
-        let jmc = [jm.0[0].count_ones(), jm.0[1].count_ones(), jm.0[2].count_ones(), jm.0[3].count_ones()];
+    //     let jmc = [jm.0[0].count_ones(), jm.0[1].count_ones(), jm.0[2].count_ones(), jm.0[3].count_ones()];
 
-        let len = (jmc[0] + jmc[1] + jmc[2] + jmc[3]) as usize;
-        let mut v = ValuesVec::with_capacity_in(len, alloc.clone());
-        let new_v = v.v.spare_capacity_mut();
+    //     let len = (jmc[0] + jmc[1] + jmc[2] + jmc[3]) as usize;
+    //     let mut v = ValuesVec::with_capacity_in(len, alloc.clone());
+    //     let new_v = v.v.spare_capacity_mut();
 
-        let mut c = 0;
+    //     let mut c = 0;
 
-        for i in 0..4 {
-            let mut lm = jm.0[i];
-            while lm != 0 {
-                // this body runs at most 256 times, in the case there is 100% overlap between full nodes
-                let index = lm.trailing_zeros();
+    //     for i in 0..4 {
+    //         let mut lm = jm.0[i];
+    //         while lm != 0 {
+    //             // this body runs at most 256 times, in the case there is 100% overlap between full nodes
+    //             let index = lm.trailing_zeros();
 
-                //GOAT, allocating a temp buffer likely undoes the gains from join_all
-                let to_join: Vec<&Cf> = xs.iter().enumerate().filter_map(|(i, x)| x.get(i as u8)).collect();
-                let joined = HeteroLattice::<Cf>::join_all(&to_join[..]);
-                unsafe { new_v.get_unchecked_mut(c).write(joined) };
+    //             //GOAT, allocating a temp buffer likely undoes the gains from join_all
+    //             let to_join: Vec<&Cf> = xs.iter().enumerate().filter_map(|(i, x)| x.get(i as u8)).collect();
+    //             let joined = HeteroLattice::<Cf>::join_all(&to_join[..]);
+    //             unsafe { new_v.get_unchecked_mut(c).write(joined) };
 
-                lm ^= 1u64 << index;
-                c += 1;
-            }
-        }
+    //             lm ^= 1u64 << index;
+    //             c += 1;
+    //         }
+    //     }
 
-        unsafe{ v.v.set_len(c); }
-        return Self::new_with_fields_in(jm, v, alloc);
-    }
+    //     unsafe{ v.v.set_len(c); }
+    //     return Self::new_with_fields_in(jm, v, alloc);
+    // }
     fn convert(other: ByteNode<OtherCf, A>) -> Self {
         let mut values = ValuesVec::with_capacity_in(other.values.len(), other.alloc.clone());
         for other_cf in other.values {
