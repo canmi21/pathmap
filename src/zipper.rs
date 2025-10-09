@@ -7,9 +7,10 @@
 //!
 
 use maybe_dangling::MaybeDangling;
+use fast_slice_utils::find_prefix_overlap;
 
 use crate::alloc::{Allocator, GlobalAlloc};
-use crate::utils::{ByteMask, find_prefix_overlap};
+use crate::utils::ByteMask;
 use crate::trie_node::*;
 use crate::PathMap;
 

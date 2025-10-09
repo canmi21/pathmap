@@ -1,5 +1,6 @@
 use std::borrow::Cow;
-use crate::utils::{starts_with, ByteMask};
+use fast_slice_utils::{find_prefix_overlap, starts_with};
+use crate::utils::ByteMask;
 use crate::zipper::*;
 
 enum PrefixPos {
@@ -323,7 +324,7 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
         if let PrefixPos::Prefix { valid } = &self.position {
             let valid = *valid;
             let rest_prefix = &self.prefix[self.origin_depth + valid..];
-            let overlap = crate::utils::find_prefix_overlap(rest_prefix, path);
+            let overlap = find_prefix_overlap(rest_prefix, path);
             path = &path[overlap..];
             self.set_valid(valid + overlap);
             descended += overlap;

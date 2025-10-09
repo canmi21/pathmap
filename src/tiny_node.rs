@@ -11,7 +11,8 @@ use core::mem::MaybeUninit;
 use core::fmt::{Debug, Formatter};
 use std::collections::HashMap;
 
-use crate::utils::{ByteMask, find_prefix_overlap, starts_with};
+use fast_slice_utils::{find_prefix_overlap, starts_with};
+use crate::utils::ByteMask;
 use crate::alloc::Allocator;
 use crate::trie_node::*;
 use crate::ring::*;

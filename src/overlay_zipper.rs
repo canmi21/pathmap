@@ -16,6 +16,7 @@
 // with ZipperValues, etc. because we don't have a place to store the newly created value
 //
 
+use fast_slice_utils::find_prefix_overlap;
 use crate::utils::{BitMask, ByteMask};
 use crate::zipper::{Zipper, ZipperMoving, ZipperIteration, ZipperValues};
 
@@ -213,7 +214,6 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
     }
 
     fn descend_until(&mut self) -> bool {
-        use crate::utils::find_prefix_overlap;
         let start_depth = self.a.path().len();
         let desc_a = self.a.descend_until();
         let desc_b = self.b.descend_until();

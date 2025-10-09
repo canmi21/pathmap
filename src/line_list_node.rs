@@ -2,9 +2,10 @@ use core::hint::unreachable_unchecked;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use std::collections::HashMap;
 
+use fast_slice_utils::{find_prefix_overlap, starts_with};
 use local_or_heap::LocalOrHeap;
 
-use crate::utils::{BitMask, ByteMask, find_prefix_overlap, starts_with};
+use crate::utils::{BitMask, ByteMask};
 use crate::alloc::Allocator;
 use crate::trie_node::*;
 use crate::ring::*;
