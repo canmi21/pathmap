@@ -7,9 +7,10 @@
 //!
 
 use maybe_dangling::MaybeDangling;
+use fast_slice_utils::find_prefix_overlap;
 
 use crate::alloc::{Allocator, GlobalAlloc};
-use crate::utils::{ByteMask, find_prefix_overlap};
+use crate::utils::ByteMask;
 use crate::trie_node::*;
 use crate::PathMap;
 
@@ -23,6 +24,28 @@ pub use crate::track_path::{TrackPath};
 pub use crate::empty_zipper::{EmptyZipper};
 pub use crate::poly_zipper::PolyZipper;
 use crate::zipper_tracking::*;
+
+
+
+// mod goat {
+//     use crate as pathmap;
+//     use pathmap::*;
+//     use pathmap::zipper::*;
+
+//     #[derive(PolyZipper)]
+//     enum MyPolyZipper<'trie, 'path, V: Clone + Send + Sync + Unpin> {
+//         Tracked(ReadZipperTracked<'trie, 'path, V>),
+//         Untracked(ReadZipperUntracked<'trie, 'path, V>),
+//     }
+
+//     #[test]
+//     pub fn goat_f() {
+//         let map = PathMap::<()>::new();
+        
+//         let x = MyPolyZipper::from(map.read_zipper());
+//     }
+// }
+
 
 /// The most fundamantal interface for a zipper, compatible with all zipper types
 pub trait Zipper {
