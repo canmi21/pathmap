@@ -79,6 +79,8 @@
 use std::{io::Write, hash::Hasher};
 use std::cell::Cell;
 use std::marker::PhantomData;
+use fast_slice_utils::starts_with;
+
 use crate::{
     morphisms::Catamorphism,
     utils::{BitMask, ByteMask, find_prefix_overlap},
@@ -1068,7 +1070,6 @@ fn build_arena_tree<V, Z, F>(zipper: Z, map_val: F) -> ArenaCompactTree<Vec<u8>>
 
 use std::io::{BufWriter, Seek, SeekFrom};
 use std::fs::{File, OpenOptions};
-use crate::utils::starts_with;
 
 pub struct FileDumper {
     buf_writer: BufWriter<File>,
