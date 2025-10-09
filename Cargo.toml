@@ -33,7 +33,7 @@ fast-slice-utils = "0.1.0"
 
 [features]
 default = ["graft_root_vals", "slim_ptrs", "serialization"]
-nightly = [] # Uses features in the nightly tool chain for better performance, and the allocator and coroutine APIs
+nightly = ["fast-slice-utils/nightly"] # Uses features in the nightly tool chain for better performance, and the allocator and coroutine APIs
 jemalloc = ["dep:tikv-jemallocator"] # Enables [jemalloc](https://jemalloc.net/) as the default allocator.  This dramatically improves scaling for write-heavy workloads and is generally recommended.  The only reason it is not the default is to avoid interference with the host application allocator.
 zipper_tracking = [] #Exports the zipper_tracking module publicly
 all_dense_nodes = [] # Exclusively use the DenseByteNode type, which generally performs worse but is useful for compatibility and perf comparisons.
