@@ -4,7 +4,7 @@
 //!
 
 use std::collections::HashMap;
-
+use std::ptr::null_mut;
 use crate::PathMap;
 use crate::alloc::{global_alloc, Allocator};
 use crate::write_zipper::ZipperWriting;
@@ -302,7 +302,7 @@ fn int_range_generator_5() {
     drop(buildz);
     let mut z = zh.read_zipper_at_path(&[0]).unwrap();
 
-    z.descend_until(None);
+    z.descend_until(null_mut());
     z.descend_first_byte();
     let _z2 = zh.read_zipper_at_path(z.origin_path()).unwrap();
 

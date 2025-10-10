@@ -300,7 +300,7 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
                     }
                 }
 
-                fn descend_until(&mut self, mut dst_path: Option<&mut Vec<u8>>) -> bool {
+                fn descend_until(&mut self, mut dst_path: *mut u8) -> usize {
                     match self {
                         #(#variant_arms => inner.descend_until(dst_path),)*
                     }

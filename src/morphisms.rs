@@ -61,6 +61,7 @@
 //! operations produce structural sharing so the ordinary `factored` methods will likely be more efficient.
 //!
 use core::convert::Infallible;
+use std::ptr::null_mut;
 use reusing_vec::ReusingQueue;
 
 use crate::utils::*;
@@ -415,7 +416,7 @@ fn cata_side_effect_body<'a, Z, V: 'a, W, Err, AlgF, const JUMPING: bool>(mut z:
         //Descend to the next forking point, or leaf
         let mut is_leaf = false;
         while z.child_count() < 2 {
-            if !z.descend_until(None) {
+            if z.descend_until(null_mut()) == 0 {
                 is_leaf = true;
                 break;
             }
@@ -735,7 +736,7 @@ fn into_cata_cached_body<'a, Z, V: 'a, W, E, AlgF, Cache, const JUMPING: bool>(
             // Descend until leaf or branch
             let mut is_leaf = false;
             'descend: while zipper.child_count() < 2 {
-                if !zipper.descend_until(None) {
+                if zipper.descend_until(null_mut()) == 0 {
                     is_leaf = true;
                     break 'descend;
                 }

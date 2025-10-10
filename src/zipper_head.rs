@@ -451,6 +451,7 @@ mod tests {
     use crate::zipper::*;
     use crate::tests::prefix_key;
     use std::{thread, thread::ScopedJoinHandle};
+    use std::ptr::null_mut;
 
     #[test]
     fn parallel_insert_test() {
@@ -1038,7 +1039,7 @@ mod tests {
         let mut z = zh.read_zipper_at_path(b"A").unwrap();
         assert_eq!(z.val(), Some(&24));
         assert_eq!(z.to_next_sibling_byte(), None);
-        z.descend_until(None);
+        z.descend_until(null_mut());
         assert_eq!(z.path(), b"BCDEFG");
         assert_eq!(z.origin_path(), b"ABCDEFG");
         assert_eq!(z.val(), Some(&42));
@@ -1406,7 +1407,7 @@ mod tests {
 
         //Make sure we cleaned up the dangling path, but nothing else
         let mut rz = zh.read_zipper_at_borrowed_path(b"a_path_").unwrap();
-        assert!(rz.descend_until(None));
+        assert_ne!(rz.descend_until(null_mut()), 0);
         assert_eq!(rz.path(), b"to_somewhere");
         drop(rz);
 
@@ -1415,7 +1416,7 @@ mod tests {
         zh.cleanup_write_zipper(wz);
         let mut rz = zh.read_zipper_at_borrowed_path(b"a_path_").unwrap();
         assert_eq!(rz.path(), b"");
-        assert!(rz.descend_until(None));
+        assert_ne!(rz.descend_until(null_mut()), 0);
         assert_eq!(rz.path(), b"to_somewhere");
         drop(rz);
 

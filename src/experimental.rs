@@ -1,5 +1,6 @@
-#![allow(warnings)] 
+#![allow(warnings)]
 
+use std::ptr::null_mut;
 use crate::alloc::Allocator;
 use crate::utils::ByteMask;
 use crate::PathMap;
@@ -55,10 +56,10 @@ impl ZipperMoving for FullZipper {
         self.path.push(0);
         Some(0)
     }
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
+    fn descend_until(&mut self, mut dst_path: *mut u8) -> usize {
         self.path.push(0); // not sure?
-        if let Some(dst) = dst { dst.push(0) }
-        true
+        if dst_path != null_mut() { unsafe { *dst_path = 0 } }
+        1
     }
     fn ascend(&mut self, steps: usize) -> usize {
         if steps > self.path.len() {

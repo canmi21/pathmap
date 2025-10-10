@@ -239,8 +239,8 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         self.ensure_descend_next_factor();
         result
     }
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
-        let result = self.z.descend_until(dst);
+    fn descend_until(&mut self, mut dst_path: *mut u8) -> usize {
+        let result = self.z.descend_until(dst_path);
         self.ensure_descend_next_factor();
         result
     }
@@ -726,19 +726,19 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
     fn descend_first_byte(&mut self) -> Option<u8> {
         self.descend_indexed_byte(0)
     }
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
+    fn descend_until(&mut self, mut dst_path: *mut u8) -> usize {
         self.enter_factors();
         let rv = if let Some(idx) = self.factor_idx(false) {
             let zipper = &mut self.secondary[idx];
             let before = zipper.path().len();
-            let rv = zipper.descend_until(dst);
+            let rv = zipper.descend_until(dst_path);
             let path = zipper.path();
             if path.len() > before {
                 self.primary.descend_to(&path[before..]);
             }
             rv
         } else {
-            self.primary.descend_until(dst)
+            self.primary.descend_until(dst_path)
         };
         self.enter_factors();
         rv

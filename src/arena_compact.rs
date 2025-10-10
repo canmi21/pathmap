@@ -1871,7 +1871,7 @@ where Storage: AsRef<[u8]>
 
     /// Descends the zipper's focus until a branch or a value is encountered.  Returns `true` if the focus
     /// moved otherwise returns `false`
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
+    fn descend_until(&mut self, mut dst_path: *mut u8) -> usize {
         self.trace_pos();
         let mut descended = false;
         let orig_len = self.path.len();

@@ -1,3 +1,4 @@
+use std::ptr::null_mut;
 use crate::{
     utils::ByteMask,
     zipper::{
@@ -34,15 +35,17 @@ impl<Z: ZipperMoving> PathTracker<Z> {
         zipper.reset();
         Self {
             zipper,
-            path: Vec::new(),
+            path: Vec::with_capacity(1 << 32), // GOAT, descend_until doesn't have a growth limit
             origin_len: 0,
         }
     }
     pub fn with_origin(mut zipper: Z, origin: &[u8]) -> Self {
         zipper.reset();
+        let mut path = origin.to_vec();
+        path.reserve(1 << 32); // GOAT
         Self {
             zipper,
-            path: origin.to_vec(),
+            path: path,
             origin_len: origin.len(),
         }
     }
@@ -131,11 +134,13 @@ impl<Z: ZipperMoving> ZipperMoving for PathTracker<Z> {
         self.path.push(byte);
         Some(byte)
     }
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
+    fn descend_until(&mut self, mut dst_path: *mut u8) -> usize {
         let orig_len = self.path.len();
-        let descended = self.zipper.descend_until(Some(&mut self.path));
-        if let Some(dst) = dst {
-            dst.extend_from_slice(&self.path[orig_len..]);
+        let ptr = self.path.as_mut_ptr();
+        let descended = self.zipper.descend_until(unsafe{ ptr.add(self.path.len()) });
+        unsafe { self.path.set_len(self.path.len() + descended) }
+        if dst_path != null_mut() {
+            unsafe { std::ptr::copy_nonoverlapping(self.path.as_ptr().add(orig_len), dst_path, self.path.len() - orig_len) }
         }
         descended
     }

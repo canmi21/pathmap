@@ -16,6 +16,7 @@
 // with ZipperValues, etc. because we don't have a place to store the newly created value
 //
 
+use std::ptr::null_mut;
 use fast_slice_utils::find_prefix_overlap;
 use crate::utils::{BitMask, ByteMask};
 use crate::zipper::{Zipper, ZipperMoving, ZipperPath, ZipperIteration, ZipperValues};
@@ -212,36 +213,36 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         Some(byte)
     }
 
-    fn descend_until(&mut self, _dst: Option<&mut Vec<u8>>) -> bool {
+    fn descend_until(&mut self, mut dst_path: *mut u8) -> usize {
         // TODO: track dst
         let start_depth = self.a.path().len();
-        let desc_a = self.a.descend_until(None);
-        let desc_b = self.b.descend_until(None);
+        let desc_a = self.a.descend_until(null_mut());
+        let desc_b = self.b.descend_until(null_mut());
         let path_a = &self.a.path()[start_depth..];
         let path_b = &self.b.path()[start_depth..];
-        if !desc_a && !desc_b {
-            return false;
+        if desc_a == 0 && desc_b == 0 {
+            return 0;
         }
-        if !desc_a && desc_b {
+        if desc_a == 0 && desc_b != 0 {
             if self.a.child_count() == 0 {
                 self.a.descend_to(path_b);
-                return true;
+                return desc_b;
             } else {
                 let to_ascend = self.b.path().len() - start_depth;
                 let ascended = self.b.ascend(to_ascend);
                 debug_assert_eq!(ascended, to_ascend);
-                return false;
+                return 0;
             }
         }
-        if desc_a && !desc_b {
+        if desc_a != 0 && desc_b == 0 {
             if self.b.child_count() == 0 {
                 self.b.descend_to(path_a);
-                return true;
+                return desc_a;
             } else {
                 let to_ascend = self.a.path().len() - start_depth;
                 let ascended = self.a.ascend(to_ascend);
                 debug_assert_eq!(ascended, to_ascend);
-                return false;
+                return 0;
             }
         }
         let overlap = find_prefix_overlap(path_a, path_b);
@@ -255,7 +256,7 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
             let ascended = self.b.ascend(to_ascend);
             debug_assert_eq!(ascended, to_ascend);
         }
-        overlap > 0
+        overlap
     }
 
     fn ascend(&mut self, steps: usize) -> usize {

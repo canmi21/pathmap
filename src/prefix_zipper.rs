@@ -368,21 +368,21 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
         self.descend_indexed_byte(0)
     }
 
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
+    fn descend_until(&mut self, mut dst_path: *mut u8) -> usize {
         if self.position.is_invalid() {
-            return false;
+            return 0;
         }
         if let Some(prefixed_depth) = self.position.prefixed_depth() {
             self.path.extend_from_slice(&self.prefix[self.origin_depth + prefixed_depth..]);
             self.position = PrefixPos::Source;
         }
-        let len_before = self.source.path().len();
-        if !self.source.descend_until(dst) {
-            return false;
+        let descended = self.source.descend_until(dst_path);
+        if descended == 0 {
+            return 0;
         }
         let path = self.source.path();
-        self.path.extend_from_slice(&path[len_before..]);
-        true
+        self.path.extend_from_slice(&path[path.len()-descended..]);
+        descended
     }
 
     #[inline]

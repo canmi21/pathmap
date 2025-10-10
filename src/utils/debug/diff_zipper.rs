@@ -1,4 +1,4 @@
-
+use std::ptr::null_mut;
 use crate::alloc::Allocator;
 use crate::zipper::*;
 use crate::utils::ByteMask;
@@ -123,9 +123,9 @@ impl<A: Zipper + ZipperMoving, B: Zipper + ZipperMoving> ZipperMoving for DiffZi
         assert_eq!(a, b);
         a
     }
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
-        let a = self.a.descend_until(dst);
-        let b = self.b.descend_until(None);
+    fn descend_until(&mut self, mut dst_path: *mut u8) -> usize {
+        let a = self.a.descend_until(dst_path);
+        let b = self.b.descend_until(null_mut());
         if self.log_moves {
             println!("DiffZipper: descend_until")
         }
