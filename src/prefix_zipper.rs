@@ -359,7 +359,8 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
     fn descend_indexed_byte(&mut self, child_idx: usize) -> Option<u8> {
         let mask = self.child_mask();
         let byte = mask.indexed_bit::<true>(child_idx)?;
-        debug_assert!(self.descend_to_byte(byte));
+        let descended = self.descend_to_byte(byte);
+        debug_assert!(descended);
         Some(byte)
     }
 

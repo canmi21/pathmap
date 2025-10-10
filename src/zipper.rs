@@ -3505,10 +3505,11 @@ pub(crate) mod zipper_moving_tests {
     pub const ZIPPER_INDEXED_MOVEMENT_TEST1_KEYS: &[&[u8]] = &[b"arrow", b"bow", b"cannon", b"romane", b"romanus", b"romulus", b"rubens", b"ruber", b"rubicon", b"rubicundus", b"rom'i"];
 
     pub fn indexed_zipper_movement1<Z: ZipperMoving + ZipperPath>(mut zipper: Z) {
-        //descends a single specific byte using `descend_indexed_byte`. Just for testing. A real user would use `descend_towards`
+        //descends a single specific byte using `descend_indexed_byte`. Just for testing. A real user would use `descend_to` or `descend_to_byte`
         fn descend_byte<Z: Zipper + ZipperMoving + ZipperPath>(zipper: &mut Z, byte: u8) {
             for i in 0..zipper.child_count() {
-                assert!(zipper.descend_indexed_byte(i).is_some());
+                let descended = zipper.descend_indexed_byte(i);
+                assert!(descended.is_some());
                 if *zipper.path().last().unwrap() == byte {
                     break
                 } else {
