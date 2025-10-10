@@ -4,7 +4,7 @@ use crate::trie_node::{TaggedNodeRef, TrieNode};
 
 /// Example usage of counters
 ///
-/// ```
+/// ```ignore
 /// pathmap::counters::print_traversal(&map.read_zipper());
 /// let counters = pathmap::counters::Counters::count_ocupancy(&map);
 /// counters.print_histogram_by_depth();

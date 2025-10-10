@@ -7,10 +7,11 @@ use crate::{
     },
 };
 
-/// Wrapper for blind zippers that allows tracking path
+/// Wrapper to implement [`ZipperPaths`] for zipper types that implement `ZipperMoving`.
+/// This is useful for tracking the path of "blind" zipper types
 ///
-/// This allows having nested virtual zippers that don't maintain their
-/// own path buffer, such that they don't repeat the work of copying paths.
+/// The "blind" zipper pattern enables nested virtual zippers to efficiently compose,
+/// without repeating the work of copying paths.
 ///
 /// Example:
 /// ```rust
