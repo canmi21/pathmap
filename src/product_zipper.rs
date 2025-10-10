@@ -504,7 +504,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ,
         let Some(&byte) = self.path().last() else {
             return None;
         };
-        debug_assert_eq!(self.ascend(1), 1, "must ascend");
+        let ascended = self.ascend(1);
+        debug_assert_eq!(ascended, 1, "must ascend");
         let child_mask = self.child_mask();
         let Some(sibling_byte) = (if next {
             child_mask.next_bit(byte)
