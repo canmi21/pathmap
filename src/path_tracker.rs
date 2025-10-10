@@ -11,13 +11,25 @@ use crate::{
 ///
 /// This allows having nested virtual zippers that don't maintain their
 /// own path buffer, such that they don't repeat the work of copying paths.
-pub struct TrackPath<Z> {
+///
+/// Example:
+/// ```rust
+/// use crate::pathmap::zipper::{ZipperPath, ZipperMoving};
+/// // the example uses `PathMap`, but this works with any zipper.
+/// let btm = pathmap::PathMap::from_iter([(b"hello", ())]);
+/// let zipper = btm.read_zipper();
+/// let mut with_path = pathmap::zipper::PathTracker::new(zipper);
+/// assert_eq!(with_path.descend_to_existing("hello"), 5);
+/// println!("current path: {:?}", with_path.path());
+/// assert_eq!(with_path.path(), b"hello");
+/// ```
+pub struct PathTracker<Z> {
     zipper: Z,
     path: Vec<u8>,
     origin_len: usize,
 }
 
-impl<Z: ZipperMoving> TrackPath<Z> {
+impl<Z: ZipperMoving> PathTracker<Z> {
     pub fn new(mut zipper: Z) -> Self {
         zipper.reset();
         Self {
@@ -36,13 +48,13 @@ impl<Z: ZipperMoving> TrackPath<Z> {
     }
 }
 
-impl<Z: Zipper> Zipper for TrackPath<Z> {
+impl<Z: Zipper> Zipper for PathTracker<Z> {
     #[inline] fn path_exists(&self) -> bool { self.zipper.path_exists() }
     #[inline] fn is_val(&self) -> bool { self.zipper.is_val() }
     #[inline] fn child_count(&self) -> usize { self.zipper.child_count() }
     #[inline] fn child_mask(&self) -> ByteMask { self.zipper.child_mask() }
 }
-impl<Z: ZipperMoving> ZipperMoving for TrackPath<Z> {
+impl<Z: ZipperMoving> ZipperMoving for PathTracker<Z> {
     #[inline] fn at_root(&self) -> bool { self.zipper.at_root() }
     fn reset(&mut self) {
         self.zipper.reset();
@@ -132,26 +144,26 @@ impl<Z: ZipperMoving> ZipperMoving for TrackPath<Z> {
     // fn to_next_step(&mut self) -> bool;
 }
 
-impl<Z: ZipperMoving> ZipperIteration for TrackPath<Z> { }
+impl<Z: ZipperMoving> ZipperIteration for PathTracker<Z> { }
 
-impl<Z: ZipperMoving> ZipperPath for TrackPath<Z> {
+impl<Z: ZipperMoving> ZipperPath for PathTracker<Z> {
     fn path(&self) -> &[u8] { &self.path[self.origin_len..] }
 }
 
-impl<Z: ZipperMoving> ZipperAbsolutePath for TrackPath<Z> {
+impl<Z: ZipperMoving> ZipperAbsolutePath for PathTracker<Z> {
     fn origin_path(&self) -> &[u8] { &self.path }
     fn root_prefix_path(&self) -> &[u8] { &self.path[..self.origin_len] }
 }
 
-impl<Z: ZipperValues<V>, V> ZipperValues<V> for TrackPath<Z> {
+impl<Z: ZipperValues<V>, V> ZipperValues<V> for PathTracker<Z> {
     fn val(&self) -> Option<&V> { self.zipper.val() }
 }
 
-impl<'a, Z: ZipperReadOnlyValues<'a, V>, V> ZipperReadOnlyValues<'a, V> for TrackPath<Z> {
+impl<'a, Z: ZipperReadOnlyValues<'a, V>, V> ZipperReadOnlyValues<'a, V> for PathTracker<Z> {
     fn get_val(&self) -> Option<&'a V> { self.zipper.get_val() }
 }
 
-impl<'a, Z: ZipperReadOnlyConditionalValues<'a, V>, V> ZipperReadOnlyConditionalValues<'a, V> for TrackPath<Z> {
+impl<'a, Z: ZipperReadOnlyConditionalValues<'a, V>, V> ZipperReadOnlyConditionalValues<'a, V> for PathTracker<Z> {
     type WitnessT = Z::WitnessT;
     fn witness<'w>(&self) -> Self::WitnessT { self.zipper.witness() }
     fn get_val_with_witness<'w>(&self, witness: &'w Self::WitnessT) -> Option<&'w V> where 'a: 'w {
@@ -159,7 +171,7 @@ impl<'a, Z: ZipperReadOnlyConditionalValues<'a, V>, V> ZipperReadOnlyConditional
     }
 }
 
-impl<Z: ZipperMoving> ZipperPathBuffer for TrackPath<Z> {
+impl<Z: ZipperMoving> ZipperPathBuffer for PathTracker<Z> {
     unsafe fn origin_path_assert_len(&self, len: usize) -> &[u8] {
         let ptr = self.path.as_ptr();
         unsafe { core::slice::from_raw_parts(ptr, len) }
@@ -172,7 +184,7 @@ impl<Z: ZipperMoving> ZipperPathBuffer for TrackPath<Z> {
 
 #[cfg(test)]
 mod tests {
-    use super::{TrackPath};
+    use super::{PathTracker};
     use crate::{
         PathMap,
         zipper::{zipper_iteration_tests, zipper_moving_tests},
@@ -183,7 +195,7 @@ mod tests {
             keys.into_iter().map(|k| (k, ())).collect::<PathMap<()>>()
         },
         |trie: &mut PathMap<()>, path: &[u8]| {
-            TrackPath::with_origin(trie.read_zipper_at_path(path), path)
+            PathTracker::with_origin(trie.read_zipper_at_path(path), path)
         }
     );
 
@@ -192,7 +204,7 @@ mod tests {
             keys.into_iter().map(|k| (k, ())).collect::<PathMap<()>>()
         },
         |trie: &mut PathMap<()>, path: &[u8]| {
-            TrackPath::with_origin(trie.read_zipper_at_path(path), path)
+            PathTracker::with_origin(trie.read_zipper_at_path(path), path)
         }
     );
 }

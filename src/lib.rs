@@ -90,7 +90,7 @@ pub mod utils;
 pub mod experimental;
 
 /// Wrapper to allow tracking path for a blind zipper
-pub mod track_path;
+pub mod path_tracker;
 
 /// Compact representation of the trie
 #[cfg(feature = "arena_compact")]
