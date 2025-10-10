@@ -270,7 +270,9 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         ascended
     }
     fn ascend_byte(&mut self) -> bool {
-        self.ascend(1)
+        let ascended = self.z.ascend_byte();
+        self.fix_after_ascend();
+        ascended
     }
     fn ascend_until(&mut self) -> bool {
         let ascended = self.z.ascend_until();
