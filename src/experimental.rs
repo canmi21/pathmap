@@ -60,23 +60,23 @@ impl ZipperMoving for FullZipper {
         if let Some(dst) = dst { dst.push(0) }
         true
     }
-    fn ascend(&mut self, steps: usize) -> Result<(), usize> {
+    fn ascend(&mut self, steps: usize) -> usize {
         if steps > self.path.len() {
             self.path.clear();
-            Err(steps - self.path.len())
+            self.path.len()
         } else {
             self.path.truncate(self.path.len() - steps);
-            Ok(())
+            steps
         }
     }
     fn ascend_byte(&mut self) -> bool {
         self.path.pop().is_some()
     }
-    fn ascend_until(&mut self) -> Option<usize> {
-        self.path.pop().map(|_| 1) // not sure?
+    fn ascend_until(&mut self) -> usize {
+        self.path.pop().is_some() as usize // not sure?
     }
-    fn ascend_until_branch(&mut self) -> Option<usize> {
-        self.path.pop().map(|_| 1) // not sure? What's the difference with the previous?
+    fn ascend_until_branch(&mut self) -> usize {
+        self.path.pop().is_some() as usize // not sure? What's the difference with the previous?
     }
     fn to_next_sibling_byte(&mut self) -> Option<u8> { self.to_sibling(true) }
     fn to_prev_sibling_byte(&mut self) -> Option<u8> { self.to_sibling(false) }

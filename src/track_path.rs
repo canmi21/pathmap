@@ -70,15 +70,11 @@ impl<Z: ZipperMoving> ZipperMoving for TrackPath<Z> {
         self.path.push(k);
         self.zipper.descend_to_byte(k)
     }
-    fn ascend(&mut self, steps: usize) -> Result<(), usize> {
-        let rv = self.zipper.ascend(steps);
-        let ascended = match rv {
-            Ok(()) => steps,
-            Err(remaining) => steps - remaining,
-        };
+    fn ascend(&mut self, steps: usize) -> usize {
+        let ascended = self.zipper.ascend(steps);
         let orig_len = self.path.len();
         self.path.truncate(orig_len - ascended);
-        rv
+        ascended
     }
     fn ascend_byte(&mut self) -> bool {
         if !self.zipper.ascend_byte() {
@@ -87,17 +83,19 @@ impl<Z: ZipperMoving> ZipperMoving for TrackPath<Z> {
         self.path.pop();
         true
     }
-    fn ascend_until(&mut self) -> Option<usize> {
-        let ascended = self.zipper.ascend_until()?;
+    fn ascend_until(&mut self) -> usize {
+        let ascended = self.zipper.ascend_until();
+        if ascended == 0 { return 0; }
         let orig_len = self.path.len();
         self.path.truncate(orig_len - ascended);
-        Some(ascended)
+        ascended
     }
-    fn ascend_until_branch(&mut self) -> Option<usize> {
-        let ascended = self.zipper.ascend_until_branch()?;
+    fn ascend_until_branch(&mut self) -> usize {
+        let ascended = self.zipper.ascend_until_branch();
+        if ascended == 0 { return 0; }
         let orig_len = self.path.len();
         self.path.truncate(orig_len - ascended);
-        Some(ascended)
+        ascended
     }
     fn to_next_sibling_byte(&mut self) -> Option<u8> {
         let byte = self.zipper.to_next_sibling_byte()?;

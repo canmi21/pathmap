@@ -1054,7 +1054,7 @@ mod tests {
         // Test the original zipper
         assert_eq!(z.val(), Some(&42));
         assert_eq!(z.to_next_sibling_byte(), None);
-        assert_eq!(z.ascend_until(), Some(6));
+        assert_eq!(z.ascend_until(), 6);
         assert_eq!(z.path(), b"");
         assert_eq!(z.origin_path(), b"A");
         assert_eq!(z.val(), Some(&24));
@@ -1135,7 +1135,7 @@ mod tests {
         //Try pre-creating trie in the parent that will be visited by the child zipper
         b_zipper.descend_to(b"-children-0+metadata");
         b_zipper.set_val(-3);
-        b_zipper.ascend(10).unwrap();
+        assert_eq!(b_zipper.ascend(10), 10);
 
         //Make a ZipperHead on the WriteZipper, and make two more parallel zippers
         let b_head = b_zipper.zipper_head();

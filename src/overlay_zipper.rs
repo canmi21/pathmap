@@ -176,7 +176,7 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         if depth_a < depth_o {
             if self.a.is_val() {
                 let ascended = self.b.ascend(depth_o - depth_a);
-                debug_assert_eq!(ascended, Ok(()));
+                debug_assert_eq!(ascended, depth_o - depth_a);
                 depth_a
             } else {
                 self.a.descend_to(&path[depth_a..depth_o]);
@@ -185,7 +185,7 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         } else if depth_o < depth_a {
             if self.b.is_val() {
                 let ascended = self.a.ascend(depth_a - depth_o);
-                debug_assert_eq!(ascended, Ok(()));
+                debug_assert_eq!(ascended, depth_a - depth_o);
                 depth_o
             } else {
                 self.a.descend_to(&path[depth_o..depth_a]);
@@ -227,8 +227,9 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
                 self.a.descend_to(path_b);
                 return true;
             } else {
-                let ascended = self.b.ascend(self.b.path().len() - start_depth);
-                debug_assert_eq!(ascended, Ok(()));
+                let to_ascend = self.b.path().len() - start_depth;
+                let ascended = self.b.ascend(to_ascend);
+                debug_assert_eq!(ascended, to_ascend);
                 return false;
             }
         }
@@ -237,24 +238,27 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
                 self.b.descend_to(path_a);
                 return true;
             } else {
-                let ascended = self.a.ascend(self.a.path().len() - start_depth);
-                debug_assert_eq!(ascended, Ok(()));
+                let to_ascend = self.a.path().len() - start_depth;
+                let ascended = self.a.ascend(to_ascend);
+                debug_assert_eq!(ascended, to_ascend);
                 return false;
             }
         }
         let overlap = find_prefix_overlap(path_a, path_b);
         if path_a.len() > overlap {
-            let ascended = self.a.ascend(path_a.len() - overlap);
-            debug_assert_eq!(ascended, Ok(()));
+            let to_ascend = path_a.len() - overlap;
+            let ascended = self.a.ascend(to_ascend);
+            debug_assert_eq!(ascended, to_ascend);
         }
         if path_b.len() > overlap {
-            let ascended = self.b.ascend(path_b.len() - overlap);
-            debug_assert_eq!(ascended, Ok(()));
+            let to_ascend = path_b.len() - overlap;
+            let ascended = self.b.ascend(to_ascend);
+            debug_assert_eq!(ascended, to_ascend);
         }
         overlap > 0
     }
 
-    fn ascend(&mut self, steps: usize) -> Result<(), usize> {
+    fn ascend(&mut self, steps: usize) -> usize {
         let rv_a = self.a.ascend(steps);
         let rv_b = self.b.ascend(steps);
         debug_assert_eq!(rv_a, rv_b);
@@ -262,10 +266,10 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
     }
 
     fn ascend_byte(&mut self) -> bool {
-        self.ascend(1).is_ok()
+        self.ascend(1) == 1
     }
 
-    fn ascend_until(&mut self) -> Option<usize> {
+    fn ascend_until(&mut self) -> usize {
         debug_assert_eq!(self.a.path(), self.b.path());
         // eprintln!("asc_until i {:?} {:?}", self.base.path(), self.overlay.path());
         let asc_a = self.a.ascend_until();
@@ -275,9 +279,9 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         let path_b = self.b.path();
         let depth_b = path_b.len();
         let min = match (asc_a, asc_b) {
-            (None, None) => return None,
-            (Some(a), None) | (None, Some(a)) => a,
-            (Some(a), Some(b)) => a.min(b),
+            (0, 0) => return 0,
+            (a, 0) | (0, a) => a,
+            (a, b) => a.min(b),
         };
         // eprintln!("asc_until {path_a:?} {path_b:?}");
         if depth_b > depth_a {
@@ -285,10 +289,10 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         } else if depth_a > depth_b {
             self.b.descend_to(&path_a[depth_b..]);
         }
-        Some(min)
+        min
     }
 
-    fn ascend_until_branch(&mut self) -> Option<usize> {
+    fn ascend_until_branch(&mut self) -> usize {
         let asc_a = self.a.ascend_until_branch();
         let path_a = self.a.path();
         let depth_a = path_a.len();
@@ -296,16 +300,16 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         let path_b = self.b.path();
         let depth_b = path_b.len();
         let min = match (asc_a, asc_b) {
-            (None, None) => return None,
-            (Some(a), None) | (None, Some(a)) => a,
-            (Some(a), Some(b)) => a.min(b),
+            (0, 0) => return 0,
+            (a, 0) | (0, a) => a,
+            (a, b) => a.min(b),
         };
         if depth_b > depth_a {
             self.a.descend_to(&path_b[depth_a..]);
         } else if depth_a > depth_b {
             self.b.descend_to(&path_a[depth_b..]);
         }
-        Some(min)
+        min
     }
 
     fn to_next_sibling_byte(&mut self) -> Option<u8> {

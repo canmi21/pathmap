@@ -491,7 +491,7 @@ fn ascend_to_fork<'a, Z, V: 'a, W, Err, AlgF, const JUMPING: bool>(z: &mut Z,
             let old_path_len = z.origin_path().len();
             let old_val = z.get_val_with_witness(&z_witness);
             let ascended = z.ascend_until();
-            debug_assert!(ascended.is_some());
+            debug_assert!(ascended > 0);
 
             let origin_path = unsafe{ z.origin_path_assert_len(old_path_len) };
             let jump_len = if z.child_count() != 1 || z.is_val() {
@@ -642,7 +642,7 @@ where
         wz.ascend_byte();
     }
     let ascended = wz.ascend(prefix_len);
-    debug_assert_eq!(ascended, Ok(()));
+    debug_assert_eq!(ascended, prefix_len);
 }
 
 /// A trait to dictate if and how the value should be cached.
@@ -928,7 +928,7 @@ pub(crate) fn new_map_from_ana_in<V, W, AlgF, A: Allocator>(w: W, mut alg_f: Alg
                 WOrNode::Node(node) => {
                     z.core().graft_internal(Some(node));
                     let ascended = z.ascend(child_path_len);
-                    debug_assert_eq!(ascended, Ok(()));
+                    debug_assert_eq!(ascended, child_path_len);
                 }
             }
         } else {
@@ -936,8 +936,9 @@ pub(crate) fn new_map_from_ana_in<V, W, AlgF, A: Allocator>(w: W, mut alg_f: Alg
             if frame_idx == 0 {
                 break
             }
-            let ascended = z.ascend(stack[frame_idx].1);
-            debug_assert_eq!(ascended, Ok(()));
+            let to_ascend = stack[frame_idx].1;
+            let ascended = z.ascend(to_ascend);
+            debug_assert_eq!(ascended, to_ascend);
             stack[frame_idx].0.reset();
             frame_idx -= 1;
         }

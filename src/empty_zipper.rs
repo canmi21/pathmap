@@ -46,13 +46,13 @@ impl ZipperMoving for EmptyZipper {
     fn descend_indexed_byte(&mut self, _idx: usize) -> Option<u8> { None }
     fn descend_first_byte(&mut self) -> Option<u8> { None }
     fn descend_until(&mut self, _dst_path: Option<&mut Vec<u8>>) -> bool { false }
-    fn ascend(&mut self, steps: usize) -> Result<(), usize> {
+    fn ascend(&mut self, steps: usize) -> usize {
         if steps > self.path.len() - self.path_start_idx {
             self.reset();
-            Err(steps - (self.path.len() - self.path_start_idx))
+            self.path.len() - self.path_start_idx
         } else {
             self.path.truncate(self.path.len() - self.path_start_idx - steps);
-            Ok(())
+            steps
         }
     }
     fn ascend_byte(&mut self) -> bool {
@@ -63,16 +63,16 @@ impl ZipperMoving for EmptyZipper {
             false
         }
     }
-    fn ascend_until(&mut self) -> Option<usize> {
+    fn ascend_until(&mut self) -> usize {
         if self.at_root() {
-            None
+            0
         } else {
             let old_path_len = self.path.len() - self.path_start_idx;
             self.reset();
-            Some(old_path_len)
+            old_path_len
         }
     }
-    fn ascend_until_branch(&mut self) -> Option<usize> {
+    fn ascend_until_branch(&mut self) -> usize {
         self.ascend_until()
     }
     fn to_next_sibling_byte(&mut self) -> Option<u8> { None }

@@ -306,7 +306,7 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
                     }
                 }
 
-                fn ascend(&mut self, steps: usize) -> Result<(), usize> {
+                fn ascend(&mut self, steps: usize) -> usize {
                     match self {
                         #(#variant_arms => inner.ascend(steps),)*
                     }
@@ -318,13 +318,13 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
                     }
                 }
 
-                fn ascend_until(&mut self) -> Option<usize> {
+                fn ascend_until(&mut self) -> usize {
                     match self {
                         #(#variant_arms => inner.ascend_until(),)*
                     }
                 }
 
-                fn ascend_until_branch(&mut self) -> Option<usize> {
+                fn ascend_until_branch(&mut self) -> usize {
                     match self {
                         #(#variant_arms => inner.ascend_until_branch(),)*
                     }
