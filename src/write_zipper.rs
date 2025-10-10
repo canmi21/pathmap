@@ -1608,10 +1608,10 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
 
         let downstream_node = self.get_focus().into_option();
 
-        let fully_ascended = self.ascend(n);
+        let fully_ascended = self.ascend(n) == n;
 
         self.graft_internal(downstream_node);
-        fully_ascended == n
+        fully_ascended
     }
     /// See [ZipperWriting::meet_into]
     pub fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: Lattice {

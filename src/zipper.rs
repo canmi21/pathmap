@@ -281,12 +281,10 @@ pub trait ZipperMoving: Zipper {
         descended
     }
 
-    /// Ascends the zipper `steps` steps.
+    /// Ascends the zipper `steps` steps.  Returns the number of bytes ascended
     ///
-    /// Returns the number of ascended steps.
-    ///
-    /// If the root is fewer than `steps` steps from the zipper's position, then this method will stop at
-    /// the root and return the number of ascended steps.
+    /// If the zipper's focus is fewer than `n` steps from the root, then this method will stop at
+    /// the root and return the number of steps ascended, which may be smaller than `steps`.
     fn ascend(&mut self, steps: usize) -> usize;
 
     /// Ascends the zipper up a single byte.  Equivalent to passing `1` to [ascend](Self::ascend)
@@ -294,18 +292,16 @@ pub trait ZipperMoving: Zipper {
         self.ascend(1) == 1
     }
 
-    /// Ascends the zipper to the nearest upstream branch point or value.
-    ///
-    /// Returns the number of ascended steps. If at root, doesn't move and returns 0.
-    ///
-    /// NOTE: A default implementation could be provided, but all current zippers have more optimal native implementations.
+    /// Ascends the zipper to the nearest upstream branch point or value.  Returns the number of bytes
+    /// ascended. Returns `0` if the zipper was already at the root
+    //
+    // NOTE: A default implementation could be provided, but all current zippers have more optimal native implementations.
     fn ascend_until(&mut self) -> usize;
 
-    /// Ascends the zipper to the nearest upstream branch point, skipping over values along the way.
-    ///
-    /// Returns the number of ascended steps. If at root, doesn't move and returns 0.
-    ///
-    /// NOTE: A default implementation could be provided, but all current zippers have more optimal native implementations.
+    /// Ascends the zipper to the nearest upstream branch point, skipping over values along the way.  Returns
+    /// the number of bytes ascended. Returns `0` if the zipper was already at the root
+    //
+    // NOTE: A default implementation could be provided, but all current zippers have more optimal native implementations.
     fn ascend_until_branch(&mut self) -> usize;
 
     /// Moves the zipper's focus to the next sibling byte with the same parent
@@ -4177,7 +4173,7 @@ pub(crate) mod zipper_iteration_tests {
         //Try with a `descend_to` & `ascend`
         test_loop(&mut zipper,
             |zipper, path| assert!(zipper.descend_to(path)),
-            |zipper, steps| assert!(zipper.ascend(steps) == steps),
+            |zipper, steps| assert_eq!(zipper.ascend(steps), steps),
         );
 
         //Try with a `descend_to_byte` & `ascend_byte`

@@ -47,9 +47,10 @@ impl ZipperMoving for EmptyZipper {
     fn descend_first_byte(&mut self) -> Option<u8> { None }
     fn descend_until(&mut self, _dst_path: Option<&mut Vec<u8>>) -> bool { false }
     fn ascend(&mut self, steps: usize) -> usize {
-        if steps > self.path.len() - self.path_start_idx {
+        let old_path_len = self.path.len() - self.path_start_idx;
+        if steps > old_path_len {
             self.reset();
-            self.path.len() - self.path_start_idx
+            old_path_len
         } else {
             self.path.truncate(self.path.len() - self.path_start_idx - steps);
             steps

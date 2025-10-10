@@ -128,10 +128,8 @@ impl<'prefix, Z>  PrefixZipper<'prefix, Z>
                 steps
             };
         }
+
         if self.position.is_source() {
-            // let Err(remaining) = self.source.ascend(remaining) else {
-            //     return Ok(());
-            // };
             let len_before = self.source.path().len();
             if self.source.ascend(remaining) == remaining {
                 return steps
@@ -162,11 +160,11 @@ impl<'prefix, Z>  PrefixZipper<'prefix, Z>
             // }
             let len_before = self.source.path().len();
             let was_good = if VAL {
-                self.source.ascend_until()
+                self.source.ascend_until() > 0
             } else {
-                self.source.ascend_until_branch()
+                self.source.ascend_until_branch() > 0
             };
-            if was_good > 0 && ((VAL && self.source.is_val()) || self.source.child_count() > 1) {
+            if was_good && ((VAL && self.source.is_val()) || self.source.child_count() > 1) {
                 let len_after = self.source.path().len();
                 return len_before - len_after;
             }
@@ -418,14 +416,12 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
     #[inline]
     fn ascend_until(&mut self) -> usize {
         let ascended = self.ascend_until_n::<true>();
-        if ascended == 0 { return 0; }
         self.path.truncate(self.path.len() - ascended);
         ascended
     }
     #[inline]
     fn ascend_until_branch(&mut self) -> usize {
         let ascended = self.ascend_until_n::<false>();
-        if ascended == 0 { return 0; }
         self.path.truncate(self.path.len() - ascended);
         ascended
     }

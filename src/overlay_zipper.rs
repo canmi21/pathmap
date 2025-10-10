@@ -380,7 +380,7 @@ use super::{OverlayZipper};
         |keys: &[&[u8]]| {
             let cutoff = keys.len() / 3 * 2;
             // eprintln!("keys={:?}", &keys);
-            eprintln!("a_keys={:?}\nb_keys={:?}", &keys[..cutoff], &keys[cutoff..]);
+            // eprintln!("a_keys={:?}\nb_keys={:?}", &keys[..cutoff], &keys[cutoff..]);
             let a = keys[..cutoff].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             let b = keys[cutoff..].into_iter().map(|k| (k, ())).collect::<PathMap<()>>();
             (a, b)

@@ -504,7 +504,7 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ,
         let Some(&byte) = self.path().last() else {
             return None;
         };
-        assert!(self.ascend(1) == 1, "must ascend");
+        debug_assert_eq!(self.ascend(1), 1, "must ascend");
         let child_mask = self.child_mask();
         let Some(sibling_byte) = (if next {
             child_mask.next_bit(byte)
@@ -1376,6 +1376,13 @@ mod tests {
         assert_eq!(pz.path_indices()[1], 16);
         assert_eq!(pz.path(), b"nopqrstuvwxyzbowph");
     }
+
+    //GOAT.  We want another PZ test, now that the PZ behavior has changed to not require values.
+    // This test ought to assembled a map with a single dangling path, stitch multiple of them
+    // together, so the resulting virtual product trie is just one long path with repetitions,
+    // and then validate that ascend, ascend_until, ascend_until_branch, etc. all do the right
+    // thing traversing across multiple factors, not stopping spuriously at the factor stitch points.
+
             }
             // --- END OF MACRO GENERATED MOD ---
         };
