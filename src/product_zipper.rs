@@ -222,16 +222,18 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     }
     #[inline]
     fn descend_to_byte(&mut self, k: u8) -> bool {
-        if !self.z.descend_to_byte(k) {
-            if self.has_next_factor() {
-                if self.z.path_parent_byte_is_path_end() {
-                    debug_assert!(self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len());
-                    self.enroll_next_factor(1);
-                    self.z.regularize();
-                    true
-                } else { false }
-            } else { false }
-        } else { true }
+        self.descend_to(&[k])
+        // HOTFIX!
+        // if !self.z.descend_to_byte(k) {
+        //     if self.has_next_factor() {
+        //         if self.z.path_parent_byte_is_path_end() {
+        //             debug_assert!(self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len());
+        //             self.enroll_next_factor(1);
+        //             self.z.regularize();
+        //             true
+        //         } else { false }
+        //     } else { false }
+        // } else { true }
     }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool {
         let result = self.z.descend_indexed_byte(child_idx);
