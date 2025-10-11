@@ -212,11 +212,10 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         Some(byte)
     }
 
-    fn descend_until(&mut self, _dst: Option<&mut Vec<u8>>) -> bool {
-        // TODO: track dst
+    fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
         let start_depth = self.a.path().len();
-        let desc_a = self.a.descend_until(None);
-        let desc_b = self.b.descend_until(None);
+        let desc_a = self.a.descend_until(std::io::sink());
+        let desc_b = self.b.descend_until(std::io::sink());
         let path_a = &self.a.path()[start_depth..];
         let path_b = &self.b.path()[start_depth..];
         if !desc_a && !desc_b {
@@ -255,7 +254,14 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
             let ascended = self.b.ascend(to_ascend);
             debug_assert_eq!(ascended, to_ascend);
         }
-        overlap > 0
+        debug_assert_eq!(self.a.path(), self.b.path());
+        debug_assert_eq!(start_depth + overlap, self.a.path().len());
+        if overlap > 0 {
+            let _ = desc_bytes.write_all(&self.a.path()[start_depth..]);
+            true
+        } else {
+            false
+        }
     }
 
     fn ascend(&mut self, steps: usize) -> usize {

@@ -239,8 +239,8 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         self.ensure_descend_next_factor();
         result
     }
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
-        let result = self.z.descend_until(dst);
+    fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool {
+        let result = self.z.descend_until(desc_bytes);
         self.ensure_descend_next_factor();
         result
     }
@@ -729,19 +729,19 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
     fn descend_first_byte(&mut self) -> Option<u8> {
         self.descend_indexed_byte(0)
     }
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
+    fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool {
         self.enter_factors();
         let rv = if let Some(idx) = self.factor_idx(false) {
             let zipper = &mut self.secondary[idx];
             let before = zipper.path().len();
-            let rv = zipper.descend_until(dst);
+            let rv = zipper.descend_until(desc_bytes);
             let path = zipper.path();
             if path.len() > before {
                 self.primary.descend_to(&path[before..]);
             }
             rv
         } else {
-            self.primary.descend_until(dst)
+            self.primary.descend_until(desc_bytes)
         };
         self.enter_factors();
         rv
@@ -1385,6 +1385,10 @@ mod tests {
     // together, so the resulting virtual product trie is just one long path with repetitions,
     // and then validate that ascend, ascend_until, ascend_until_branch, etc. all do the right
     // thing traversing across multiple factors, not stopping spuriously at the factor stitch points.
+    //
+    // UPDATE, Also test `descend_until` in this case, because the correct behavior should be seamlessly
+    // descend flowing across multiple factor zippers in one call, and some of the impls don't appear to
+    // do that.
 
             }
             // --- END OF MACRO GENERATED MOD ---

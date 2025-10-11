@@ -132,12 +132,10 @@ impl<Z: ZipperMoving> ZipperMoving for PathTracker<Z> {
         self.path.push(byte);
         Some(byte)
     }
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
+    fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
         let orig_len = self.path.len();
-        let descended = self.zipper.descend_until(Some(&mut self.path));
-        if let Some(dst) = dst {
-            dst.extend_from_slice(&self.path[orig_len..]);
-        }
+        let descended = self.zipper.descend_until(&mut self.path);
+        let _ = desc_bytes.write_all(&self.path[orig_len..]);
         descended
     }
     // TODO: using default impl. re-using zipper's own `to_next_step` implementation

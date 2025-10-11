@@ -415,7 +415,7 @@ fn cata_side_effect_body<'a, Z, V: 'a, W, Err, AlgF, const JUMPING: bool>(mut z:
         //Descend to the next forking point, or leaf
         let mut is_leaf = false;
         while z.child_count() < 2 {
-            if !z.descend_until(None) {
+            if !z.descend_until(std::io::sink()) {
                 is_leaf = true;
                 break;
             }
@@ -735,7 +735,7 @@ fn into_cata_cached_body<'a, Z, V: 'a, W, E, AlgF, Cache, const JUMPING: bool>(
             // Descend until leaf or branch
             let mut is_leaf = false;
             'descend: while zipper.child_count() < 2 {
-                if !zipper.descend_until(None) {
+                if !zipper.descend_until(std::io::sink()) {
                     is_leaf = true;
                     break 'descend;
                 }

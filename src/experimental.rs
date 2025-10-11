@@ -55,10 +55,8 @@ impl ZipperMoving for FullZipper {
         self.path.push(0);
         Some(0)
     }
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
-        self.path.push(0); // not sure?
-        if let Some(dst) = dst { dst.push(0) }
-        true
+    fn descend_until<W: std::io::Write>(&mut self, _desc_bytes: W) -> bool {
+        false
     }
     fn ascend(&mut self, steps: usize) -> usize {
         if steps > self.path.len() {

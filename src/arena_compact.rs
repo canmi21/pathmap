@@ -1879,9 +1879,7 @@ where Storage: AsRef<[u8]>
         self.descend_indexed_byte(0)
     }
 
-    /// Descends the zipper's focus until a branch or a value is encountered.  Returns `true` if the focus
-    /// moved otherwise returns `false`
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
+    fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
         self.trace_pos();
         let mut descended = false;
         let orig_len = self.path.len();
@@ -1925,9 +1923,7 @@ where Storage: AsRef<[u8]>
                 }
             }
         }
-        if let Some(dst) = dst {
-            dst.extend_from_slice(&self.path[orig_len..]);
-        }
+        let _ = desc_bytes.write_all(&self.path[orig_len..]);
         descended
     }
 

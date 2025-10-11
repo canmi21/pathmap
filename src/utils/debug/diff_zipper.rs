@@ -123,13 +123,17 @@ impl<A: Zipper + ZipperMoving, B: Zipper + ZipperMoving> ZipperMoving for DiffZi
         assert_eq!(a, b);
         a
     }
-    fn descend_until(&mut self, dst: Option<&mut Vec<u8>>) -> bool {
-        let a = self.a.descend_until(dst);
-        let b = self.b.descend_until(None);
+    fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
+        let mut a_bytes: Vec<u8> = vec![];
+        let mut b_bytes: Vec<u8> = vec![];
+        let a = self.a.descend_until(&mut a_bytes);
+        let b = self.b.descend_until(&mut b_bytes);
         if self.log_moves {
             println!("DiffZipper: descend_until")
         }
+        assert_eq!(a_bytes, b_bytes);
         assert_eq!(a, b);
+        let _ = desc_bytes.write_all(&a_bytes);
         a
     }
     fn ascend(&mut self, steps: usize) -> usize {
