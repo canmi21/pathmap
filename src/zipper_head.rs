@@ -647,7 +647,8 @@ mod tests {
         map.set_val_at(b"test:3", 3);
         let map_head = map.zipper_head();
         let mut zipper = map_head.write_zipper_at_exclusive_path(b"test").unwrap();
-        assert!(zipper.descend_to(b":3"));
+        zipper.descend_to(b":3");
+        assert!(zipper.path_exists());
         assert_eq!(zipper.val(), Some(&3));
         zipper.ascend_byte();
         zipper.descend_to_byte(b'2');
@@ -686,7 +687,8 @@ mod tests {
         map.set_val_at(b"test:4", 4);
         let map_head = map.zipper_head();
         let mut zipper = map_head.write_zipper_at_exclusive_path(b"test").unwrap();
-        assert!(zipper.descend_to(b":3"));
+        zipper.descend_to(b":3");
+        assert!(zipper.path_exists());
         assert_eq!(zipper.val(), Some(&3));
         zipper.ascend_byte();
         zipper.descend_to_byte(b'5');
@@ -712,7 +714,8 @@ mod tests {
         map.set_val_at(b"test:4", 4);
         let map_head = map.zipper_head();
         let mut zipper = map_head.write_zipper_at_exclusive_path(b"test:").unwrap();
-        assert!(zipper.descend_to(b"3"));
+        zipper.descend_to(b"3");
+        assert!(zipper.path_exists());
         assert_eq!(zipper.val(), Some(&3));
         zipper.ascend_byte();
         zipper.descend_to_byte(b'5');
@@ -946,9 +949,10 @@ mod tests {
         let mut rz1 = zh.read_zipper_at_borrowed_path(b"A").unwrap();
         let rz1_witness = rz1.witness();
         assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&42));
-        assert_eq!(rz1.descend_to(":rd1"), true);
+        rz1.descend_to(":rd1");
+        assert_eq!(rz1.path_exists(), true);
         assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&1));
-        assert_eq!(rz1.move_to_path(":rd2"), (3, true));
+        assert_eq!(rz1.move_to_path(":rd2"), 3);
         assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&2));
 
         //Cause the node that supports the reader to be upgraded from a PairNode to a ByteNode
@@ -960,17 +964,19 @@ mod tests {
         let mut rz2 = zh.read_zipper_at_borrowed_path(b"A").unwrap();
         let rz2_witness = rz2.witness();
         assert_eq!(rz2.get_val_with_witness(&rz2_witness), Some(&42));
-        assert_eq!(rz2.descend_to(":rd1"), true);
+        rz2.descend_to(":rd1");
+        assert_eq!(rz2.path_exists(), true);
         assert_eq!(rz2.get_val_with_witness(&rz2_witness), Some(&1));
-        assert_eq!(rz2.move_to_path(":rd2"), (3, true));
+        assert_eq!(rz2.move_to_path(":rd2"), 3);
         assert_eq!(rz2.get_val_with_witness(&rz2_witness), Some(&2));
 
         //Check that our original reader is still valid
         rz1.reset();
         assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&42));
-        assert_eq!(rz1.descend_to(":rd1"), true);
+        rz1.descend_to(":rd1");
+        assert_eq!(rz1.path_exists(), true);
         assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&1));
-        assert_eq!(rz1.move_to_path(":rd2"), (3, true));
+        assert_eq!(rz1.move_to_path(":rd2"), 3);
         assert_eq!(rz1.get_val_with_witness(&rz1_witness), Some(&2));
     }
 

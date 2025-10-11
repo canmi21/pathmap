@@ -211,27 +211,25 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         }
         descended
     }
-    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool {
+    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) {
         let k = k.as_ref();
         let descended = self.descend_to_existing(k);
         if descended != k.len() {
             self.z.descend_to(&k[descended..]);
-            return false
         }
-        true
     }
     #[inline]
-    fn descend_to_byte(&mut self, k: u8) -> bool {
-        if !self.z.descend_to_byte(k) {
+    fn descend_to_byte(&mut self, k: u8) {
+        self.z.descend_to_byte(k);
+        if !self.path_exists() {
             if self.has_next_factor() {
                 if self.z.path_parent_byte_is_path_end() {
                     debug_assert!(self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len());
                     self.enroll_next_factor(1);
                     self.z.regularize();
-                    true
-                } else { false }
-            } else { false }
-        } else { true }
+                }
+            }
+        }
     }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool {
         let result = self.z.descend_indexed_byte(child_idx);
@@ -512,7 +510,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ,
             self.descend_to_byte(byte);
             return false;
         };
-        self.descend_to_byte(sibling_byte)
+        self.descend_to_byte(sibling_byte);
+        true
     }
 }
 
@@ -696,11 +695,11 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
         self.enter_factors();
         descended
     }
-    fn descend_to<K: AsRef<[u8]>>(&mut self, path: K) -> bool {
+    fn descend_to<K: AsRef<[u8]>>(&mut self, path: K) {
         let path = path.as_ref();
         let good = self.descend_to_existing(path);
         if good == path.len() {
-            return true;
+            return
         }
         let rest = &path[good..];
         if let Some(idx) = self.factor_idx(false) {
@@ -708,10 +707,9 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
         }
 
         self.primary.descend_to(rest);
-        false
     }
     #[inline]
-    fn descend_to_byte(&mut self, k: u8) -> bool {
+    fn descend_to_byte(&mut self, k: u8) {
         self.descend_to([k])
     }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool {
@@ -719,7 +717,8 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
         let Some(byte) = mask.indexed_bit::<true>(child_idx) else {
             return false;
         };
-        self.descend_to_byte(byte)
+        self.descend_to_byte(byte);
+        true
     }
     #[inline]
     fn descend_first_byte(&mut self) -> bool {
@@ -817,25 +816,30 @@ mod tests {
         let mut pz = $ProductZipper::new(rz, [map2.$read_zipper_u64()]);
 
         //Descend within the first factor
-        assert!(pz.descend_to(b"AA"));
+        pz.descend_to(b"AA");
+        assert!(pz.path_exists());
         assert_eq!(pz.path(), b"AA");
         assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 3);
-        assert!(pz.descend_to(b"a"));
+        pz.descend_to(b"a");
+        assert!(pz.path_exists());
         assert_eq!(pz.path(), b"AAa");
         assert_eq!(pz.val(), Some(&0));
         assert_eq!(pz.child_count(), 3);
 
         //Step to the next factor
-        assert!(pz.descend_to(b"DD"));
+        pz.descend_to(b"DD");
+        assert!(pz.path_exists());
         assert_eq!(pz.path(), b"AAaDD");
         assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 1);
-        assert!(pz.descend_to(b"d"));
+        pz.descend_to(b"d");
+        assert!(pz.path_exists());
         assert_eq!(pz.path(), b"AAaDDd");
         assert_eq!(pz.val(), Some(&1000));
         assert_eq!(pz.child_count(), 0);
-        assert!(!pz.descend_to(b"GGg"));
+        pz.descend_to(b"GGg");
+        assert!(!pz.path_exists());
         assert_eq!(pz.path(), b"AAaDDdGGg");
         assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 0);
@@ -843,29 +847,34 @@ mod tests {
         //Test Reset, if the zipper was in another factor
         pz.reset();
         assert_eq!(pz.path(), b"");
-        assert!(pz.descend_to(b"AA"));
+        pz.descend_to(b"AA");
+        assert!(pz.path_exists());
         assert_eq!(pz.path(), b"AA");
         assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 3);
 
         //Try to descend to a non-existent path that would be within the first factor
-        assert!(!pz.descend_to(b"aBBb"));
+        pz.descend_to(b"aBBb");
+        assert!(!pz.path_exists());
         assert_eq!(pz.path(), b"AAaBBb");
         assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 0);
 
         //Now descend to the second factor in one jump
         pz.reset();
-        assert!(pz.descend_to(b"AAaDD"));
+        pz.descend_to(b"AAaDD");
+        assert!(pz.path_exists());
         assert_eq!(pz.path(), b"AAaDD");
         assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 1);
         pz.reset();
-        assert!(pz.descend_to(b"AAaDDd"));
+        pz.descend_to(b"AAaDDd");
+        assert!(pz.path_exists());
         assert_eq!(pz.path(), b"AAaDDd");
         assert_eq!(pz.val(), Some(&1000));
         assert_eq!(pz.child_count(), 0);
-        assert!(!pz.descend_to(b"GG"));
+        pz.descend_to(b"GG");
+        assert!(!pz.path_exists());
         assert_eq!(pz.path(), b"AAaDDdGG");
         assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 0);
@@ -889,7 +898,8 @@ mod tests {
         assert_eq!(pz.child_count(), 1);
         assert!(pz.at_root());
 
-        assert!(!pz.descend_to(b"AAaDDdGG"));
+        pz.descend_to(b"AAaDDdGG");
+        assert!(!pz.path_exists());
         assert_eq!(pz.path(), b"AAaDDdGG");
         assert_eq!(pz.val(), None);
         assert_eq!(pz.child_count(), 0);
@@ -1028,7 +1038,8 @@ mod tests {
 
         {
             let mut p = $ProductZipper::new(l.read_zipper(), [r.read_zipper(), e.read_zipper()]);
-            assert!(p.descend_to("abcdefghijklmnopqrstuvwxyzbowfo"));
+            p.descend_to("abcdefghijklmnopqrstuvwxyzbowfo");
+            assert!(p.path_exists());
             assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowfo");
             assert!(p.descend_first_byte());
             assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowfoo");
@@ -1038,7 +1049,8 @@ mod tests {
             p.descend_to("abcdefghijklmnopqrstuvwxyzbowf");
             assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowf");
             assert!(p.is_val());
-            assert!(p.descend_to("oo"));
+            p.descend_to("oo");
+            assert!(p.path_exists());
             assert!(p.is_val());
         }
         {
@@ -1049,18 +1061,22 @@ mod tests {
             assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowf");
             assert!(p.ascend_byte());
             assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbow");
-            assert!(p.descend_to_byte(b'p'));
+            p.descend_to_byte(b'p');
+            assert!(p.path_exists());
             assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowp");
-            assert!(p.descend_to_byte(b'h'));
+            p.descend_to_byte(b'h');
+            assert!(p.path_exists());
             assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowph");
-            assert!(p.descend_to_byte(b'o'));
+            p.descend_to_byte(b'o');
+            assert!(p.path_exists());
             assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbowpho");
             assert!(p.is_val());
             assert!(p.ascend_until());
             assert_eq!(p.path(), b"abcdefghijklmnopqrstuvwxyzbow");
             assert!(p.ascend(3));
             assert_eq!(vec![b'A', b'a', b'b'], p.child_mask().iter().collect::<Vec<_>>());
-            assert!(p.descend_to("ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
+            p.descend_to("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+            assert!(p.path_exists());
             assert_eq!(vec![b'f', b'p'], p.child_mask().iter().collect::<Vec<_>>())
         }
     }
@@ -1079,7 +1095,8 @@ mod tests {
 
         {
             let mut p = $ProductZipper::new(l.read_zipper(), [r.read_zipper(), e.read_zipper()]);
-            assert!(!p.descend_to("ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
+            p.descend_to("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+            assert!(!p.path_exists());
             // println!("p {}", std::str::from_utf8(p.path()).unwrap());
             assert!(!p.ascend(27));
         }
@@ -1197,7 +1214,8 @@ mod tests {
                 moving_pz.ascend(moving_pz.path().len() - overlap);
             }
             if moving_pz.path().len() < path.len() {
-                assert!(moving_pz.descend_to(&path[moving_pz.path().len()..]));
+                moving_pz.descend_to(&path[moving_pz.path().len()..]);
+                assert!(moving_pz.path_exists());
             }
             assert_eq!(moving_pz.path(), path);
 
@@ -1224,7 +1242,7 @@ mod tests {
         $convert!(map);
         let mut z = $ProductZipper::new(map.read_zipper(), [map.read_zipper(), map.read_zipper()]);
 
-        assert_eq!(z.descend_to([3, 196, 50, 193, 52, 3, 196, 50, 194, 49, 54]), true);
+        z.descend_to([3, 196, 50, 193, 52, 3, 196, 50, 194, 49, 54]);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.to_next_k_path(2), true);
         assert_eq!(z.path_exists(), true);
@@ -1244,19 +1262,19 @@ mod tests {
         let mut z = $ProductZipper::new(map.read_zipper(), [map.read_zipper(), map.read_zipper()]);
 
         assert_eq!(z.path_exists(), true);
-        assert_eq!(z.descend_to_byte(3), true);
+        z.descend_to_byte(3);
         assert_eq!(z.path_exists(), true);
-        assert_eq!(z.descend_to_byte(196), true);
+        z.descend_to_byte(196);
         assert_eq!(z.path_exists(), true);
-        assert_eq!(z.descend_to([101, 100, 103, 101]), true);
+        z.descend_to([101, 100, 103, 101]);
         assert_eq!(z.path_exists(), true);
-        assert_eq!(z.descend_to_byte(193), true);
+        z.descend_to_byte(193);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.path(), [3, 196, 101, 100, 103, 101, 193]);
-        assert_eq!(z.descend_to_byte(194), false);
+        z.descend_to_byte(194);
         assert_eq!(z.path(), [3, 196, 101, 100, 103, 101, 193, 194]);
         assert_eq!(z.path_exists(), false);
-        assert_eq!(z.descend_to_byte(3), false);
+        z.descend_to_byte(3);
         assert_eq!(z.path(), [3, 196, 101, 100, 103, 101, 193, 194, 3]);
         assert_eq!(z.path_exists(), false);
     }
@@ -1276,43 +1294,43 @@ mod tests {
         let mut z = $ProductZipper::new(map.read_zipper(), [map.read_zipper(), map.read_zipper()]);
 
         assert_eq!(z.path_exists(), true);
-        assert_eq!(z.descend_to_byte(3), true);
+        z.descend_to_byte(3);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(196), true);
+        z.descend_to_byte(196);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), true);
-        assert_eq!(z.descend_to_byte(101), true);
+        z.descend_to_byte(101);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(50), true);
+        z.descend_to_byte(50);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(3), true);
+        z.descend_to_byte(3);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(196), true);
+        z.descend_to_byte(196);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), true);
-        assert_eq!(z.descend_to_byte(101), true);
+        z.descend_to_byte(101);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(49), true);
+        z.descend_to_byte(49);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), true);
-        assert_eq!(z.descend_to_byte(3), true);
+        z.descend_to_byte(3);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(196), true);
+        z.descend_to_byte(196);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), true);
-        assert_eq!(z.descend_to_byte(101), true);
+        z.descend_to_byte(101);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(50), true);
+        z.descend_to_byte(50);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(3), false);
+        z.descend_to_byte(3);
         assert_eq!(z.path_exists(), false);
         assert_eq!(z.is_val(), false);
     }
@@ -1336,13 +1354,15 @@ mod tests {
         assert_eq!(pz.path(), b"");
         assert_eq!(pz.origin_path(), b"abcdefghijklm");
 
-        assert!(pz.descend_to(b"nopqrstuvwxyz"));
+        pz.descend_to(b"nopqrstuvwxyz");
+        assert!(pz.path_exists());
 
         assert_eq!(pz.focus_factor(), 0);
         assert_eq!(pz.path(), b"nopqrstuvwxyz");
         assert_eq!(pz.origin_path(), b"abcdefghijklmnopqrstuvwxyz");
 
-        assert!(pz.descend_to(b"AB"));
+        pz.descend_to(b"AB");
+        assert!(pz.path_exists());
 
         assert_eq!(pz.focus_factor(), 1);
         assert_eq!(pz.path_indices()[0], 13);
@@ -1352,7 +1372,8 @@ mod tests {
 
         pz.reset();
         assert_eq!(pz.child_mask(), ByteMask::from_iter([b'n']));
-        assert!(pz.descend_to(b"nopqrstuvwxyzbowph"));
+        pz.descend_to(b"nopqrstuvwxyzbowph");
+        assert!(pz.path_exists());
         assert_eq!(pz.focus_factor(), 2);
         assert_eq!(pz.path_indices()[0], 13);
         assert_eq!(pz.path_indices()[1], 16);

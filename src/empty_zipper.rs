@@ -36,13 +36,11 @@ impl ZipperMoving for EmptyZipper {
     fn reset(&mut self) { self.path.truncate(self.path_start_idx) }
     fn path(&self) -> &[u8] { &self.path[self.path_start_idx..] }
     fn val_count(&self) -> usize { 0 }
-    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool {
+    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) {
         self.path.extend_from_slice(k.as_ref());
-        false
     }
-    fn descend_to_byte(&mut self, k: u8) -> bool {
+    fn descend_to_byte(&mut self, k: u8) {
         self.path.push(k);
-        false
     }
     fn descend_indexed_byte(&mut self, _idx: usize) -> bool { false }
     fn descend_first_byte(&mut self) -> bool { false }
