@@ -863,6 +863,7 @@ impl<V: Clone + Send + Sync, A: Allocator> Drop for ReadZipperTracked<'_, '_, V,
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> Zipper for ReadZipperTracked<'_, '_, V, A>{
+    #[inline]
     fn path_exists(&self) -> bool { self.z.path_exists() }
     fn is_val(&self) -> bool { self.z.is_val() }
     fn child_count(&self) -> usize { self.z.child_count() }
@@ -1009,6 +1010,7 @@ pub struct ReadZipperUntracked<'a, 'path, V: Clone + Send + Sync, A: Allocator =
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> Zipper for ReadZipperUntracked<'_, '_, V, A> {
+    #[inline]
     fn path_exists(&self) -> bool { self.z.path_exists() }
     fn is_val(&self) -> bool { self.z.is_val() }
     fn child_count(&self) -> usize { self.z.child_count() }
@@ -1205,6 +1207,7 @@ impl<V: 'static + Clone + Send + Sync + Unpin, A: Allocator> ReadZipperOwned<V, 
 }
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> Zipper for ReadZipperOwned<V, A> {
+    #[inline]
     fn path_exists(&self) -> bool { self.z.path_exists() }
     fn is_val(&self) -> bool { self.z.is_val() }
     fn child_count(&self) -> usize { self.z.child_count() }
@@ -1480,6 +1483,7 @@ pub(crate) mod read_zipper_core {
     }
 
     impl<V: Clone + Send + Sync + Unpin, A: Allocator> Zipper for ReadZipperCore<'_, '_, V, A> {
+        #[inline]
         fn path_exists(&self) -> bool {
             let key = self.node_key();
             if key.len() > 0 {

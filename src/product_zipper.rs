@@ -314,6 +314,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
 }
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper for ProductZipper<'_, 'trie, V, A> {
+    #[inline]
     fn path_exists(&self) -> bool {
         self.z.path_exists()
     }
