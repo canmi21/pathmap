@@ -2365,38 +2365,6 @@ pub(crate) mod read_zipper_core {
             node
         }
 
-        /// Returns `true` if the parent byte, ie. `self.path()[self.path().len-2]` is at the end of a path,
-        /// ie. `child_count == 0 && path_exists == 1`
-        ///
-        /// Called by `ProductZipper::descend_to_byte`, after descending so we can assume we're not at the
-        /// zipper's root.
-        #[inline]
-        pub(crate) fn path_parent_byte_is_path_end(&self) -> bool {
-            debug_assert!(self.is_regularized());
-            debug_assert!(self.prefix_buf.capacity() > 0);
-            debug_assert!(!self.at_root());
-            let node_key = self.node_key();
-            let key_len = node_key.len();
-
-            if key_len == 0 {
-                //We know this focus location exists, So the parent byte couldn't have been the end of a path
-                return false
-            }
-
-            if self.focus_node.node_is_empty() {
-                debug_assert_eq!(key_len, 1); //Right now this method is only called by `descend_to_byte`
-                true
-            } else {
-                let parent_exists = if key_len > 1 {
-                    self.focus_node.node_contains_partial_key(&node_key[..key_len-1])
-                } else {
-                    true
-                };
-
-                parent_exists && self.focus_node.count_branches(&node_key[..key_len-1]) == 0 //child_count == 0
-            }
-        }
-
         /// Internal method to implement `descend_to` and similar methods, handling the movement
         /// of the focus node, but not necessarily the whole method contract
         ///
@@ -2747,8 +2715,8 @@ pub(crate) mod read_zipper_core {
         }
         /// Push a new node-path pair onto the zipper.  This is used in the internal implementation of
         /// the [crate::zipper::ProductZipper]
-        pub(crate) fn push_node(&mut self, node: TaggedNodeRef<'a, V, A>, unchecked_descent: usize) {
-            self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len() - unchecked_descent));
+        pub(crate) fn push_node(&mut self, node: TaggedNodeRef<'a, V, A>) {
+            self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
             *self.focus_node = node;
             self.focus_iter_token = NODE_ITER_INVALID;
         }

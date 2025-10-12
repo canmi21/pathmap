@@ -250,6 +250,7 @@ pub(crate) trait TrieNode<V: Clone + Send + Sync, A: Allocator>: TrieNodeDowncas
     fn count_branches(&self, key: &[u8]) -> usize;
 
     /// Returns 256-bit mask, indicating which children exist from the branch specified by `key`
+    /// NOTE: Unlike some other trait methods, method may be called with a zero-length key
     fn node_branches_mask(&self, key: &[u8]) -> ByteMask;
 
     /// Returns the key of the prior upstream branch or value, within the node

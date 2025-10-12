@@ -126,7 +126,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
     fn has_next_factor(&mut self) -> bool {
         self.factor_paths.len() < self.secondaries.len()
     }
-    fn enroll_next_factor(&mut self, unchecked_descent: usize) {
+    fn enroll_next_factor(&mut self) {
         //If there is a `_secondary_root_val`, it lands at the same path as the value where the
         // paths are joined.  And the value from the earlier zipper takes precedence
         let (secondary_root, partial_path, _secondary_root_val) = self.secondaries[self.factor_paths.len()].borrow_raw_parts();
@@ -140,8 +140,8 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
         assert_eq!(partial_path.len(), 0);
 
         self.z.deregularize();
-        self.z.push_node(secondary_root, unchecked_descent);
-        self.factor_paths.push(self.path().len() - unchecked_descent);
+        self.z.push_node(secondary_root);
+        self.factor_paths.push(self.path().len());
     }
     /// Internal method to descend across the boundary between two factor zippers if the focus is on a value
     ///
@@ -158,7 +158,7 @@ impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 't
                 }
             }
 
-            self.enroll_next_factor(0);
+            self.enroll_next_factor();
         }
     }
     /// Internal method to make sure `self.factor_paths` is correct after an ascend method
@@ -203,7 +203,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
 
             if self.has_next_factor() {
                 if self.z.child_count() == 0 && self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len() {
-                    self.enroll_next_factor(0);
+                    self.enroll_next_factor();
                 }
             } else {
                 break
@@ -222,18 +222,19 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     }
     #[inline]
     fn descend_to_byte(&mut self, k: u8) -> bool {
-        self.descend_to(&[k])
-        // HOTFIX!
-        // if !self.z.descend_to_byte(k) {
-        //     if self.has_next_factor() {
-        //         if self.z.path_parent_byte_is_path_end() {
-        //             debug_assert!(self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len());
-        //             self.enroll_next_factor(1);
-        //             self.z.regularize();
-        //             true
-        //         } else { false }
-        //     } else { false }
-        // } else { true }
+        let exists = self.z.descend_to_byte(k);
+        if exists && self.z.child_count() == 0 {
+            if self.has_next_factor() {
+                debug_assert!(self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len());
+                self.enroll_next_factor();
+                if self.z.node_key().len() > 0 {
+                    self.z.regularize();
+                }
+                true
+            } else { true }
+        } else {
+            exists
+        }
     }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool {
         let result = self.z.descend_indexed_byte(child_idx);
@@ -1263,7 +1264,7 @@ mod tests {
         assert_eq!(z.path_exists(), false);
     }
 
-    /// Test focussed heavily on `descend_to_byte`, which stitches at dangling paths
+    /// Test focussed heavily on `descend_to_byte`, with tests for stitching at dangling paths
     #[test]
     fn product_zipper_testb() {
         let paths = [
@@ -1290,6 +1291,8 @@ mod tests {
         assert_eq!(z.descend_to_byte(50), true);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), false);
+        assert_eq!(z.child_count(), 1);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([3u8]));
         assert_eq!(z.descend_to_byte(3), true);
         assert_eq!(z.path_exists(), true);
         assert_eq!(z.is_val(), false);
@@ -1317,6 +1320,23 @@ mod tests {
         assert_eq!(z.descend_to_byte(3), false);
         assert_eq!(z.path_exists(), false);
         assert_eq!(z.is_val(), false);
+    }
+
+    /// Hits some of the `descend_to_byte` stitch transitions, in the context where we'll have a ByteNode
+    #[test]
+    fn product_zipper_testc() {
+        let pm: PathMap<()> = [
+            (&[1, 192], ()),
+            (&[4, 196], ()),
+            (&[193, 102], ())
+        ].into_iter().collect();
+
+        let mut pz = ProductZipper::new(pm.read_zipper(), [pm.read_zipper()]);
+
+        pz.descend_to_byte(1);
+        pz.descend_to_byte(192);
+        assert_eq!(pz.child_count(), 3);
+        assert_eq!(pz.child_mask(), ByteMask::from_iter([1u8, 4, 193]));
     }
 
     #[test]
@@ -1363,20 +1383,6 @@ mod tests {
             }
             // --- END OF MACRO GENERATED MOD ---
         };
-    }
-
-    #[test]
-    fn pz_descend_byte_bug() {
-        let mut pm: PathMap<()> = [(vec![1, 192],()),
-        (vec![4, 196, 101, 120, 101, 99, 193, 48, 3, 193, 44, 1, 192, 128, 2, 193, 44, 194, 79, 75], ()),
-        (vec![193, 102],())].iter().collect();
-
-        let mut pz = ProductZipper::new(pm.read_zipper(), [pm.read_zipper()]);
-
-        pz.descend_to_byte(1);
-        pz.descend_to_byte(192);
-        println!("{:?}", pz.child_mask());
-        assert_eq!(pz.child_mask(), ByteMask::from_iter([1u8, 4, 193]));
     }
 
     macro_rules! noop { ($x:ident) => {}; (*$x:ident) => {}; }
