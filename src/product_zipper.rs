@@ -493,7 +493,7 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ProductZipperG<'trie, PrimaryZ, SecondaryZ,
                 let delta = before - zipper.path().len();
                 plen -= delta;
                 self.primary.ascend(delta);
-                if rv {
+                if rv && (self.child_count() != 1 || (allow_stop_on_val && self.is_val())) {
                     return true;
                 }
             } else {
@@ -735,21 +735,27 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
         self.descend_indexed_byte(0)
     }
     fn descend_until(&mut self) -> bool {
+        let mut moved = false;
         self.enter_factors();
-        let rv = if let Some(idx) = self.factor_idx(false) {
-            let zipper = &mut self.secondary[idx];
-            let before = zipper.path().len();
-            let rv = zipper.descend_until();
-            let path = zipper.path();
-            if path.len() > before {
-                self.primary.descend_to(&path[before..]);
+        while self.child_count() == 1 {
+            moved |= if let Some(idx) = self.factor_idx(false) {
+                let zipper = &mut self.secondary[idx];
+                let before = zipper.path().len();
+                let rv = zipper.descend_until();
+                let path = zipper.path();
+                if path.len() > before {
+                    self.primary.descend_to(&path[before..]);
+                }
+                rv
+            } else {
+                self.primary.descend_until()
+            };
+            self.enter_factors();
+            if self.is_val() {
+                break
             }
-            rv
-        } else {
-            self.primary.descend_until()
-        };
-        self.enter_factors();
-        rv
+        }
+        moved
     }
     #[inline]
     fn to_next_sibling_byte(&mut self) -> bool {
