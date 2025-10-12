@@ -247,9 +247,15 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         result
     }
     fn descend_until(&mut self) -> bool {
-        let result = self.z.descend_until();
-        self.ensure_descend_next_factor();
-        result
+        let mut moved = false;
+        while self.z.child_count() == 1 {
+            moved |= self.z.descend_until();
+            self.ensure_descend_next_factor();
+            if self.z.is_val() {
+                break;
+            }
+        }
+        moved
     }
     fn to_next_sibling_byte(&mut self) -> bool {
         if self.factor_paths.last().cloned().unwrap_or(0) == self.path().len() {
@@ -1279,46 +1285,86 @@ mod tests {
         let mut z = $ProductZipper::new(map.read_zipper(), [map.read_zipper(), map.read_zipper()]);
 
         assert_eq!(z.path_exists(), true);
-        assert_eq!(z.descend_to_byte(3), true);
-        assert_eq!(z.path_exists(), true);
-        assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(196), true);
-        assert_eq!(z.path_exists(), true);
-        assert_eq!(z.is_val(), true);
-        assert_eq!(z.descend_to_byte(101), true);
-        assert_eq!(z.path_exists(), true);
-        assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(50), true);
-        assert_eq!(z.path_exists(), true);
-        assert_eq!(z.is_val(), false);
         assert_eq!(z.child_count(), 1);
         assert_eq!(z.child_mask(), ByteMask::from_iter([3u8]));
+        assert_eq!(z.is_val(), false);
+
         assert_eq!(z.descend_to_byte(3), true);
         assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_count(), 1);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([196u8]));
         assert_eq!(z.is_val(), false);
+
         assert_eq!(z.descend_to_byte(196), true);
         assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_count(), 1);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([101u8]));
         assert_eq!(z.is_val(), true);
+
         assert_eq!(z.descend_to_byte(101), true);
         assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_count(), 2);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([49u8, 50]));
         assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(49), true);
-        assert_eq!(z.path_exists(), true);
-        assert_eq!(z.is_val(), true);
-        assert_eq!(z.descend_to_byte(3), true);
-        assert_eq!(z.path_exists(), true);
-        assert_eq!(z.is_val(), false);
-        assert_eq!(z.descend_to_byte(196), true);
-        assert_eq!(z.path_exists(), true);
-        assert_eq!(z.is_val(), true);
-        assert_eq!(z.descend_to_byte(101), true);
-        assert_eq!(z.path_exists(), true);
-        assert_eq!(z.is_val(), false);
+
         assert_eq!(z.descend_to_byte(50), true);
         assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_count(), 1);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([3u8]));
         assert_eq!(z.is_val(), false);
+
+        assert_eq!(z.descend_to_byte(3), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_count(), 1);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([196u8]));
+        assert_eq!(z.is_val(), false);
+
+        assert_eq!(z.descend_to_byte(196), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.is_val(), true);
+        assert_eq!(z.child_count(), 1);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([101u8]));
+
+        assert_eq!(z.descend_to_byte(101), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_count(), 2);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([49u8, 50]));
+        assert_eq!(z.is_val(), false);
+
+        assert_eq!(z.descend_to_byte(49), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_count(), 1);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([3u8]));
+        assert_eq!(z.is_val(), true);
+
+        assert_eq!(z.descend_to_byte(3), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_count(), 1);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([196u8]));
+        assert_eq!(z.is_val(), false);
+
+        assert_eq!(z.descend_to_byte(196), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_count(), 1);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([101u8]));
+        assert_eq!(z.is_val(), true);
+
+        assert_eq!(z.descend_to_byte(101), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_count(), 2);
+        assert_eq!(z.child_mask(), ByteMask::from_iter([49u8, 50]));
+        assert_eq!(z.is_val(), false);
+
+        assert_eq!(z.descend_to_byte(50), true);
+        assert_eq!(z.path_exists(), true);
+        assert_eq!(z.child_count(), 0);
+        assert_eq!(z.child_mask(), ByteMask::EMPTY);
+        assert_eq!(z.is_val(), false);
+
         assert_eq!(z.descend_to_byte(3), false);
         assert_eq!(z.path_exists(), false);
+        assert_eq!(z.child_count(), 0);
+        assert_eq!(z.child_mask(), ByteMask::EMPTY);
         assert_eq!(z.is_val(), false);
     }
 
@@ -1331,12 +1377,74 @@ mod tests {
             (&[193, 102], ())
         ].into_iter().collect();
 
-        let mut pz = ProductZipper::new(pm.read_zipper(), [pm.read_zipper()]);
+        let mut pz = $ProductZipper::new(pm.read_zipper(), [pm.read_zipper()]);
 
         pz.descend_to_byte(1);
         pz.descend_to_byte(192);
         assert_eq!(pz.child_count(), 3);
         assert_eq!(pz.child_mask(), ByteMask::from_iter([1u8, 4, 193]));
+    }
+
+    /// This test assembles a map with a single dangling path, and stitches multiple of them
+    /// together into a PZ, so the resulting virtual trie is just one long path with repetitions.
+    ///
+    /// We then validate that `ascend`, `ascend_until`, `ascend_until_branch`, etc. all do the right
+    /// thing traversing across multiple factors, not stopping spuriously at the factor stitch points.
+    ///
+    /// Also we test `descend_until` in this case, because the correct behavior should be to
+    /// seamlessly descend, flowing across multiple factor zippers in one call
+    #[test]
+    fn product_zipper_testd() {
+        let snip = b"-=**=-";
+        let repeats = 5;
+        let mut map = PathMap::<()>::new();
+        map.create_path(snip);
+
+        let factors: Vec<_> = (0..repeats-1).into_iter().map(|_| map.read_zipper()).collect();
+        let mut pz = $ProductZipper::new(map.read_zipper(), factors);
+
+        let mut full_path = snip.to_vec();
+        for _ in 0..repeats-1 {
+            full_path.extend(snip);
+        }
+
+        // descend_to is already well tested, but we're using it to set up the conditions for the ascend tests
+        assert_eq!(pz.descend_to(&full_path), true);
+        assert_eq!(pz.path(), full_path);
+        assert_eq!(pz.path_exists(), true);
+        assert_eq!(pz.child_count(), 0);
+        assert_eq!(pz.is_val(), false);
+
+        // test ascend
+        assert_eq!(pz.ascend(snip.len() * (repeats-1)), true);
+        assert_eq!(pz.path(), snip);
+        assert_eq!(pz.path_exists(), true);
+        assert_eq!(pz.child_count(), 1);
+        assert_eq!(pz.is_val(), false);
+
+        // test ascend_until
+        pz.reset();
+        assert_eq!(pz.descend_to(&full_path), true);
+        assert_eq!(pz.ascend_until(), true);
+        assert_eq!(pz.path(), []);
+        assert_eq!(pz.path_exists(), true);
+        assert_eq!(pz.child_count(), 1);
+        assert_eq!(pz.is_val(), false);
+
+        // test ascend_until_branch
+        assert_eq!(pz.descend_to(&full_path), true);
+        assert_eq!(pz.ascend_until_branch(), true);
+        assert_eq!(pz.path(), []);
+        assert_eq!(pz.path_exists(), true);
+        assert_eq!(pz.child_count(), 1);
+        assert_eq!(pz.is_val(), false);
+
+        // test descend_until
+        assert_eq!(pz.descend_until(), true);
+        assert_eq!(pz.path(), full_path);
+        assert_eq!(pz.path_exists(), true);
+        assert_eq!(pz.child_count(), 0);
+        assert_eq!(pz.is_val(), false);
     }
 
     #[test]
