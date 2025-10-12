@@ -1365,6 +1365,20 @@ mod tests {
         };
     }
 
+    #[test]
+    fn pz_descend_byte_bug() {
+        let mut pm: PathMap<()> = [(vec![1, 192],()),
+        (vec![4, 196, 101, 120, 101, 99, 193, 48, 3, 193, 44, 1, 192, 128, 2, 193, 44, 194, 79, 75], ()),
+        (vec![193, 102],())].iter().collect();
+
+        let mut pz = ProductZipper::new(pm.read_zipper(), [pm.read_zipper()]);
+
+        pz.descend_to_byte(1);
+        pz.descend_to_byte(192);
+        println!("{:?}", pz.child_mask());
+        assert_eq!(pz.child_mask(), ByteMask::from_iter([1u8, 4, 193]));
+    }
+
     macro_rules! noop { ($x:ident) => {}; (*$x:ident) => {}; }
     impl_product_zipper_tests!(pz_concrete, ProductZipper, noop);
     impl_product_zipper_tests!(pz_generic, ProductZipperG, noop);
