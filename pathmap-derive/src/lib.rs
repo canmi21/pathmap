@@ -254,9 +254,9 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
                 }
 
                 #[inline]
-                fn descend_to_byte_check(&mut self, k: u8) -> bool {
+                fn descend_to_existing_byte(&mut self, k: u8) -> bool {
                     match self {
-                        #(#variant_arms => inner.descend_to_byte_check(k),)*
+                        #(#variant_arms => inner.descend_to_existing_byte(k),)*
                     }
                 }
 

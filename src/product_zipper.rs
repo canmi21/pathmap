@@ -243,9 +243,9 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         }
     }
     #[inline]
-    fn descend_to_byte_check(&mut self, k: u8) -> bool {
-        let exists = self.z.descend_to_byte_check(k);
-        if exists && self.z.child_count() == 0 {
+    fn descend_to_existing_byte(&mut self, k: u8) -> bool {
+        let descended = self.z.descend_to_existing_byte(k);
+        if descended && self.z.child_count() == 0 {
             if self.has_next_factor() {
                 debug_assert!(self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len());
                 self.enroll_next_factor();
@@ -254,7 +254,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
                 }
             }
         }
-        exists
+        descended
     }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool {
         let result = self.z.descend_indexed_byte(child_idx);

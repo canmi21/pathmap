@@ -241,11 +241,17 @@ pub trait ZipperMoving: Zipper {
         self.descend_to(&[k])
     }
 
-    /// Fused [`descend_to_byte`](ZipperMoving::descend_to) and [`path_exists`](Zipper::path_exists).
-    /// Moves the focus and returns whether or not the path exists at the new focus location
-    fn descend_to_byte_check(&mut self, k: u8) -> bool {
+    /// Moves the zipper one byte deeper into the trie, if the specified path byte exists in the [`child_mask`](Zipper::child_mask).
+    ///
+    /// Returns `true` if the zipper's focus moved and `false` if it is still at the original location.
+    fn descend_to_existing_byte(&mut self, k: u8) -> bool {
         self.descend_to_byte(k);
-        self.path_exists()
+        if self.path_exists() {
+            true
+        } else {
+            self.ascend_byte();
+            false
+        }
     }
 
     /// Descends the zipper's focus one byte into a child branch uniquely identified by `child_idx`
@@ -776,7 +782,7 @@ impl<Z> ZipperMoving for &mut Z where Z: ZipperMoving + Zipper {
     fn descend_to_existing<K: AsRef<[u8]>>(&mut self, k: K) -> usize { (**self).descend_to_existing(k) }
     fn descend_to_val<K: AsRef<[u8]>>(&mut self, k: K) -> usize { (**self).descend_to_val(k) }
     fn descend_to_byte(&mut self, k: u8) { (**self).descend_to_byte(k) }
-    fn descend_to_byte_check(&mut self, k: u8) -> bool { (**self).descend_to_byte_check(k) }
+    fn descend_to_existing_byte(&mut self, k: u8) -> bool { (**self).descend_to_existing_byte(k) }
     fn descend_indexed_byte(&mut self, idx: usize) -> bool { (**self).descend_indexed_byte(idx) }
     fn descend_first_byte(&mut self) -> bool { (**self).descend_first_byte() }
     fn descend_until(&mut self) -> bool { (**self).descend_until() }
@@ -913,7 +919,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     fn descend_to_existing<K: AsRef<[u8]>>(&mut self, k: K) -> usize { self.z.descend_to_existing(k) }
     fn descend_to_val<K: AsRef<[u8]>>(&mut self, k: K) -> usize { self.z.descend_to_val(k) }
     fn descend_to_byte(&mut self, k: u8) { self.z.descend_to_byte(k) }
-    fn descend_to_byte_check(&mut self, k: u8) -> bool { self.z.descend_to_byte_check(k) }
+    fn descend_to_existing_byte(&mut self, k: u8) -> bool { self.z.descend_to_existing_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> bool { self.z.descend_first_byte() }
     fn descend_until(&mut self) -> bool { self.z.descend_until() }
@@ -1062,7 +1068,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     fn descend_to_existing<K: AsRef<[u8]>>(&mut self, k: K) -> usize { self.z.descend_to_existing(k) }
     fn descend_to_val<K: AsRef<[u8]>>(&mut self, k: K) -> usize { self.z.descend_to_val(k) }
     fn descend_to_byte(&mut self, k: u8) { self.z.descend_to_byte(k) }
-    fn descend_to_byte_check(&mut self, k: u8) -> bool { self.z.descend_to_byte_check(k) }
+    fn descend_to_existing_byte(&mut self, k: u8) -> bool { self.z.descend_to_existing_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> bool { self.z.descend_first_byte() }
     fn descend_until(&mut self) -> bool { self.z.descend_until() }
@@ -1261,7 +1267,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperMoving for ReadZipperOw
     fn descend_to_existing<K: AsRef<[u8]>>(&mut self, k: K) -> usize { self.z.descend_to_existing(k) }
     fn descend_to_val<K: AsRef<[u8]>>(&mut self, k: K) -> usize { self.z.descend_to_val(k) }
     fn descend_to_byte(&mut self, k: u8) { self.z.descend_to_byte(k) }
-    fn descend_to_byte_check(&mut self, k: u8) -> bool { self.z.descend_to_byte_check(k) }
+    fn descend_to_existing_byte(&mut self, k: u8) -> bool { self.z.descend_to_existing_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> bool { self.z.descend_first_byte() }
     fn descend_until(&mut self) -> bool { self.z.descend_until() }
@@ -1619,6 +1625,7 @@ pub(crate) mod read_zipper_core {
 
             let (borrowed_self, key) = self.descend_to_internal(k);
             if key.len() == 0 {
+                debug_assert!(self.path_exists());
                 true
             } else {
                 borrowed_self.focus_node.node_contains_partial_key(key)
@@ -1640,19 +1647,25 @@ pub(crate) mod read_zipper_core {
         }
 
         #[inline]
-        fn descend_to_byte_check(&mut self, k: u8) -> bool {
+        fn descend_to_existing_byte(&mut self, k: u8) -> bool {
             self.prepare_buffers();
             debug_assert!(self.is_regularized());
 
             self.prefix_buf.push(k);
-            self.focus_iter_token = NODE_ITER_INVALID;
-            if let Some((_consumed_byte_cnt, next_node)) = self.focus_node.node_get_child(self.node_key()) {
+            let node_key = self.node_key();
+            if let Some((_consumed_byte_cnt, next_node)) = self.focus_node.node_get_child(node_key) {
+                self.focus_iter_token = NODE_ITER_INVALID;
                 let next_node = next_node.as_tagged();
                 self.ancestors.push((*self.focus_node, self.focus_iter_token, self.prefix_buf.len()));
                 *self.focus_node = next_node;
                 return true;
             }
-            self.focus_node.node_contains_partial_key(self.node_key())
+            if self.focus_node.node_contains_partial_key(node_key) {
+                true
+            } else {
+                self.prefix_buf.pop();
+                false
+            }
         }
 
         fn descend_indexed_byte(&mut self, child_idx: usize) -> bool {
