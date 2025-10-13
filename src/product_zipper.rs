@@ -218,6 +218,15 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
             self.z.descend_to(&k[descended..]);
         }
     }
+    fn descend_to_check<K: AsRef<[u8]>>(&mut self, k: K) -> bool {
+        let k = k.as_ref();
+        let descended = self.descend_to_existing(k);
+        if descended != k.len() {
+            self.z.descend_to(&k[descended..]);
+            return false
+        }
+        true
+    }
     #[inline]
     fn descend_to_byte(&mut self, k: u8) {
         self.z.descend_to_byte(k);
@@ -232,6 +241,20 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
                 }
             }
         }
+    }
+    #[inline]
+    fn descend_to_byte_check(&mut self, k: u8) -> bool {
+        let exists = self.z.descend_to_byte_check(k);
+        if exists && self.z.child_count() == 0 {
+            if self.has_next_factor() {
+                debug_assert!(self.factor_paths.last().map(|l| *l).unwrap_or(0) < self.path().len());
+                self.enroll_next_factor();
+                if self.z.node_key().len() > 0 {
+                    self.z.regularize();
+                }
+            }
+        }
+        exists
     }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> bool {
         let result = self.z.descend_indexed_byte(child_idx);

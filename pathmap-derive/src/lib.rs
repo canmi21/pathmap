@@ -240,6 +240,26 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
                     }
                 }
 
+                fn descend_to_check<K: AsRef<[u8]>>(&mut self, k: K) -> bool {
+                    match self {
+                        #(#variant_arms => inner.descend_to_check(k),)*
+                    }
+                }
+
+                #[inline]
+                fn descend_to_byte(&mut self, k: u8) {
+                    match self {
+                        #(#variant_arms => inner.descend_to_byte(k),)*
+                    }
+                }
+
+                #[inline]
+                fn descend_to_byte_check(&mut self, k: u8) -> bool {
+                    match self {
+                        #(#variant_arms => inner.descend_to_byte_check(k),)*
+                    }
+                }
+
                 fn ascend(&mut self, steps: usize) -> bool {
                     match self {
                         #(#variant_arms => inner.ascend(steps),)*
