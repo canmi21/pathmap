@@ -353,12 +353,12 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
         descended
     }
 
-    fn descend_to<K: AsRef<[u8]>>(&mut self, path: K) -> bool {
+    fn descend_to<K: AsRef<[u8]>>(&mut self, path: K) {
         let mut path = path.as_ref();
         let existing = self.descend_to_existing(path);
         path = &path[existing..];
         if path.is_empty() {
-            return true;
+            return;
         }
         self.path.extend_from_slice(&path);
         self.position = match self.position {
@@ -371,11 +371,10 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
                 PrefixPos::Source
             },
         };
-        false
     }
 
     #[inline]
-    fn descend_to_byte(&mut self, k: u8) -> bool {
+    fn descend_to_byte(&mut self, k: u8) {
         self.descend_to([k])
     }
 
@@ -384,7 +383,8 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
         let Some(byte) = mask.indexed_bit::<true>(child_idx) else {
             return false;
         };
-        debug_assert!(self.descend_to_byte(byte));
+        self.descend_to_byte(byte);
+        debug_assert!(self.path_exists());
         true
     }
 

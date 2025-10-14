@@ -1757,16 +1757,13 @@ where Storage: AsRef<[u8]>
     ///
     /// Returns `true` if the zipper points to an existing path within the tree, otherwise `false`.  The
     /// zipper's location will be updated, regardless of whether or not the path exists within the tree.
-    fn descend_to<P: AsRef<[u8]>>(&mut self, path: P) -> bool {
+    fn descend_to<P: AsRef<[u8]>>(&mut self, path: P) {
         let path = path.as_ref();
         let depth = path.len();
         let descended = self.descend_to_existing(path);
-        if descended == depth {
-            true
-        } else {
+        if descended != depth {
             self.path.extend_from_slice(&path[descended..]);
             self.invalid += depth - descended;
-            false
         }
     }
 
@@ -1797,7 +1794,7 @@ where Storage: AsRef<[u8]>
 
     /// Moves the zipper one byte deeper into the trie.  Identical in effect to [descend_to](Self::descend_to)
     /// with a 1-byte key argument
-    fn descend_to_byte(&mut self, k: u8) -> bool {
+    fn descend_to_byte(&mut self, k: u8) {
         self.descend_to(&[k])
     }
 
