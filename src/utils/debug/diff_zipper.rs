@@ -127,7 +127,7 @@ impl<A: Zipper + ZipperMoving, B: Zipper + ZipperMoving> ZipperMoving for DiffZi
         assert_eq!(a, b);
         a
     }
-    fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool {
         let mut a_bytes: Vec<u8> = vec![];
         let mut b_bytes: Vec<u8> = vec![];
         let a = self.a.descend_until(&mut a_bytes);
@@ -137,7 +137,7 @@ impl<A: Zipper + ZipperMoving, B: Zipper + ZipperMoving> ZipperMoving for DiffZi
         }
         assert_eq!(a_bytes, b_bytes);
         assert_eq!(a, b);
-        let _ = desc_bytes.write_all(&a_bytes);
+        obs.descend_to(&a_bytes);
         a
     }
     fn ascend(&mut self, steps: usize) -> usize {

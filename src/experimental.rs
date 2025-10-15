@@ -57,7 +57,7 @@ impl ZipperMoving for FullZipper {
         self.path.push(0);
         Some(0)
     }
-    fn descend_until<W: std::io::Write>(&mut self, _desc_bytes: W) -> bool {
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool {
         false
     }
     fn ascend(&mut self, steps: usize) -> usize {

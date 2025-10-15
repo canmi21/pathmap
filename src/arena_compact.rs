@@ -76,16 +76,16 @@
 //!              [if (header&0x3f != 0) first_child: varint64]
 //!              [                      line_offset: varint64]
 //! ```
+use core::cell::Cell;
+use core::marker::PhantomData;
 use std::{io::Write, hash::Hasher};
-use std::cell::Cell;
-use std::marker::PhantomData;
 use fast_slice_utils::starts_with;
 
 use crate::{
     morphisms::Catamorphism,
     utils::{BitMask, ByteMask, find_prefix_overlap},
     zipper::{
-        Zipper, ZipperValues, ZipperForking, ZipperAbsolutePath, ZipperIteration,
+        PathObserver, Zipper, ZipperValues, ZipperForking, ZipperAbsolutePath, ZipperIteration,
         ZipperMoving, ZipperPath, ZipperPathBuffer, ZipperReadOnlyValues,
         ZipperConcrete, ZipperReadOnlyConditionalValues,
     },
@@ -433,8 +433,8 @@ const SI_PREFIX: &[u8] = b"KMGTPE";
 
 struct SiCount(usize);
 
-impl std::fmt::Display for SiCount {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl core::fmt::Display for SiCount {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
         let mut value = self.0 as f64;
         if value < 1000.0 {
             return write!(fmt, "{value:3.0}");
@@ -448,8 +448,8 @@ impl std::fmt::Display for SiCount {
     }
 }
 
-impl std::fmt::Debug for Counters {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl core::fmt::Debug for Counters {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter) -> core::fmt::Result {
         let total_size = self.nodes_size + self.lines_size
             + self.line_data_size + 16 + 8;
         write!(fmt,
@@ -1885,10 +1885,9 @@ where Storage: AsRef<[u8]>
         self.descend_indexed_byte(0)
     }
 
-    fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool {
         self.trace_pos();
         let mut descended = false;
-        let orig_len = self.path.len();
         'descend: while self.child_count() == 1 {
             let child_id;
             match &self.cur_node {
@@ -1896,9 +1895,13 @@ where Storage: AsRef<[u8]>
                     let top_frame = self.stack.last_mut().unwrap();
                     let path = self.tree.get_line(line.path);
                     let rest_path = &path[top_frame.node_depth..];
+                    if obs.remaining_limit() != usize::MAX && obs.remaining_limit() < rest_path.len() {
+                        break 'descend;
+                    }
                     let line_child_hack = if line.child.is_some() { 1 } else { 0 };
                     top_frame.node_depth += rest_path.len() - line_child_hack;
                     self.path.extend_from_slice(rest_path);
+                    obs.descend_to(rest_path);
                     child_id = line.child;
                     if line.value.is_some() {
                         descended = true;
@@ -1908,7 +1911,11 @@ where Storage: AsRef<[u8]>
                 Node::Branch(node) => {
                     let Some(byte) = node.bytemask.iter().next()
                         else { break 'descend };
+                    if obs.remaining_limit() < 1 {
+                        break 'descend;
+                    }
                     self.path.push(byte);
+                    obs.descend_to_byte(byte);
                     child_id = node.first_child;
                 }
             }
@@ -1929,7 +1936,6 @@ where Storage: AsRef<[u8]>
                 }
             }
         }
-        let _ = desc_bytes.write_all(&self.path[orig_len..]);
         descended
     }
 

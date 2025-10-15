@@ -1,7 +1,7 @@
 use crate::{
     utils::ByteMask,
     zipper::{
-        Zipper, ZipperAbsolutePath, ZipperMoving, ZipperIteration,
+        PathObserver, Zipper, ZipperAbsolutePath, ZipperMoving, ZipperIteration,
         ZipperPath, ZipperPathBuffer, ZipperValues,
         ZipperReadOnlyValues, ZipperReadOnlyConditionalValues,
     },
@@ -148,10 +148,11 @@ impl<Z: ZipperMoving> ZipperMoving for PathTracker<Z> {
         self.path.push(byte);
         Some(byte)
     }
-    fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool {
         let orig_len = self.path.len();
+        //GOAT, we need to create a wrapper around path that captures the `obs` remaining_limit, so the wrapped zipper doesn't descend.
         let descended = self.zipper.descend_until(&mut self.path);
-        let _ = desc_bytes.write_all(&self.path[orig_len..]);
+        obs.descend_to(&self.path[orig_len..]);
         descended
     }
     // TODO: using default impl. re-using zipper's own `to_next_step` implementation

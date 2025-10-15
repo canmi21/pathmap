@@ -267,15 +267,12 @@ pub trait ZipperMoving: Zipper {
     ///
     /// If there is a value at the focus, the zipper will descend to the next value or branch, however the
     /// zipper will not descend further if this method is called with the focus already on a branch.
-    ///
-    /// Any descended bytes will be written to `desc_bytes`.  Pass [`std::io::sink`] if you don't need this
-    /// information.
-    fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool {
         let mut descended = false;
-        while self.child_count() == 1 {
+        while self.child_count() == 1 && obs.remaining_limit() > 0 {
             descended = true;
             if let Some(byte) = self.descend_first_byte() {
-                let _ = desc_bytes.write_all(&[byte]);
+                let _ = obs.descend_to_byte(byte);
             }
             if self.is_val() {
                 break;
@@ -379,6 +376,56 @@ pub trait ZipperMoving: Zipper {
         }
         true
     }
+}
+
+/// Implemented on types used to observe the effects of methods from [`ZipperMoving`], [`ZipperIteration`],
+/// and other methods that affect a zipper's focus position
+pub trait PathObserver {
+    /// Informs the `PathObserver` that the zipper is descending `path` bytes, relative
+    /// to the zipper's current focus
+    fn descend_to(&mut self, path: &[u8]);
+
+    /// Equivalent to `self.descend_to(&[byte])` but with slightly less overhead
+    fn descend_to_byte(&mut self, byte: u8) {
+        self.descend_to(&[byte]);
+    }
+
+    /// Informs the `PathObserver` that the zipper is ascending `steps` bytes, relative
+    /// to the zipper's current focus
+    fn ascend(&mut self, steps: usize);
+
+    /// Returns the number of bytes remaining in the observer's buffer.  Pass [`usize::MAX`] to
+    /// indicate that the buffer may grow dynamically or that a limit does not apply
+    //
+    //GOAT, after implementing (and in some cases failing to implement) graceful exits from
+    // methods when the limit is insufficient, I am coming to believe exposing this limit here
+    // is the wrong design.  It puts tons of branches into the zipper methods we are hoping to
+    // streamline, so it'll come with a perf and maintainability cost.  Also, really long paths
+    // are already considered an anti-pattern, so we shouldn't bump up against a need for really
+    // big buffers very often.  It seems to me that a `PathObserver` that wants to absolutely
+    // avoid a realloc in zipper movement should take care to preallocate a sufficient buffer
+    // for the common case, and spill the unwritten bytes somehow inside its implementation,
+    // setting whatever retry flags are needed for the caller.
+    fn remaining_limit(&self) -> usize {
+        usize::MAX
+    }
+}
+
+impl PathObserver for Vec<u8> {
+    fn descend_to(&mut self, path: &[u8]) {
+        self.extend_from_slice(path);
+    }
+    fn descend_to_byte(&mut self, byte: u8) {
+        self.push(byte)
+    }
+    fn ascend(&mut self, steps: usize) {
+        self.truncate(self.len() - steps)
+    }
+}
+
+impl PathObserver for () {
+    fn descend_to(&mut self, _path: &[u8]) { }
+    fn ascend(&mut self, _steps: usize) { }
 }
 
 /// An interface to access values through a [Zipper] that cannot modify the trie.  Allows
@@ -485,7 +532,7 @@ pub trait ZipperIteration: ZipperMoving + ZipperPath {
                 if self.is_val() {
                     return true
                 }
-                if self.descend_until(std::io::sink()) {
+                if self.descend_until(&mut ()) {
                     if self.is_val() {
                         return true
                     }
@@ -520,7 +567,7 @@ pub trait ZipperIteration: ZipperMoving + ZipperPath {
         let mut any = false;
         while self.descend_last_byte().is_some() {
             any = true;
-            self.descend_until(std::io::sink());
+            self.descend_until(&mut ());
         }
         any
     }
@@ -778,7 +825,7 @@ impl<Z> ZipperMoving for &mut Z where Z: ZipperMoving + Zipper {
     fn descend_to_existing_byte(&mut self, k: u8) -> bool { (**self).descend_to_existing_byte(k) }
     fn descend_indexed_byte(&mut self, idx: usize) -> Option<u8> { (**self).descend_indexed_byte(idx) }
     fn descend_first_byte(&mut self) -> Option<u8> { (**self).descend_first_byte() }
-    fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool { (**self).descend_until(desc_bytes) }
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool { (**self).descend_until(obs) }
     fn ascend(&mut self, steps: usize) -> usize { (**self).ascend(steps) }
     fn ascend_byte(&mut self) -> bool { (**self).ascend_byte() }
     fn ascend_until(&mut self) -> usize { (**self).ascend_until() }
@@ -918,7 +965,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     fn descend_to_existing_byte(&mut self, k: u8) -> bool { self.z.descend_to_existing_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> Option<u8> { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> Option<u8> { self.z.descend_first_byte() }
-    fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool { self.z.descend_until(desc_bytes) }
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool { self.z.descend_until(obs) }
     fn to_next_sibling_byte(&mut self) -> Option<u8> { self.z.to_next_sibling_byte() }
     fn to_prev_sibling_byte(&mut self) -> Option<u8> { self.z.to_prev_sibling_byte() }
     fn ascend(&mut self, steps: usize) -> usize { self.z.ascend(steps) }
@@ -1071,7 +1118,7 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     fn descend_to_existing_byte(&mut self, k: u8) -> bool { self.z.descend_to_existing_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> Option<u8> { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> Option<u8> { self.z.descend_first_byte() }
-    fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool { self.z.descend_until(desc_bytes) }
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool { self.z.descend_until(obs) }
     fn to_next_sibling_byte(&mut self) -> Option<u8> { self.z.to_next_sibling_byte() }
     fn to_prev_sibling_byte(&mut self) -> Option<u8> { self.z.to_prev_sibling_byte() }
     fn ascend(&mut self, steps: usize) -> usize { self.z.ascend(steps) }
@@ -1274,7 +1321,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperMoving for ReadZipperOw
     fn descend_to_existing_byte(&mut self, k: u8) -> bool { self.z.descend_to_existing_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> Option<u8> { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> Option<u8> { self.z.descend_first_byte() }
-    fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool { self.z.descend_until(desc_bytes) }
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool { self.z.descend_until(obs) }
     fn to_next_sibling_byte(&mut self) -> Option<u8> { self.z.to_next_sibling_byte() }
     fn to_prev_sibling_byte(&mut self) -> Option<u8> { self.z.to_prev_sibling_byte() }
     fn ascend(&mut self, steps: usize) -> usize { self.z.ascend(steps) }
@@ -1730,12 +1777,12 @@ pub(crate) mod read_zipper_core {
             }
         }
 
-        fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
+        fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool {
             debug_assert!(self.is_regularized());
             let mut moved = false;
             while self.child_count() == 1 {
                 moved = true;
-                self.descend_first(&mut desc_bytes);
+                self.descend_first(obs);
                 if self.is_val_internal() {
                     break;
                 }
@@ -2689,26 +2736,34 @@ pub(crate) mod read_zipper_core {
 
         /// Internal method implementing part of [Self::descend_until], but doesn't pay attention to to [Self::child_count]
         #[inline]
-        fn descend_first<W: std::io::Write>(&mut self, desc_bytes: &mut W) {
+        fn descend_first<Obs: PathObserver>(&mut self, obs: &mut Obs) {
             self.prepare_buffers();
             match self.focus_node.first_child_from_key(self.node_key()) {
                 (Some(prefix), Some(child_node)) => {
-                    //Step to a new node
-                    self.prefix_buf.extend(prefix);
-                    let _ = desc_bytes.write_all(prefix);
-                    self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
-                    *self.focus_node = child_node;
-                    self.focus_iter_token = NODE_ITER_INVALID;
+                    if obs.remaining_limit() == usize::MAX || obs.remaining_limit() <= prefix.len() {
+                        //Step to a new node
+                        self.prefix_buf.extend(prefix);
+                        obs.descend_to(prefix);
+                        self.ancestors.push((*self.focus_node.clone(), self.focus_iter_token, self.prefix_buf.len()));
+                        *self.focus_node = child_node;
+                        self.focus_iter_token = NODE_ITER_INVALID;
 
-                    //If we're at the root of the new node, descend to the first child
-                    if prefix.len() == 0 {
-                        self.descend_first(desc_bytes)
+                        //If we're at the root of the new node, descend to the first child
+                        if prefix.len() == 0 {
+                            self.descend_first(obs)
+                        }
+                    } else {
+                        return
                     }
                 },
                 (Some(prefix), None) => {
-                    //Stay within the same node
-                    self.prefix_buf.extend(prefix);
-                    let _ = desc_bytes.write_all(prefix);
+                    if obs.remaining_limit() == usize::MAX || obs.remaining_limit() <= prefix.len() {
+                        //Stay within the same node
+                        self.prefix_buf.extend(prefix);
+                        obs.descend_to(prefix);
+                    } else {
+                        return
+                    }
                 },
                 (None, _) => unreachable!()
             }
@@ -3356,7 +3411,7 @@ pub(crate) mod zipper_moving_tests {
 
     pub fn zipper_descend_until_test1<Z: ZipperMoving + ZipperPath>(mut zip: Z) {
         for key in ZIPPER_DESCEND_UNTIL_TEST1_KEYS {
-            assert!(zip.descend_until(std::io::sink()));
+            assert!(zip.descend_until(&mut ()));
             assert_eq!(zip.path(), *key);
         }
     }
@@ -3546,20 +3601,20 @@ pub(crate) mod zipper_moving_tests {
         descend_byte(&mut zipper, b'r');
         assert_eq!(zipper.path(), b"r");
         assert_eq!(zipper.child_count(), 2);
-        assert_eq!(zipper.descend_until(std::io::sink()), false);
+        assert_eq!(zipper.descend_until(&mut ()), false);
         descend_byte(&mut zipper, b'o');
         assert_eq!(zipper.path(), b"ro");
         assert_eq!(zipper.child_count(), 1);
-        assert_eq!(zipper.descend_until(std::io::sink()), true);
+        assert_eq!(zipper.descend_until(&mut ()), true);
         assert_eq!(zipper.path(), b"rom");
         assert_eq!(zipper.child_count(), 3);
 
         zipper.reset();
-        assert_eq!(zipper.descend_until(std::io::sink()), false);
+        assert_eq!(zipper.descend_until(&mut ()), false);
         descend_byte(&mut zipper, b'a');
         assert_eq!(zipper.path(), b"a");
         assert_eq!(zipper.child_count(), 1);
-        assert_eq!(zipper.descend_until(std::io::sink()), true);
+        assert_eq!(zipper.descend_until(&mut ()), true);
         assert_eq!(zipper.path(), b"arrow");
         assert_eq!(zipper.child_count(), 0);
 
@@ -3587,7 +3642,7 @@ pub(crate) mod zipper_moving_tests {
         assert_eq!(zipper.ascend(1), 1);
         zipper.descend_to(b"u");
         assert_eq!(zipper.is_val(), false);
-        zipper.descend_until(std::io::sink());
+        zipper.descend_until(&mut ());
         assert_eq!(zipper.is_val(), true);
     }
 
@@ -4370,7 +4425,7 @@ mod tests {
         zipper.descend_to(b"u");
         assert_eq!(zipper.is_val(), false);
         assert_eq!(zipper.val(), None);
-        zipper.descend_until(std::io::sink());
+        zipper.descend_until(&mut ());
         assert_eq!(zipper.is_val(), true);
         assert_eq!(zipper.val(), Some(&"romanus"));
     }
@@ -4707,7 +4762,7 @@ mod tests {
 
         assert_eq!(zipper.path(), b"");
         assert_eq!(zipper.val_count(), 2);
-        assert_eq!(zipper.descend_until(std::io::sink()), true);
+        assert_eq!(zipper.descend_until(&mut ()), true);
         assert_eq!(zipper.path(), b"arrow");
         assert_eq!(zipper.val_count(), 1);
     }

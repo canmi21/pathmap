@@ -18,7 +18,7 @@
 
 use fast_slice_utils::find_prefix_overlap;
 use crate::utils::{BitMask, ByteMask};
-use crate::zipper::{Zipper, ZipperMoving, ZipperPath, ZipperIteration, ZipperValues};
+use crate::zipper::{PathObserver, Zipper, ZipperMoving, ZipperPath, ZipperIteration, ZipperValues};
 
 /// Zipper that traverses a virtual trie formed by fusing the tries of two other zippers
 pub struct OverlayZipper<AV, BV, OutV, AZipper, BZipper, Mapping>
@@ -221,10 +221,11 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         Some(byte)
     }
 
-    fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool {
         let start_depth = self.a.path().len();
-        let desc_a = self.a.descend_until(std::io::sink());
-        let desc_b = self.b.descend_until(std::io::sink());
+        //GOAT: TODO.  We need to shadow the `obs` with a type that reflects the current obs remaining_limit
+        let desc_a = self.a.descend_until(&mut ());
+        let desc_b = self.b.descend_until(&mut ());
         let path_a = &self.a.path()[start_depth..];
         let path_b = &self.b.path()[start_depth..];
         if !desc_a && !desc_b {
@@ -266,7 +267,7 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         debug_assert_eq!(self.a.path(), self.b.path());
         debug_assert_eq!(start_depth + overlap, self.a.path().len());
         if overlap > 0 {
-            let _ = desc_bytes.write_all(&self.a.path()[start_depth..]);
+            obs.descend_to(&self.a.path()[start_depth..]);
             true
         } else {
             false

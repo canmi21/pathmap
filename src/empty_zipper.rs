@@ -51,7 +51,7 @@ impl ZipperMoving for EmptyZipper {
     }
     fn descend_indexed_byte(&mut self, _idx: usize) -> Option<u8> { None }
     fn descend_first_byte(&mut self) -> Option<u8> { None }
-    fn descend_until<W: std::io::Write>(&mut self, _desc_bytes: W) -> bool { false }
+    fn descend_until<Obs: PathObserver>(&mut self, _obs: &mut Obs) -> bool { false }
     fn ascend(&mut self, steps: usize) -> usize {
         let old_path_len = self.path.len() - self.path_start_idx;
         if steps > old_path_len {

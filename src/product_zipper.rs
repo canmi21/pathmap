@@ -266,10 +266,10 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         self.ensure_descend_next_factor();
         result
     }
-    fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool {
         let mut moved = false;
         while self.z.child_count() == 1 {
-            moved |= self.z.descend_until(&mut desc_bytes);
+            moved |= self.z.descend_until(obs);
             self.ensure_descend_next_factor();
             if self.z.is_val() {
                 break;
@@ -770,21 +770,21 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
     fn descend_first_byte(&mut self) -> Option<u8> {
         self.descend_indexed_byte(0)
     }
-    fn descend_until<W: std::io::Write>(&mut self, mut desc_bytes: W) -> bool {
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool {
         let mut moved = false;
         self.enter_factors();
         while self.child_count() == 1 {
             moved |= if let Some(idx) = self.factor_idx(false) {
                 let zipper = &mut self.secondary[idx];
                 let before = zipper.path().len();
-                let rv = zipper.descend_until(&mut desc_bytes);
+                let rv = zipper.descend_until(obs);
                 let path = zipper.path();
                 if path.len() > before {
                     self.primary.descend_to(&path[before..]);
                 }
                 rv
             } else {
-                self.primary.descend_until(&mut desc_bytes)
+                self.primary.descend_until(obs)
             };
             self.enter_factors();
             if self.is_val() {
@@ -1518,7 +1518,7 @@ mod tests {
         assert_eq!(pz.is_val(), false);
 
         // test descend_until
-        assert_eq!(pz.descend_until(std::io::sink()), true);
+        assert_eq!(pz.descend_until(&mut ()), true);
         assert_eq!(pz.path(), full_path);
         assert_eq!(pz.path_exists(), true);
         assert_eq!(pz.child_count(), 0);

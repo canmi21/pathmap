@@ -2,7 +2,7 @@
 use core::fmt::{Debug, Formatter};
 use core::ptr;
 use std::collections::HashMap;
-use std::hint::unreachable_unchecked;
+use core::hint::unreachable_unchecked;
 
 use crate::alloc::Allocator;
 use crate::ring::*;
@@ -54,7 +54,7 @@ pub type CellByteNode<V, A> = ByteNode<CellCoFree<V, A>, A>;
 #[repr(C)]
 pub struct ByteNode<Cf, A: Allocator> {
     #[cfg(feature = "slim_ptrs")]
-    refcnt: std::sync::atomic::AtomicU32,
+    refcnt: core::sync::atomic::AtomicU32,
     pub mask: ByteMask,
     #[cfg(feature = "nightly")]
     values: Vec<Cf, A>,
@@ -100,7 +100,7 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> Clone for ByteN
     fn clone(&self) -> Self {
         Self {
             #[cfg(feature = "slim_ptrs")]
-            refcnt: std::sync::atomic::AtomicU32::new(1),
+            refcnt: core::sync::atomic::AtomicU32::new(1),
             mask: self.mask,
             values: self.values.clone(),
             alloc: self.alloc.clone(),
@@ -109,7 +109,7 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> Clone for ByteN
 }
 
 impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> Debug for ByteNode<Cf, A> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         //Recursively printing a whole tree will get pretty unwieldy.  Should do something
         // like serialization for inspection using standard tools.
         write!(f, "ByteNode {{count={}", self.values.len())?;
@@ -134,7 +134,7 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> ByteNode<Cf, A>
     fn new_with_fields_in(mask: ByteMask, values: ValuesVec<Cf, A>, alloc: A) -> Self {
         Self {
             #[cfg(feature = "slim_ptrs")]
-            refcnt: std::sync::atomic::AtomicU32::new(1),
+            refcnt: core::sync::atomic::AtomicU32::new(1),
             mask,
             values: values.v,
             alloc,

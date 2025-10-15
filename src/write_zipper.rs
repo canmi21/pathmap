@@ -353,7 +353,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     fn descend_to_byte(&mut self, k: u8) { self.z.descend_to_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> Option<u8> { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> Option<u8> { self.z.descend_first_byte() }
-    fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool { self.z.descend_until(desc_bytes) }
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool { self.z.descend_until(obs) }
     fn to_next_sibling_byte(&mut self) -> Option<u8> { self.z.to_next_sibling_byte() }
     fn to_prev_sibling_byte(&mut self) -> Option<u8> { self.z.to_prev_sibling_byte() }
     fn ascend(&mut self, steps: usize) -> usize { self.z.ascend(steps) }
@@ -510,7 +510,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     fn descend_to_byte(&mut self, k: u8) { self.z.descend_to_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> Option<u8> { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> Option<u8> { self.z.descend_first_byte() }
-    fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool { self.z.descend_until(desc_bytes) }
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool { self.z.descend_until(obs) }
     fn to_next_sibling_byte(&mut self) -> Option<u8> { self.z.to_next_sibling_byte() }
     fn to_prev_sibling_byte(&mut self) -> Option<u8> { self.z.to_prev_sibling_byte() }
     fn ascend(&mut self, steps: usize) -> usize { self.z.ascend(steps) }
@@ -691,7 +691,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperMoving for WriteZipperO
     fn descend_to_byte(&mut self, k: u8) { self.z.descend_to_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> Option<u8> { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> Option<u8> { self.z.descend_first_byte() }
-    fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool { self.z.descend_until(desc_bytes) }
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool { self.z.descend_until(obs) }
     fn to_next_sibling_byte(&mut self) -> Option<u8> { self.z.to_next_sibling_byte() }
     fn to_prev_sibling_byte(&mut self) -> Option<u8> { self.z.to_prev_sibling_byte() }
     fn ascend(&mut self, steps: usize) -> usize { self.z.ascend(steps) }
@@ -4299,7 +4299,7 @@ mod tests {
 
         assert_eq!(zipper.path(), b"");
         assert_eq!(zipper.val_count(), 2);
-        assert_eq!(zipper.descend_until(std::io::sink()), true);
+        assert_eq!(zipper.descend_until(&mut ()), true);
         assert_eq!(zipper.path(), b"arrow");
         assert_eq!(zipper.val_count(), 1);
     }

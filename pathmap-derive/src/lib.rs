@@ -321,9 +321,9 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
                     }
                 }
 
-                fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool {
+                fn descend_until<Obs: pathmap::zipper::PathObserver>(&mut self, obs: &mut Obs) -> bool {
                     match self {
-                        #(#variant_arms => inner.descend_until(desc_bytes),)*
+                        #(#variant_arms => inner.descend_until(obs),)*
                     }
                 }
 

@@ -388,7 +388,7 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
         self.descend_indexed_byte(0)
     }
 
-    fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool {
+    fn descend_until<Obs: PathObserver>(&mut self, obs: &mut Obs) -> bool {
         if self.position.is_invalid() {
             return false;
         }
@@ -397,7 +397,7 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
             self.position = PrefixPos::Source;
         }
         let len_before = self.source.path().len();
-        if !self.source.descend_until(desc_bytes) {
+        if !self.source.descend_until(obs) {
             return false;
         }
         let path = self.source.path();
