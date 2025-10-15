@@ -18,6 +18,20 @@ pub struct ProductZipper<'factor_z, 'trie, V: Clone + Send + Sync, A: Allocator 
     source_zippers: Vec<Box<dyn zipper_priv::ZipperReadOnlyPriv<'trie, V, A> + 'factor_z>>
 }
 
+impl<V: Clone + Send + Sync + Unpin, A: Allocator> core::fmt::Debug for ProductZipper<'_, '_, V, A> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let path = crate::utils::debug::render_debug_path(self.path(), crate::utils::debug::PathRenderMode::TryAscii).unwrap();
+        f.debug_struct("ProductZipper")
+            .field("path", &path)
+            .field("is_val", &self.is_val())
+            .field("child_cnt", &self.child_count())
+            .field("child_mask", &self.child_mask())
+            .field("factor_cnt", &self.factor_count())
+            .field("focus_factor", &self.focus_factor())
+            .finish()
+    }
+}
+
 impl<'factor_z, 'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ProductZipper<'factor_z, 'trie, V, A> {
     /// Creates a new `ProductZipper` from the provided zippers
     ///

@@ -44,6 +44,42 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> Clone for PathMap<V, A> {
     }
 }
 
+impl<V: Clone + Send + Sync + Unpin + core::fmt::Debug, A: Allocator> core::fmt::Debug for PathMap<V, A> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        const MAX_DEBUG_PATHS: usize = 100;
+
+        let mut rz = self.read_zipper();
+
+        //Try first assuming the paths are all ascii
+        let mut contains_all_ascii = true;
+        let mut dbg_struct = f.debug_struct("PathMap");
+        let mut path_cnt = 0;
+        while rz.to_next_val() && path_cnt < MAX_DEBUG_PATHS  {
+            if let Some(key) = crate::utils::debug::render_debug_path(rz.path(), crate::utils::debug::PathRenderMode::RequireAscii) {
+                dbg_struct.field(&key, rz.val().unwrap());
+                path_cnt += 1;
+            } else {
+                contains_all_ascii = false;
+                break;
+            }
+        }
+        if contains_all_ascii {
+            return dbg_struct.finish()
+        }
+
+        //If that failed, render them again with non-ascii paths
+        rz.reset();
+        let mut dbg_struct = f.debug_struct("PathMap");
+        let mut path_cnt = 0;
+        while rz.to_next_val() && path_cnt < MAX_DEBUG_PATHS  {
+            let key = crate::utils::debug::render_debug_path(rz.path(), crate::utils::debug::PathRenderMode::ByteList).unwrap();
+            dbg_struct.field(&key, rz.val().unwrap());
+            path_cnt += 1;
+        }
+        dbg_struct.finish()
+    }
+}
+
 impl<V: Clone + Send + Sync + Unpin> PathMap<V, GlobalAlloc> {
     /// Creates a new empty map
     #[inline]
