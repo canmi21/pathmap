@@ -178,6 +178,10 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
     fn at_root(&self) -> bool {
         self.path().len() == 0
     }
+    #[inline]
+    fn focus_byte(&self) -> Option<u8> {
+        self.z.focus_byte()
+    }
     fn reset(&mut self) {
         self.factor_paths.clear();
         self.z.reset()
@@ -700,6 +704,10 @@ impl<'trie, PrimaryZ, SecondaryZ, V> ZipperMoving for ProductZipperG<'trie, Prim
 {
     fn at_root(&self) -> bool {
         self.path().is_empty()
+    }
+    #[inline]
+    fn focus_byte(&self) -> Option<u8> {
+        self.primary.path().last().cloned()
     }
     fn reset(&mut self) {
         self.factor_paths.clear();

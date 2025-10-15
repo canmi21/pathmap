@@ -346,6 +346,7 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperSubtries<V, A>
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving for WriteZipperTracked<'a, 'path, V, A> {
     fn at_root(&self) -> bool { self.z.at_root() }
+    fn focus_byte(&self) -> Option<u8> { self.z.focus_byte() }
     fn reset(&mut self) { self.z.reset() }
     fn val_count(&self) -> usize { self.z.val_count() }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) { self.z.descend_to(k) }
@@ -502,6 +503,7 @@ impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperSubtries<V, A>
 
 impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving for WriteZipperUntracked<'a, 'path, V, A> {
     fn at_root(&self) -> bool { self.z.at_root() }
+    fn focus_byte(&self) -> Option<u8> { self.z.focus_byte() }
     fn reset(&mut self) { self.z.reset() }
     fn val_count(&self) -> usize { self.z.val_count() }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) { self.z.descend_to(k) }
@@ -682,6 +684,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperSubtries<V, A> for Writ
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperMoving for WriteZipperOwned<V, A> {
     fn at_root(&self) -> bool { self.z.at_root() }
+    fn focus_byte(&self) -> Option<u8> { self.z.focus_byte() }
     fn reset(&mut self) { self.z.reset() }
     fn val_count(&self) -> usize { self.z.val_count() }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) { self.z.descend_to(k) }
@@ -957,6 +960,11 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     #[inline]
     fn at_root(&self) -> bool {
         self.key.prefix_buf.len() <= self.key.origin_path.len()
+    }
+
+    #[inline]
+    fn focus_byte(&self) -> Option<u8> {
+        self.key.prefix_buf.last().cloned()
     }
 
     fn reset(&mut self) {

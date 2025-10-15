@@ -60,6 +60,12 @@ impl<A: Zipper + ZipperMoving, B: Zipper + ZipperMoving> ZipperMoving for DiffZi
             println!("DiffZipper: reset")
         }
     }
+    fn focus_byte(&self) -> Option<u8> {
+        let a = self.a.focus_byte();
+        let b = self.b.focus_byte();
+        assert_eq!(a, b);
+        a
+    }
     fn val_count(&self) -> usize {
         let a = self.a.val_count();
         let b = self.b.val_count();

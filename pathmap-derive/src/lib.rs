@@ -246,6 +246,13 @@ pub fn derive_poly_zipper(input: TokenStream) -> TokenStream {
                     }
                 }
 
+                #[inline]
+                fn focus_byte(&self) -> Option<u8> {
+                    match self {
+                        #(#variant_arms => inner.focus_byte(),)*
+                    }
+                }
+
                 fn reset(&mut self) {
                     match self {
                         #(#variant_arms => inner.reset(),)*

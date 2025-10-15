@@ -34,6 +34,14 @@ impl Zipper for EmptyZipper {
 impl ZipperMoving for EmptyZipper {
     fn at_root(&self) -> bool { self.path.len() == self.path_start_idx }
     fn reset(&mut self) { self.path.truncate(self.path_start_idx) }
+    #[inline]
+    fn focus_byte(&self) -> Option<u8> {
+        if self.path.len() > self.path_start_idx {
+            self.path.last().cloned()
+        } else {
+            None
+        }
+    }
     fn val_count(&self) -> usize { 0 }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) {
         self.path.extend_from_slice(k.as_ref());

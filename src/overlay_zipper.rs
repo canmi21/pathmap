@@ -145,6 +145,13 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         self.b.reset();
     }
 
+    #[inline]
+    fn focus_byte(&self) -> Option<u8> {
+        let byte = self.a.focus_byte();
+        debug_assert_eq!(byte, self.b.focus_byte());
+        byte
+    }
+
     fn val_count(&self) -> usize {
         todo!()
     }

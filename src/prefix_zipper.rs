@@ -313,7 +313,10 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
             PrefixPos::Source => self.prefix.len() <= self.origin_depth && self.source.at_root(),
         }
     }
-
+    #[inline]
+    fn focus_byte(&self) -> Option<u8> {
+        self.path.last().cloned()
+    }
     fn reset(&mut self) {
         self.prepare_buffers();
         self.path.truncate(self.origin_depth);

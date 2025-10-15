@@ -120,6 +120,13 @@ pub trait ZipperMoving: Zipper {
     //     self.path().len() == 0
     // }
 
+    /// Returns the path byte at the zipper's focus, or `None` if the zipper is at the root
+    ///
+    /// NOTE: This method is not aware of the zipper's position within a larger trie, and
+    /// therefore it will always return `None` when the zipper is at the root, even if 
+    /// [`root_prefix_path`](ZipperAbsolutePath::root_prefix_path) returns a non-empty slice.
+    fn focus_byte(&self) -> Option<u8>;
+
     /// Resets the zipper's focus back to its root
     fn reset(&mut self) {
         while !self.at_root() {
@@ -768,6 +775,7 @@ impl<Z> Zipper for &mut Z where Z: Zipper {
 impl<Z> ZipperMoving for &mut Z where Z: ZipperMoving + Zipper {
     fn at_root(&self) -> bool { (**self).at_root() }
     fn reset(&mut self) { (**self).reset() }
+    fn focus_byte(&self) -> Option<u8> { (**self).focus_byte() }
     fn val_count(&self) -> usize { (**self).val_count() }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) { (**self).descend_to(k) }
     fn descend_to_check<K: AsRef<[u8]>>(&mut self, k: K) -> bool { (**self).descend_to_check(k) }
@@ -906,6 +914,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperSubtries<V, A> for Read
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperMoving for ReadZipperTracked<'trie, '_, V, A> {
     fn at_root(&self) -> bool { self.z.at_root() }
+    fn focus_byte(&self) -> Option<u8> { self.z.focus_byte() }
     fn reset(&mut self) { self.z.reset() }
     fn val_count(&self) -> usize { self.z.val_count() }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) { self.z.descend_to(k) }
@@ -1058,6 +1067,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperSubtries<V, A> for Read
 
 impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperMoving for ReadZipperUntracked<'trie, '_, V, A> {
     fn at_root(&self) -> bool { self.z.at_root() }
+    fn focus_byte(&self) -> Option<u8> { self.z.focus_byte() }
     fn reset(&mut self) { self.z.reset() }
     fn val_count(&self) -> usize { self.z.val_count() }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) { self.z.descend_to(k) }
@@ -1260,6 +1270,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperSubtries<V, A> for Read
 
 impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperMoving for ReadZipperOwned<V, A> {
     fn at_root(&self) -> bool { self.z.at_root() }
+    fn focus_byte(&self) -> Option<u8> { self.z.focus_byte() }
     fn reset(&mut self) { self.z.reset() }
     fn val_count(&self) -> usize { self.z.val_count() }
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) { self.z.descend_to(k) }
@@ -1571,6 +1582,11 @@ pub(crate) mod read_zipper_core {
     impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> ZipperMoving for ReadZipperCore<'trie, '_, V, A> {
         fn at_root(&self) -> bool {
             self.prefix_buf.len() <= self.origin_path.len()
+        }
+
+        #[inline]
+        fn focus_byte(&self) -> Option<u8> {
+            self.prefix_buf.last().cloned()
         }
 
         fn reset(&mut self) {

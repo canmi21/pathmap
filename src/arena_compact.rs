@@ -1659,7 +1659,7 @@ where Storage: AsRef<[u8]>
     fn val(&self) -> Option<&u64> {
         let value = self.get_value()?;
         if self.tree.value.get() != value {
-            self.tree.value.set(value);            
+            self.tree.value.set(value);
         }
         let ptr = self.tree.value.as_ptr();
         // technically if someone borrows the value twice, they will hit UB
@@ -1703,7 +1703,7 @@ where Storage: AsRef<[u8]>
     fn get_val(&self) -> Option<&'tree u64> {
         let value = self.get_value()?;
         if self.tree.value.get() != value {
-            self.tree.value.set(value);            
+            self.tree.value.set(value);
         }
         let ptr = self.tree.value.as_ptr();
         Some(unsafe { &*ptr })
@@ -1746,6 +1746,15 @@ where Storage: AsRef<[u8]>
         self.stack[0].node_depth = self.origin_node_depth;
         self.path.truncate(self.origin_depth);
         self.invalid = 0;
+    }
+
+    #[inline]
+    fn focus_byte(&self) -> Option<u8> {
+        if self.path.len() > self.origin_depth {
+            self.path.last().cloned()
+        } else {
+            None
+        }
     }
 
     /// Returns the total number of values contained at and below the zipper's focus, including the focus itself

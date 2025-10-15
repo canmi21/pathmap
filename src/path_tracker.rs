@@ -61,6 +61,14 @@ impl<Z: ZipperMoving> ZipperMoving for PathTracker<Z> {
         self.zipper.reset();
         self.path.truncate(self.origin_len);
     }
+    #[inline]
+    fn focus_byte(&self) -> Option<u8> {
+        if self.path.len() > self.origin_len {
+            self.path.last().cloned()
+        } else {
+            None
+        }
+    }
     fn val_count(&self) -> usize { todo!() }
     fn descend_to<K: AsRef<[u8]>>(&mut self, path: K) {
         let path = path.as_ref();

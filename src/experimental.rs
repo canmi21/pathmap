@@ -37,6 +37,10 @@ impl ZipperPathBuffer for FullZipper {
 impl ZipperMoving for FullZipper {
     fn at_root(&self) -> bool { self.path.len() == 0 }
     fn reset(&mut self) { self.path.clear() }
+    #[inline]
+    fn focus_byte(&self) -> Option<u8> {
+        self.path.last().cloned()
+    }
     fn val_count(&self) -> usize { usize::MAX/2 } // usize::MAX is a dangerous default for overflow
     fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) {
         self.path.extend_from_slice(k.as_ref());
