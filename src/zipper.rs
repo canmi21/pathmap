@@ -114,11 +114,9 @@ pub trait ZipperSubtries<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Zi
 /// will never change.
 pub trait ZipperMoving: Zipper {
     /// Returns `true` if the zipper's focus is at its root, and it cannot ascend further, otherwise returns `false`
-    fn at_root(&self) -> bool;
-    //GOAT, This default impl isn't compatible with the blind ZipperMoving anymore.  But there is value in expressing this equivalence...  Not sure where to do it.  Maybe the docs for `path()`?
-    //  -> bool {
-    //     self.path().len() == 0
-    // }
+    fn at_root(&self) -> bool {
+        self.focus_byte().is_none()
+    }
 
     /// Returns the path byte at the zipper's focus, or `None` if the zipper is at the root
     ///
@@ -316,29 +314,24 @@ pub trait ZipperMoving: Zipper {
     ///
     /// This method is equivalent to calling [ZipperMoving::ascend] with `1`, followed by [ZipperMoving::descend_indexed_byte]
     /// where the index passed is 1 more than the index of the current focus position.
-    fn to_next_sibling_byte(&mut self) -> Option<u8>;
-    //GOAT, this default impl is incompatible with the blind zippers.  :-(  That argues that perhaps it belongs in another trait, e.g. ZipperIteration
-    // {
-    //     let cur_byte = match self.path().last() {
-    //         Some(byte) => *byte,
-    //         None => return false
-    //     };
-    //     if !self.ascend_byte() {
-    //         return false
-    //     }
-    //     let mask = self.child_mask();
-    //     match mask.next_bit(cur_byte) {
-    //         Some(byte) => {
-    //             self.descend_to_byte(byte);
-    //             debug_assert!(self.path_exists());
-    //             true
-    //         },
-    //         None => {
-    //             self.descend_to_byte(cur_byte);
-    //             false
-    //         }
-    //     }
-    // }
+    fn to_next_sibling_byte(&mut self) -> Option<u8> {
+        let cur_byte = self.focus_byte()?;
+        if !self.ascend_byte() {
+            return None
+        }
+        let mask = self.child_mask();
+        match mask.next_bit(cur_byte) {
+            Some(byte) => {
+                self.descend_to_byte(byte);
+                debug_assert!(self.path_exists());
+                Some(byte)
+            },
+            None => {
+                self.descend_to_byte(cur_byte);
+                None
+            }
+        }
+    }
 
     /// Moves the zipper's focus to the previous sibling byte with the same parent
     ///
@@ -347,30 +340,25 @@ pub trait ZipperMoving: Zipper {
     ///
     /// This method is equivalent to calling [Self::ascend] with `1`, followed by [Self::descend_indexed_byte]
     /// where the index passed is 1 less than the index of the current focus position.
-    fn to_prev_sibling_byte(&mut self) -> Option<u8>;
-    //GOAT, this default impl is incompatible with the blind zippers.  :-(  That argues that perhaps it belongs in another trait, e.g. ZipperIteration
-    // {
-    //     let cur_byte = match self.path().last() {
-    //         Some(byte) => *byte,
-    //         None => return false
-    //     };
-    //     if !self.ascend_byte() {
-    //         return false
-    //     }
-    //     let mask = self.child_mask();
-    //     match mask.prev_bit(cur_byte) {
-    //         Some(byte) => {
-    //             self.descend_to_byte(byte);
-    //             debug_assert!(self.path_exists());
-    //             true
-    //         },
-    //         None => {
-    //             self.descend_to_byte(cur_byte);
-    //             debug_assert!(self.path_exists());
-    //             false
-    //         }
-    //     }
-    // }
+    fn to_prev_sibling_byte(&mut self) -> Option<u8> {
+        let cur_byte = self.focus_byte()?;
+        if !self.ascend_byte() {
+            return None
+        }
+        let mask = self.child_mask();
+        match mask.prev_bit(cur_byte) {
+            Some(byte) => {
+                self.descend_to_byte(byte);
+                debug_assert!(self.path_exists());
+                Some(byte)
+            },
+            None => {
+                self.descend_to_byte(cur_byte);
+                debug_assert!(self.path_exists());
+                None
+            }
+        }
+    }
 
     /// Advances the zipper to visit every existing path within the trie in a depth-first order
     ///
@@ -654,6 +642,11 @@ pub trait ZipperConcrete {
 /// which doesn't track it's own path in the trie.
 pub trait ZipperPath: ZipperMoving {
     /// Returns the path from the zipper's root to the current focus
+    ///
+    /// This method will always return a zero-length slice when [`at_root`](ZipperMoving::at_root) returns `true`,
+    /// and a non-zero-length slice when it returns `false`.
+    ///
+    /// `z.path().last()` is guaranteed to equal the return value of [`focus_byte`](ZipperMoving::focus_byte).
     fn path(&self) -> &[u8];
 
     /// Moves the zipper's focus to a specific location specified by `path`, relative to the zipper's root
