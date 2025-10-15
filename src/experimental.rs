@@ -38,13 +38,11 @@ impl ZipperMoving for FullZipper {
     fn at_root(&self) -> bool { self.path.len() == 0 }
     fn reset(&mut self) { self.path.clear() }
     fn val_count(&self) -> usize { usize::MAX/2 } // usize::MAX is a dangerous default for overflow
-    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool {
+    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) {
         self.path.extend_from_slice(k.as_ref());
-        true
     }
-    fn descend_to_byte(&mut self, k: u8) -> bool {
+    fn descend_to_byte(&mut self, k: u8) {
         self.path.push(k);
-        true
     }
     fn descend_indexed_byte(&mut self, idx: usize) -> Option<u8> {
         assert!(idx < 256);

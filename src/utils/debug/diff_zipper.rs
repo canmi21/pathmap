@@ -66,15 +66,14 @@ impl<A: Zipper + ZipperMoving, B: Zipper + ZipperMoving> ZipperMoving for DiffZi
         assert_eq!(a, b);
         a
     }
-    fn descend_to<P: AsRef<[u8]>>(&mut self, path: P) -> bool {
+    fn descend_to<P: AsRef<[u8]>>(&mut self, path: P) {
         let path = path.as_ref();
-        let a = self.a.descend_to(path);
-        let b = self.b.descend_to(path);
+        self.a.descend_to(path);
+        self.b.descend_to(path);
         if self.log_moves {
             println!("DiffZipper: descend_to path={path:?}")
         }
-        assert_eq!(a, b);
-        a
+        assert_eq!(self.a.path_exists(), self.b.path_exists());
     }
     fn descend_to_existing<P: AsRef<[u8]>>(&mut self, path: P) -> usize {
         let path = path.as_ref();
@@ -96,14 +95,13 @@ impl<A: Zipper + ZipperMoving, B: Zipper + ZipperMoving> ZipperMoving for DiffZi
         assert_eq!(a, b);
         a
     }
-    fn descend_to_byte(&mut self, k: u8) -> bool {
-        let a = self.a.descend_to_byte(k);
-        let b = self.b.descend_to_byte(k);
+    fn descend_to_byte(&mut self, k: u8) {
+        self.a.descend_to_byte(k);
+        self.b.descend_to_byte(k);
         if self.log_moves {
             println!("DiffZipper: descend_to_byte k={k}")
         }
-        assert_eq!(a, b);
-        a
+        assert_eq!(self.a.path_exists(), self.b.path_exists());
     }
     fn descend_indexed_byte(&mut self, idx: usize) -> Option<u8> {
         let a = self.a.descend_indexed_byte(idx);

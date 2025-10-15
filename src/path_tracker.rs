@@ -62,7 +62,7 @@ impl<Z: ZipperMoving> ZipperMoving for PathTracker<Z> {
         self.path.truncate(self.origin_len);
     }
     fn val_count(&self) -> usize { todo!() }
-    fn descend_to<K: AsRef<[u8]>>(&mut self, path: K) -> bool {
+    fn descend_to<K: AsRef<[u8]>>(&mut self, path: K) {
         let path = path.as_ref();
         self.path.extend_from_slice(path);
         self.zipper.descend_to(path)
@@ -73,13 +73,21 @@ impl<Z: ZipperMoving> ZipperMoving for PathTracker<Z> {
         self.path.extend_from_slice(&path[..descended]);
         descended
     }
+    fn descend_to_existing_byte(&mut self, k: u8) -> bool {
+        if self.zipper.descend_to_existing_byte(k) {
+            self.path.push(k);
+            true
+        } else {
+            false
+        }
+    }
     fn descend_to_val<K: AsRef<[u8]>>(&mut self, path: K) -> usize {
         let path = path.as_ref();
         let descended = self.zipper.descend_to_val(path);
         self.path.extend_from_slice(&path[..descended]);
         descended
     }
-    fn descend_to_byte(&mut self, k: u8) -> bool {
+    fn descend_to_byte(&mut self, k: u8) {
         self.path.push(k);
         self.zipper.descend_to_byte(k)
     }

@@ -954,7 +954,8 @@ mod tests {
         assert_eq!(rz.val(), Some(&24));
         drop(rz);
         let mut rz = zh.read_zipper_at_path(b"").unwrap();
-        assert_eq!(rz.descend_to(b"path"), true);
+        rz.descend_to(b"path");
+        assert_eq!(rz.path_exists(), true);
         assert_eq!(rz.val(), Some(&24));
         drop(rz);
         assert_eq!(tr.val(), Some(&42));

@@ -13,7 +13,7 @@ fn drop_symbol_head_byte<Z: ZipperWriting<usize> + Zipper + ZipperMoving + Zippe
   let p = loc.path().to_vec();
   while let Some(b) = it.next() {
     if b == 0 { continue }
-    assert!(loc.descend_to(&[b]));
+    loc.descend_to_existing_byte(b);
     loc.join_k_path_into(b as usize, true);
     assert_eq!(loc.ascend(1), 1);
   }

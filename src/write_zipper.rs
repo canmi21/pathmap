@@ -348,8 +348,8 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     fn at_root(&self) -> bool { self.z.at_root() }
     fn reset(&mut self) { self.z.reset() }
     fn val_count(&self) -> usize { self.z.val_count() }
-    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool { self.z.descend_to(k) }
-    fn descend_to_byte(&mut self, k: u8) -> bool { self.z.descend_to_byte(k) }
+    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) { self.z.descend_to(k) }
+    fn descend_to_byte(&mut self, k: u8) { self.z.descend_to_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> Option<u8> { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> Option<u8> { self.z.descend_first_byte() }
     fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool { self.z.descend_until(desc_bytes) }
@@ -504,8 +504,8 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
     fn at_root(&self) -> bool { self.z.at_root() }
     fn reset(&mut self) { self.z.reset() }
     fn val_count(&self) -> usize { self.z.val_count() }
-    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool { self.z.descend_to(k) }
-    fn descend_to_byte(&mut self, k: u8) -> bool { self.z.descend_to_byte(k) }
+    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) { self.z.descend_to(k) }
+    fn descend_to_byte(&mut self, k: u8) { self.z.descend_to_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> Option<u8> { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> Option<u8> { self.z.descend_first_byte() }
     fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool { self.z.descend_until(desc_bytes) }
@@ -684,8 +684,8 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperMoving for WriteZipperO
     fn at_root(&self) -> bool { self.z.at_root() }
     fn reset(&mut self) { self.z.reset() }
     fn val_count(&self) -> usize { self.z.val_count() }
-    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool { self.z.descend_to(k) }
-    fn descend_to_byte(&mut self, k: u8) -> bool { self.z.descend_to_byte(k) }
+    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) { self.z.descend_to(k) }
+    fn descend_to_byte(&mut self, k: u8) { self.z.descend_to_byte(k) }
     fn descend_indexed_byte(&mut self, child_idx: usize) -> Option<u8> { self.z.descend_indexed_byte(child_idx) }
     fn descend_first_byte(&mut self) -> Option<u8> { self.z.descend_first_byte() }
     fn descend_until<W: std::io::Write>(&mut self, desc_bytes: W) -> bool { self.z.descend_until(desc_bytes) }
@@ -974,17 +974,11 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
             val_count_below_root(focus.as_tagged()) + root_val
         }
     }
-    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) -> bool {
+    fn descend_to<K: AsRef<[u8]>>(&mut self, k: K) {
         let key = k.as_ref();
         self.key.prepare_buffers();
         self.key.prefix_buf.extend(key);
         self.descend_to_internal();
-        let node_key = self.key.node_key();
-        if node_key.len() > 0 {
-            self.focus_stack.top().unwrap().node_contains_partial_key(node_key)
-        } else {
-            true
-        }
     }
 
     fn ascend(&mut self, steps: usize) -> usize {
@@ -1058,8 +1052,8 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
         let mask = self.child_mask();
         match mask.next_bit(cur_byte) {
             Some(byte) => {
-                let descended = self.descend_to_byte(byte);
-                debug_assert!(descended);
+                self.descend_to_byte(byte);
+                debug_assert!(self.path_exists());
                 Some(byte)
             },
             None => {
@@ -1079,13 +1073,13 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperMoving 
         let mask = self.child_mask();
         match mask.prev_bit(cur_byte) {
             Some(byte) => {
-                let descended = self.descend_to_byte(byte);
-                debug_assert!(descended);
+                self.descend_to_byte(byte);
+                debug_assert!(self.path_exists());
                 Some(byte)
             },
             None => {
-                let descended = self.descend_to_byte(cur_byte);
-                debug_assert!(descended);
+                self.descend_to_byte(cur_byte);
+                debug_assert!(self.path_exists());
                 None
             }
         }
@@ -2533,7 +2527,8 @@ mod tests {
 
         let mut zipper = map.read_zipper_at_path(b"in\0");
         for i in 0usize..32 {
-            assert_eq!(zipper.descend_to(i.to_be_bytes()), true);
+            zipper.descend_to(i.to_be_bytes());
+            assert_eq!(zipper.path_exists(), true);
             assert_eq!(*zipper.get_val().unwrap(), i);
             zipper.reset();
         }
@@ -2861,7 +2856,8 @@ mod tests {
         let result = bz.meet_into(&az, true);
         assert_eq!(result, AlgebraicStatus::Element);
         assert_eq!(bz.val_count(), 1);
-        assert!(bz.descend_to("12345"));
+        bz.descend_to("12345");
+        assert!(bz.path_exists());
         assert_eq!(bz.val(), Some(&()));
 
         //Test an Identity result
@@ -2871,7 +2867,8 @@ mod tests {
         let result = bz.meet_into(&az, true);
         assert_eq!(result, AlgebraicStatus::Identity);
         assert_eq!(bz.val_count(), 1);
-        assert!(bz.descend_to("12345"));
+        bz.descend_to("12345");
+        assert!(bz.path_exists());
         assert_eq!(bz.val(), Some(&()));
 
         //Test a None result
@@ -2943,10 +2940,12 @@ mod tests {
         wz.meet_into(&rz, true);
 
         assert_eq!(wz.val_count(), 2);
-        assert!(wz.descend_to([194, 7, 162]));
+        wz.descend_to([194, 7, 162]);
+        assert!(wz.path_exists());
         assert!(wz.val().is_some());
         assert_eq!(wz.ascend(3), 3);
-        assert!(wz.descend_to([194, 7, 163]));
+        wz.descend_to([194, 7, 163]);
+        assert!(wz.path_exists());
         assert!(wz.val().is_some());
     }
 
@@ -3043,13 +3042,15 @@ mod tests {
 
         let mut wz = map.write_zipper_at_path(b"ro");
         assert_eq!(wz.child_count(), 1);
-        assert!(wz.descend_to(b"manus"));
+        wz.descend_to(b"manus");
+        assert!(wz.path_exists());
         assert_eq!(wz.path(), b"manus");
         assert_eq!(wz.child_count(), 0);
         wz.reset();
         assert_eq!(wz.path(), b"");
         assert_eq!(wz.child_count(), 1);
-        assert!(wz.descend_to(b"mulus"));
+        wz.descend_to(b"mulus");
+        assert!(wz.path_exists());
         assert_eq!(wz.path(), b"mulus");
         assert_eq!(wz.child_count(), 0);
         assert_eq!(wz.ascend_until(), 4);
@@ -3317,7 +3318,8 @@ mod tests {
         //Here, we're totally dropping the entirety of the map
         let mut map: PathMap<()> = paths.iter().map(|k| (k, ())).collect();
         let mut wz = map.write_zipper();
-        assert_eq!(wz.descend_to([193, 191]), true);
+        wz.descend_to([193, 191]);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.join_k_path_into(4, true), false);
         assert_eq!(wz.val_count(), 0);
         wz.reset();
@@ -3327,14 +3329,17 @@ mod tests {
         //Here, we're keeping some dangling paths
         let mut map: PathMap<()> = paths.iter().map(|k| (k, ())).collect();
         let mut wz = map.write_zipper();
-        assert_eq!(wz.descend_to([193, 191]), true);
+        wz.descend_to([193, 191]);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.join_k_path_into(4, false), false);
         assert_eq!(wz.val_count(), 0);
         wz.reset();
         assert_eq!(wz.child_mask(), ByteMask::from_iter([193]));
-        assert_eq!(wz.descend_to_byte(193), true);
+        wz.descend_to_byte(193);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_mask(), ByteMask::from_iter([191]));
-        assert_eq!(wz.descend_to_byte(191), true);
+        wz.descend_to_byte(191);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_mask(), ByteMask::EMPTY);
         drop(wz);
     }
@@ -3557,7 +3562,8 @@ mod tests {
         let mut rz = wz.into_read_zipper();
         assert_eq!(rz.path(), b"3:");
         rz.reset();
-        assert_eq!(rz.descend_to(b"3:dog:"), true);
+        rz.descend_to(b"3:dog:");
+        assert_eq!(rz.path_exists(), true);
         assert_eq!(rz.child_count(), 2);
         drop(rz);
 
@@ -3571,7 +3577,8 @@ mod tests {
         let mut rz = wz.into_read_zipper();
         assert_eq!(rz.path(), b"3:");
         rz.reset();
-        assert_eq!(rz.descend_to(b"3:dog:"), true);
+        rz.descend_to(b"3:dog:");
+        assert_eq!(rz.path_exists(), true);
         assert_eq!(rz.child_count(), 2);
 
         assert!(zh.write_zipper_at_exclusive_path(b"1").is_err());
@@ -3580,7 +3587,8 @@ mod tests {
 
         let mut rz2 = zh.read_zipper_at_borrowed_path(b"1").unwrap();
         assert_eq!(rz2.path(), b"");
-        assert_eq!(rz2.descend_to(b"23:dog:"), true);
+        rz2.descend_to(b"23:dog:");
+        assert_eq!(rz2.path_exists(), true);
         assert_eq!(rz.child_count(), 2);
 
         let rz3 = zh.read_zipper_at_borrowed_path(b"123:").unwrap();
@@ -3832,7 +3840,8 @@ mod tests {
         assert_eq!(wz.path_exists(), true);
 
         //Now try adding more stuff downstream of the dangling path
-        assert_eq!(wz.descend_to([2, 3, 4]), false);
+        wz.descend_to([2, 3, 4]);
+        assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.path(), &[0, 0, 1, 0, 0, 2, 3, 4]);
         assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.set_val(()), None);
@@ -3851,9 +3860,11 @@ mod tests {
         assert_eq!(wz.path(), &[0, 0]);
 
         //Set up the conditions to test removing nodes from the middle of paths
-        assert_eq!(wz.descend_to([0, 1, 2]), false);
+        wz.descend_to([0, 1, 2]);
+        assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.set_val(()), None);
-        assert_eq!(wz.descend_to([3, 4]), false);
+        wz.descend_to([3, 4]);
+        assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.set_val(()), None);
         assert_eq!(wz.remove_val(false), Some(()));
         assert_eq!(wz.path_exists(), true);
@@ -3861,36 +3872,43 @@ mod tests {
         wz.reset();
 
         //Remove some values from the middle of paths
-        assert_eq!(wz.descend_to([0]), true);
+        wz.descend_to([0]);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.remove_val(false), Some(()));
         assert_eq!(wz.path_exists(), true);
-        assert_eq!(wz.descend_to([0]), true);
+        wz.descend_to([0]);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.remove_val(false), None);
         assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_count(), 1);
-        assert_eq!(wz.descend_to([0]), true);
+        wz.descend_to([0]);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_count(), 1);
         assert_eq!(wz.remove_val(false), Some(()));
         assert_eq!(wz.path_exists(), true);
-        assert_eq!(wz.descend_to([1]), true);
+        wz.descend_to([1]);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_count(), 1);
         assert_eq!(wz.remove_val(false), None);
         assert_eq!(wz.path_exists(), true);
-        assert_eq!(wz.descend_to([2]), true);
+        wz.descend_to([2]);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_count(), 1);
 
         //Attempt a prune-remove, when there is still some upstream path
         assert_eq!(wz.remove_val(true), Some(()));
         assert_eq!(wz.path_exists(), true);
-        assert_eq!(wz.descend_to([3]), true);
+        wz.descend_to([3]);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_count(), 1);
         assert_eq!(wz.remove_val(true), None);
         assert_eq!(wz.path_exists(), true);
-        assert_eq!(wz.descend_to([4]), true);
+        wz.descend_to([4]);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_count(), 0);
         assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.val(), None);
-        assert_eq!(wz.descend_to([5]), false);
+        wz.descend_to([5]);
         assert_eq!(wz.path_exists(), false);
 
         //Try pruning below the end of a dangling path and make sure it fails
@@ -3926,7 +3944,7 @@ mod tests {
         let mut wz = map.write_zipper();
 
         //Remove a value from a path within a byte node
-        assert_eq!(wz.descend_to([1, 0, 3]), true);
+        wz.descend_to([1, 0, 3]);
         assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.remove_val(false), Some(()));
         assert_eq!(wz.remove_val(false), None);
@@ -3946,7 +3964,7 @@ mod tests {
         assert_eq!(wz.path_exists(), true);
 
         //Now try adding more stuff downstream of the dangling path
-        assert_eq!(wz.descend_to([4, 5, 6]), false);
+        wz.descend_to([4, 5, 6]);
         assert_eq!(wz.path(), &[1, 0, 3, 4, 5, 6]);
         assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.set_val(()), None);
@@ -3966,25 +3984,25 @@ mod tests {
         assert_eq!(wz.child_count(), 3);
 
         //Set up the conditions to test removing nodes from the middle of paths
-        assert_eq!(wz.descend_to([1]), true);
+        wz.descend_to([1]);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.val(), None);
         assert_eq!(wz.set_val(()), None);
-        assert_eq!(wz.descend_to([0, 0]), true);
+        wz.descend_to([0, 0]);
         assert_eq!(wz.set_val(()), None);
         assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.path(), &[1, 0, 1, 0, 0]);
         wz.reset();
 
         //Remove some values from the middle of paths
-        assert_eq!(wz.descend_to([1, 0, 1]), true);
+        wz.descend_to([1, 0, 1]);
         assert_eq!(wz.remove_val(false), Some(()));
         assert_eq!(wz.path_exists(), true);
-        assert_eq!(wz.descend_to([0, 0]), true);
+        wz.descend_to([0, 0]);
         assert_eq!(wz.remove_val(true), Some(()));
         assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_count(), 1);
-        assert_eq!(wz.descend_to([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), true);
-        assert_eq!(wz.child_count(), 0);
+        wz.descend_to([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);        assert_eq!(wz.child_count(), 0);
         assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.val(), Some(&()));
         assert_eq!(wz.remove_val(false), Some(()));
@@ -3999,7 +4017,7 @@ mod tests {
         assert_eq!(wz.child_count(), 2);
 
         //Make sure the `remove_val` with the `prune` flag does the right thing
-        assert_eq!(wz.descend_to_byte(0), true);
+        wz.descend_to_byte(0);
         assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.prune_path(), 0);
         assert_eq!(wz.remove_val(true), Some(()));
@@ -4007,7 +4025,7 @@ mod tests {
         assert_eq!(wz.prune_path(), 0);
         assert_eq!(wz.ascend_byte(), true);
         assert_eq!(wz.child_count(), 1);
-        assert_eq!(wz.descend_to_byte(2), true);
+        wz.descend_to_byte(2);
         assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.remove_val(false), Some(()));
         assert_eq!(wz.path_exists(), true);
@@ -4027,11 +4045,11 @@ mod tests {
         let mut wz = map.write_zipper();
 
         //Use `remove_branches` to to cut a path within a pair node
-        assert_eq!(wz.descend_to([0, 0, 1, 0, 0]), true);
+        wz.descend_to([0, 0, 1, 0, 0]);
         assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.remove_branches(false), true);
         assert_eq!(wz.path_exists(), true);
-        assert_eq!(wz.descend_to_byte(0), false);
+        wz.descend_to_byte(0);
         assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.ascend_byte(), true);
         assert_eq!(wz.path_exists(), true);
@@ -4044,16 +4062,18 @@ mod tests {
         assert_eq!(wz.path_exists(), true);
 
         //Recreate some new paths, remove one and try re-extending it
-        assert_eq!(wz.descend_to([0, 0, 0, 0]), false);
+        wz.descend_to([0, 0, 0, 0]);
+        assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.set_val(()), None);
         assert_eq!(wz.ascend(4), 4);
-        assert_eq!(wz.descend_to([0, 0, 1, 0]), false);
+        wz.descend_to([0, 0, 1, 0]);
+        assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.set_val(()), None);
         assert_eq!(wz.ascend(2), 2);
-        assert_eq!(wz.descend_to_byte(0), true);
+        wz.descend_to_byte(0);
         assert_eq!(wz.remove_branches(false), true);
         assert_eq!(wz.path_exists(), true);
-        assert_eq!(wz.descend_to_byte(0), false);
+        wz.descend_to_byte(0);
         assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.set_val(()), None);
         assert_eq!(wz.ascend_byte(), true);
@@ -4062,9 +4082,10 @@ mod tests {
         //A test for `remove_unmasked_branches`
         wz.reset();
         assert_eq!(wz.child_count(), 1);
-        assert_eq!(wz.descend_to_byte(0), true);
+        wz.descend_to_byte(0);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_count(), 1);
-        assert_eq!(wz.descend_to_byte(0), true);
+        wz.descend_to_byte(0);
         assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_count(), 1);
         assert_eq!(wz.prune_path(), 0);
@@ -4074,7 +4095,8 @@ mod tests {
         assert_eq!(wz.prune_path(), 1);
         wz.reset();
         assert_eq!(wz.child_count(), 1);
-        assert_eq!(wz.descend_to_byte(0), true);
+        wz.descend_to_byte(0);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_count(), 0);
         assert_eq!(wz.val(), Some(&()));
         assert_eq!(wz.prune_path(), 0);
@@ -4092,11 +4114,11 @@ mod tests {
         let mut src_z = src_map.write_zipper();
 
         //Test removing from the middle of a node
-        assert_eq!(src_z.descend_to([0, 0, 1, 0, 0]), true);
+        src_z.descend_to([0, 0, 1, 0, 0]);
         assert_eq!(src_z.path_exists(), true);
         let mut dst_map = src_z.take_map(false).unwrap();
         assert_eq!(src_z.path_exists(), true);
-        assert_eq!(src_z.descend_to_byte(0), false);
+        src_z.descend_to_byte(0);
         assert_eq!(src_z.path_exists(), false);
         assert_eq!(src_z.ascend_byte(), true);
         assert_eq!(src_z.path_exists(), true);
@@ -4138,7 +4160,7 @@ mod tests {
         let mut wz = map.write_zipper();
 
         //Use `remove_unmaksed_branches` to chop off every part of a ByteNode
-        assert_eq!(wz.descend_to([1, 9, 0, 9]), true);
+        wz.descend_to([1, 9, 0, 9]);
         assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.child_count(), 4);
         wz.remove_unmasked_branches(ByteMask::EMPTY, false);
@@ -4171,7 +4193,7 @@ mod tests {
         let mut map = PathMap::<()>::new();
         let mut wz = map.write_zipper();
 
-        assert_eq!(wz.descend_to([0, 0]), false);
+        wz.descend_to([0, 0]);
         assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.set_val(()), None);
         assert_eq!(wz.path_exists(), true);
@@ -4184,28 +4206,33 @@ mod tests {
         assert_eq!(wz.create_path(), false);
         assert_eq!(wz.val(), Some(&()));
         assert_eq!(wz.descend_first_byte(), None);
-        assert_eq!(wz.descend_to_byte(0), false);
+        wz.descend_to_byte(0);
         assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.create_path(), true);
         assert_eq!(wz.path_exists(), true);
-        assert_eq!(wz.descend_to([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), false);
+        wz.descend_to([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.create_path(), true);
         assert_eq!(wz.prune_ascend(), 57);
         assert_eq!(wz.path(), &[0, 0]);
         assert_eq!(wz.path_exists(), true);
 
         assert_eq!(wz.ascend_byte(), true);
-        assert_eq!(wz.descend_to_byte(0), true);
+        wz.descend_to_byte(0);
+        assert_eq!(wz.path_exists(), true);
         assert_eq!(wz.create_path(), false);
         assert_eq!(wz.val(), Some(&()));
         assert_eq!(wz.ascend_byte(), true);
-        assert_eq!(wz.descend_to_byte(1), false);
+        wz.descend_to_byte(1);
+        assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.create_path(), true);
         assert_eq!(wz.ascend_byte(), true);
-        assert_eq!(wz.descend_to_byte(2), false);
+        wz.descend_to_byte(2);
+        assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.create_path(), true);
         assert_eq!(wz.ascend_byte(), true);
-        assert_eq!(wz.descend_to([3, 0, 0, 0]), false);
+        wz.descend_to([3, 0, 0, 0]);
+        assert_eq!(wz.path_exists(), false);
         assert_eq!(wz.create_path(), true);
         assert_eq!(wz.ascend(4), 4);
         assert_eq!(wz.child_count(), 4);

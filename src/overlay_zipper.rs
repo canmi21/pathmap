@@ -149,9 +149,10 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         todo!()
     }
 
-    fn descend_to<P: AsRef<[u8]>>(&mut self, path: P) -> bool {
+    fn descend_to<P: AsRef<[u8]>>(&mut self, path: P) {
         let path = path.as_ref();
-        self.a.descend_to(path) | self.b.descend_to(path)
+        self.a.descend_to(path);
+        self.b.descend_to(path);
     }
 
     fn descend_to_existing<P: AsRef<[u8]>>(&mut self, path: P) -> usize {
@@ -196,8 +197,9 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
         }
     }
 
-    fn descend_to_byte(&mut self, k: u8) -> bool {
-        self.a.descend_to(&[k]) | self.b.descend_to(&[k])
+    fn descend_to_byte(&mut self, k: u8) {
+        self.a.descend_to(&[k]);
+        self.b.descend_to(&[k]);
     }
 
     fn descend_first_byte(&mut self) -> Option<u8> {
@@ -207,8 +209,8 @@ impl<AV, BV, OutV, AZipper, BZipper, Mapping> ZipperMoving
     fn descend_indexed_byte(&mut self, idx: usize) -> Option<u8> {
         let child_mask = self.child_mask();
         let byte = child_mask.indexed_bit::<true>(idx)?;
-        let descended = self.descend_to_byte(byte);
-        debug_assert!(descended);
+        self.descend_to_byte(byte);
+        debug_assert!(self.path_exists());
         Some(byte)
     }
 
