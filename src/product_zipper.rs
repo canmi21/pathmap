@@ -201,8 +201,8 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         self.z.path()
     }
     fn val_count(&self) -> usize {
-        //GOAT!!!  I think val_count properly belongs in the morphisms module
-        unimplemented!()
+        assert!(self.focus_factor() == self.factor_count() - 1);
+        self.z.val_count()
     }
     fn descend_to_existing<K: AsRef<[u8]>>(&mut self, k: K) -> usize {
         let k = k.as_ref();
