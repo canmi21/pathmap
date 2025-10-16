@@ -214,8 +214,10 @@ pub trait Catamorphism<V> {
 ///
 /// - `alg_f`: `alg(mask: ByteMask, children: &mut [W], path: &[u8]) -> W`
 /// Aggregates the results from the child branches, `children`, descending from `path` into a single result
+#[deprecated]
 pub struct SplitCata;
 
+#[allow(deprecated)]
 impl SplitCata {
     pub fn new<'a, V, W, MapF, CollapseF, AlgF>(mut map_f: MapF, mut collapse_f: CollapseF, alg_f: AlgF) -> impl FnMut(&ByteMask, &mut [W], Option<&V>, &[u8]) -> W + 'a
         where
@@ -250,8 +252,10 @@ impl SplitCata {
 /// Elevates a result `w` descending from the relative path, `sub_path` to the current position at `path`
 ///
 /// See [`SplitCata`] for a description of additional args
+#[deprecated]
 pub struct SplitCataJumping;
 
+#[allow(deprecated)]
 impl SplitCataJumping {
     pub fn new<'a, V, W, MapF, CollapseF, AlgF, JumpF>(mut map_f: MapF, mut collapse_f: CollapseF, mut alg_f: AlgF, mut jump_f: JumpF) -> impl FnMut(&ByteMask, &mut [W], usize, Option<&V>, &[u8]) -> W + 'a
         where
@@ -1354,8 +1358,57 @@ mod tests {
             assert_eq!(at_truncated, vec![3]));
     }
 
+    /// Counts both the number of leaves & forks, and well as the number of total bytes in the trie
     #[test]
     fn cata_test3() {
+        let tests = [
+            (vec![], 0, 0),
+            (vec!["i"], 1, 1), //1 leaf, 1 node
+            (vec!["i", "ii"], 2, 1), //1 leaf, 2 total "nodes"
+            (vec!["ii", "iiiii"], 5, 1), //1 leaf, 5 total "nodes"
+            (vec!["ii", "iii", "iiiii", "iiiiiii"], 7, 1), //1 leaf, 7 total "nodes"
+            (vec!["ii", "iiii", "iij", "iijjj"], 7, 3), //2 leaves, 1 fork, 7 total "nodes"
+        ];
+        for (keys, byte_cnt, leaf_cnt) in tests {
+            let map: PathMap<()> = keys.into_iter().map(|v| (v, ())).collect();
+            let zip = map.read_zipper();
+
+            //Test both the jumping and non-jumping versions
+            let (node_sum, leaf_sum) = zip.clone().into_cata_side_effect(|_child_mask: &ByteMask, children: &mut [(u32, u32)], _val, path: &[u8]| {
+                // println!("aggregate path=\"{}\", children={children:?}", String::from_utf8_lossy(path));
+                let (mut node_sum, mut leaf_sum) = children.into_iter().fold((0, 0), |(node_sum, leaf_sum), (child_node, child_leaf)| (node_sum + *child_node, leaf_sum + *child_leaf));
+                if path.len() > 0 {
+                    node_sum += 1;
+                }
+                if children.len() != 1 && path.len() > 0 { //Don't count the root as a leaf
+                    leaf_sum += 1
+                }
+                (node_sum, leaf_sum)
+            });
+            assert_eq!(node_sum, byte_cnt);
+            assert_eq!(leaf_sum, leaf_cnt);
+
+            let (node_sum, leaf_sum) = zip.into_cata_jumping_side_effect(|_child_mask: &ByteMask, children: &mut [(u32, u32)], jump, _val, path: &[u8]| {
+                // println!("aggregate path=\"{}\", children={children:?}, jump={jump}", String::from_utf8_lossy(path));
+                let (mut node_sum, mut leaf_sum) = children.into_iter().fold((0, 0), |(node_sum, leaf_sum), (child_node, child_leaf)| (node_sum + *child_node, leaf_sum + *child_leaf));
+                if children.len() != 1 && path.len() > 0 { //Don't count the root as a leaf
+                    leaf_sum += 1;
+                }
+                if path.len() - jump > 0 { //Again a special case so we don't count the root
+                    node_sum += jump as u32 + 1;
+                } else {
+                    node_sum += jump as u32;
+                }
+                (node_sum, leaf_sum)
+            });
+            assert_eq!(node_sum, byte_cnt);
+            assert_eq!(leaf_sum, leaf_cnt);
+        }
+    }
+
+    /// A test for the `SplitCata` shims.
+    #[test]
+    fn cata_test3split() {
         let tests = [
             (vec![], 0, 0),
             (vec!["i"], 1, 1), //1 leaf, 1 node
@@ -1387,9 +1440,11 @@ mod tests {
             };
 
             //Test both the jumping and non-jumping versions
+            #[allow(deprecated)]
             let sum = zip.clone().into_cata_side_effect(SplitCata::new(map_f, collapse_f, alg_f));
             assert_eq!(sum, expected_sum_ordinary);
 
+            #[allow(deprecated)]
             let sum = zip.into_cata_jumping_side_effect(SplitCataJumping::new(map_f, collapse_f, alg_f, |_subpath, w, _path| w));
             assert_eq!(sum, expected_sum_jumping);
         }
@@ -1397,51 +1452,6 @@ mod tests {
 
     #[test]
     fn cata_test4() {
-        #[derive(Debug, PartialEq)]
-        enum Trie<V> {
-            Value(V),
-            Collapse(V, Box<Trie<V>>),
-            Alg(Vec<(char, Trie<V>)>),
-            Jump(String, Box<Trie<V>>)
-        }
-        use Trie::*;
-
-        let mut btm = PathMap::new();
-        let rs = ["arr", "arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
-        rs.iter().enumerate().for_each(|(i, r)| { btm.set_val_at(r.as_bytes(), i); });
-
-        let s = btm.read_zipper().into_cata_jumping_side_effect(SplitCataJumping::new(
-            |v, _path| { Some(Box::new(Value(*v))) },
-            |v, w, _path| { Some(Box::new(Collapse(*v, w.unwrap()))) },
-            |cm, ws, _path| {
-                let mut it = cm.iter();
-                Some(Box::new(Alg(ws.iter_mut().map(|w| (it.next().unwrap() as char, *std::mem::take(w).unwrap())).collect())))},
-            |sp, w, _path| { Some(Box::new(Jump(std::str::from_utf8(sp).unwrap().to_string(), w.unwrap()))) }
-        ));
-
-        assert_eq!(s, Some(Alg([
-            ('a', Jump("rr".into(), Collapse(0, Jump("w".into(), Value(1).into()).into()).into())),
-            ('b', Jump("ow".into(), Value(2).into())),
-            ('c', Jump("annon".into(), Value(3).into())),
-            ('r', Alg([
-                ('o', Jump("m".into(), Alg([
-                    ('\'', Jump("i".into(), Value(12).into())),
-                    ('a', Jump("n".into(), Collapse(4, Alg([
-                        ('e', Value(5)),
-                        ('u', Jump("s".into(), Value(6).into()))
-                    ].into()).into()).into())),
-                    ('u', Jump("lus".into(), Value(7).into()))].into()).into())),
-                ('u', Jump("b".into(), Alg([
-                    ('e', Alg([
-                        ('n', Jump("s".into(), Value(8).into())),
-                        ('r', Value(9))].into())),
-                    ('i', Jump("c".into(), Alg([
-                        ('o', Jump("n".into(), Value(10).into())),
-                        ('u', Jump("ndus".into(), Value(11).into()))].into()).into()))].into()).into()))].into()))].into()).into()));
-    }
-
-    #[test]
-    fn cata_test4_single() {
         #[derive(Debug, PartialEq)]
         struct Trie<V> {
             prefix: String,
@@ -1495,19 +1505,79 @@ mod tests {
         println!("{:?}", s);
     }
 
+    /// A version of cata_test4 that uses the deprecated `SplitCata` / `SplitCataJumping` API
+    #[test]
+    fn cata_test4_split() {
+        #[derive(Debug, PartialEq)]
+        enum Trie<V> {
+            Value(V),
+            Collapse(V, Box<Trie<V>>),
+            Alg(Vec<(char, Trie<V>)>),
+            Jump(String, Box<Trie<V>>)
+        }
+        use Trie::*;
+
+        let mut btm = PathMap::new();
+        let rs = ["arr", "arrow", "bow", "cannon", "roman", "romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus", "rom'i"];
+        rs.iter().enumerate().for_each(|(i, r)| { btm.set_val_at(r.as_bytes(), i); });
+
+        #[allow(deprecated)]
+        let s = btm.read_zipper().into_cata_jumping_side_effect(SplitCataJumping::new(
+            |v, _path| { Some(Box::new(Value(*v))) },
+            |v, w, _path| { Some(Box::new(Collapse(*v, w.unwrap()))) },
+            |cm, ws, _path| {
+                let mut it = cm.iter();
+                Some(Box::new(Alg(ws.iter_mut().map(|w| (it.next().unwrap() as char, *std::mem::take(w).unwrap())).collect())))},
+            |sp, w, _path| { Some(Box::new(Jump(std::str::from_utf8(sp).unwrap().to_string(), w.unwrap()))) }
+        ));
+
+        assert_eq!(s, Some(Alg([
+            ('a', Jump("rr".into(), Collapse(0, Jump("w".into(), Value(1).into()).into()).into())),
+            ('b', Jump("ow".into(), Value(2).into())),
+            ('c', Jump("annon".into(), Value(3).into())),
+            ('r', Alg([
+                ('o', Jump("m".into(), Alg([
+                    ('\'', Jump("i".into(), Value(12).into())),
+                    ('a', Jump("n".into(), Collapse(4, Alg([
+                        ('e', Value(5)),
+                        ('u', Jump("s".into(), Value(6).into()))
+                    ].into()).into()).into())),
+                    ('u', Jump("lus".into(), Value(7).into()))].into()).into())),
+                ('u', Jump("b".into(), Alg([
+                    ('e', Alg([
+                        ('n', Jump("s".into(), Value(8).into())),
+                        ('r', Value(9))].into())),
+                    ('i', Jump("c".into(), Alg([
+                        ('o', Jump("n".into(), Value(10).into())),
+                        ('u', Jump("ndus".into(), Value(11).into()))].into()).into()))].into()).into()))].into()))].into()).into()));
+    }
+
     /// Tests going from a map directly to a catamorphism
     #[test]
     fn cata_test5() {
         let empty = PathMap::<u64>::new();
-        let result = empty.into_cata_side_effect(SplitCata::new(|_, _| 1, |_, _, _| 2, |_, _, _| 3));
-        assert_eq!(result, 3);
+        let result = empty.into_cata_side_effect(|_mask, children: &mut [usize], val, _path| {
+            let mut val_count = children.into_iter().fold(0, |sum, cnt| sum + *cnt);
+            if val.is_some() {
+                val_count += 1
+            }
+            val_count
+        });
+        assert_eq!(result, 0);
 
         let mut nonempty = PathMap::<u64>::new();
         nonempty.set_val_at(&[1, 2, 3], !0);
-        let result = nonempty.into_cata_side_effect(SplitCata::new(|_, _| 1, |_, _, _| 2, |_, _, _| 3));
-        assert_eq!(result, 3);
+        let result = nonempty.into_cata_side_effect(|_mask, children: &mut [usize], val, _path| {
+            let mut val_count = children.into_iter().fold(0, |sum, cnt| sum + *cnt);
+            if val.is_some() {
+                val_count += 1
+            }
+            val_count
+        });
+        assert_eq!(result, 1);
     }
 
+    ///TODO: Port this test away from the deprecated `SplitCata` / `SplitCataJumping` API
     #[test]
     fn cata_test6() {
         let mut btm = PathMap::new();
@@ -1519,6 +1589,7 @@ mod tests {
         let mut alg_cnt = 0;
         let mut jump_cnt = 0;
 
+        #[allow(deprecated)]
         btm.read_zipper().into_cata_jumping_side_effect(SplitCataJumping::new(
             |_, _path| {
                 // println!("map: \"{}\"", String::from_utf8_lossy(_path));
@@ -1545,7 +1616,9 @@ mod tests {
         assert_eq!(jump_cnt, 3);
     }
 
-    /// Covers the full spectrum of byte values
+    /// Covers the full spectrum of byte values, not limited to ascii
+    ///
+    /// TODO: Port this test away from the deprecated `SplitCata` / `SplitCataJumping` API,
     #[test]
     fn cata_test7() {
         let mut btm = PathMap::new();
@@ -1557,6 +1630,7 @@ mod tests {
         let mut alg_cnt = 0;
         let mut jump_cnt = 0;
 
+        #[allow(deprecated)]
         btm.read_zipper().into_cata_jumping_side_effect(SplitCataJumping::new(
             |_, _path| {
                 // println!("map: {_path:?}");
@@ -1584,11 +1658,14 @@ mod tests {
     }
 
     /// Tests that cata hits the root value
+    ///
+    /// TODO: Port this test away from the deprecated `SplitCata` / `SplitCataJumping` API,
     #[test]
     fn cata_test8() {
         let keys = ["", "ab", "abc"];
         let btm: PathMap<usize> = keys.into_iter().enumerate().map(|(i, k)| (k, i)).collect();
 
+        #[allow(deprecated)]
         btm.into_cata_jumping_side_effect(SplitCataJumping::new(
             |v, path| {
                 // println!("map: {path:?}");
