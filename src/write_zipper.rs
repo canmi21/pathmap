@@ -472,6 +472,7 @@ pub struct WriteZipperUntracked<'a, 'k, V: Clone + Send + Sync, A: Allocator = G
 }
 
 //The Drop impl ensures the tracker gets dropped at the right time
+#[cfg(debug_assertions)]
 impl<V: Clone + Send + Sync, A: Allocator> Drop for WriteZipperUntracked<'_, '_, V, A> {
     fn drop(&mut self) { }
 }
