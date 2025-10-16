@@ -258,14 +258,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         self.ensure_root();
         let root_node = self.root.get_mut().as_mut().unwrap();
         let root_val = self.root_val.get_mut();
-        #[cfg(debug_assertions)]
-        {
-            WriteZipperUntracked::new_with_node_and_path_internal_in(root_node, Some(root_val), &[], 0, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            WriteZipperUntracked::new_with_node_and_path_internal_in(root_node, Some(root_val), &[], 0, self.alloc.clone())
-        }
+        WriteZipperUntracked::new_with_node_and_path_internal_in(root_node, Some(root_val), &[], 0, self.alloc.clone())
     }
 
     /// Creates a new [write zipper](ZipperWriting) with the specified path from the root of the map
@@ -276,14 +269,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
             true => Some(self.root_val.get_mut()),
             false => None
         };
-        #[cfg(debug_assertions)]
-        {
-            WriteZipperUntracked::new_with_node_and_path_in(root_node, root_val, path, path.len(), 0, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            WriteZipperUntracked::new_with_node_and_path_in(root_node, root_val, path, path.len(), 0, self.alloc.clone())
-        }
+        WriteZipperUntracked::new_with_node_and_path_in(root_node, root_val, path, path.len(), 0, self.alloc.clone())
     }
 
     /// Creates a [ZipperHead] at the root of the map
