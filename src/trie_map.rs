@@ -52,11 +52,11 @@ impl<V: Clone + Send + Sync + Unpin + core::fmt::Debug, A: Allocator> core::fmt:
 
         //Try first assuming the paths are all ascii
         let mut contains_all_ascii = true;
-        let mut dbg_struct = f.debug_struct("PathMap");
+        let mut dbg_map = f.debug_map();
         let mut path_cnt = 0;
         while rz.to_next_val() && path_cnt < MAX_DEBUG_PATHS  {
             if let Some(key) = crate::utils::debug::render_debug_path(rz.path(), crate::utils::debug::PathRenderMode::RequireAscii) {
-                dbg_struct.field(&key, rz.val().unwrap());
+                dbg_map.entry(&key, rz.val().unwrap());
                 path_cnt += 1;
             } else {
                 contains_all_ascii = false;
@@ -64,7 +64,7 @@ impl<V: Clone + Send + Sync + Unpin + core::fmt::Debug, A: Allocator> core::fmt:
             }
         }
         if contains_all_ascii {
-            return dbg_struct.finish()
+            return dbg_map.finish()
         }
 
         //If that failed, render them again with non-ascii paths
