@@ -419,9 +419,9 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperTr
 
 impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator> WriteZipperTracked<'a, 'static, V, A> {
     /// Same as [WriteZipperUntracked::new_with_node_and_path_internal], but clones the path so the `'path` lifetime isn't needed
-    pub(crate) fn new_with_node_and_cloned_path_internal_in(root_node: &'a mut TrieNodeODRc<V, A>, root_val: Option<&'a mut Option<V>>, path: &[u8], root_key_start: usize, alloc: A, tracker: ZipperTracker<TrackingWrite>) -> Self {
+    pub(crate) fn new_with_node_and_cloned_path_internal_in(root_node: &'a mut TrieNodeODRc<V, A>, root_val: Option<&'a mut Option<V>>, path: &[u8], root_key_start: usize, alloc: A, tracker: Option<ZipperTracker<TrackingWrite>>) -> Self {
         let core = WriteZipperCore::<'a, 'static, V, A>::new_with_node_and_cloned_path_internal_in(root_node, root_val, path, root_key_start, alloc);
-        Self { z: core, _tracker: Some(tracker), }
+        Self { z: core, _tracker: tracker }
     }
 }
 
@@ -468,14 +468,6 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperPr
 /// is possible to statically guarantee non-interference between zippers
 pub struct WriteZipperUntracked<'a, 'k, V: Clone + Send + Sync, A: Allocator = GlobalAlloc> {
     z: WriteZipperCore<'a, 'k, V, A>,
-    /// We will still track the zipper in debug mode, because unsafe isn't permission to break the rules
-    #[cfg(debug_assertions)]
-    _tracker: Option<ZipperTracker<TrackingWrite>>,
-}
-
-//The Drop impl ensures the tracker gets dropped at the right time
-impl<V: Clone + Send + Sync, A: Allocator> Drop for WriteZipperUntracked<'_, '_, V, A> {
-    fn drop(&mut self) { }
 }
 
 impl<'a, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> Zipper for WriteZipperUntracked<'a, '_, V, A> {
@@ -541,27 +533,16 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperAbsolut
 }
 
 impl <'a, V: Clone + Send + Sync + Unpin, A: Allocator> WriteZipperUntracked<'a, 'static, V, A> {
-    /// See [WriteZipperUntracked::new_with_node_and_path_internal]
-    #[cfg(debug_assertions)]
-    pub(crate) fn new_with_node_and_cloned_path_internal_in(root_node: &'a mut TrieNodeODRc<V, A>, root_val: Option<&'a mut Option<V>>, path: &[u8], root_key_start: usize, alloc: A, tracker: Option<ZipperTracker<TrackingWrite>>) -> Self {
-        let core = WriteZipperCore::<'a, 'static, V, A>::new_with_node_and_cloned_path_internal_in(root_node, root_val, path, root_key_start, alloc);
-        Self { z: core, _tracker: tracker }
-    }
-    #[cfg(not(debug_assertions))]
-    pub(crate) fn new_with_node_and_cloned_path_internal_in(root_node: &'a mut TrieNodeODRc<V, A>, root_val: Option<&'a mut Option<V>>, path: &[u8], root_key_start: usize, alloc: A) -> Self {
-        let core = WriteZipperCore::<'a, 'static, V, A>::new_with_node_and_cloned_path_internal_in(root_node, root_val, path, root_key_start, alloc);
-        Self { z: core }
-    }
+    //GOAT, currently unneeded, but we may add the method back that requires this
+    // /// See [WriteZipperUntracked::new_with_node_and_path_internal]
+    // pub(crate) fn new_with_node_and_cloned_path_internal_in(root_node: &'a mut TrieNodeODRc<V, A>, root_val: Option<&'a mut Option<V>>, path: &[u8], root_key_start: usize, alloc: A) -> Self {
+    //     let core = WriteZipperCore::<'a, 'static, V, A>::new_with_node_and_cloned_path_internal_in(root_node, root_val, path, root_key_start, alloc);
+    //     Self { z: core }
+    // }
 }
 
 impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperUntracked<'a, 'path, V, A> {
     /// Creates a new zipper, with a path relative to a node
-    #[cfg(debug_assertions)]
-    pub(crate) fn new_with_node_and_path_in(root_node: &'a mut TrieNodeODRc<V, A>, root_val: Option<&'a mut Option<V>>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, alloc: A, tracker: Option<ZipperTracker<TrackingWrite>>) -> Self {
-        let core = WriteZipperCore::<'a, 'path, V, A>::new_with_node_and_path_in(root_node, root_val, path, root_prefix_len, root_key_start, alloc);
-        Self { z: core, _tracker: tracker }
-    }
-    #[cfg(not(debug_assertions))]
     pub(crate) fn new_with_node_and_path_in(root_node: &'a mut TrieNodeODRc<V, A>, root_val: Option<&'a mut Option<V>>, path: &'path [u8], root_prefix_len: usize, root_key_start: usize, alloc: A) -> Self {
         let core = WriteZipperCore::<'a, 'path, V, A>::new_with_node_and_path_in(root_node, root_val, path, root_prefix_len, root_key_start, alloc);
         Self { z: core }
@@ -571,12 +552,6 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperU
     ///
     /// NOTE: This method doesn't descend subnodes.  Use [WriteZipperUntracked::new_with_node_and_path] if you can't
     /// guarantee the path is within the supplied node.
-    #[cfg(debug_assertions)]
-    pub(crate) fn new_with_node_and_path_internal_in(root_node: &'a mut TrieNodeODRc<V, A>, root_val: Option<&'a mut Option<V>>, path: &'path [u8], root_key_start: usize, alloc: A, tracker: Option<ZipperTracker<TrackingWrite>>) -> Self {
-        let core = WriteZipperCore::<'a, 'path, V, A>::new_with_node_and_path_internal_in(root_node, root_val, path, root_key_start, alloc);
-        Self { z: core, _tracker: tracker }
-    }
-    #[cfg(not(debug_assertions))]
     pub(crate) fn new_with_node_and_path_internal_in(root_node: &'a mut TrieNodeODRc<V, A>, root_val: Option<&'a mut Option<V>>, path: &'path [u8], root_key_start: usize, alloc: A) -> Self {
         let core = WriteZipperCore::<'a, 'path, V, A>::new_with_node_and_path_internal_in(root_node, root_val, path, root_key_start, alloc);
         Self { z: core }

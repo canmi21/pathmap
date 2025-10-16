@@ -44,6 +44,42 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> Clone for PathMap<V, A> {
     }
 }
 
+impl<V: Clone + Send + Sync + Unpin + core::fmt::Debug, A: Allocator> core::fmt::Debug for PathMap<V, A> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        const MAX_DEBUG_PATHS: usize = 100;
+
+        let mut rz = self.read_zipper();
+
+        //Try first assuming the paths are all ascii
+        let mut contains_all_ascii = true;
+        let mut dbg_map = f.debug_map();
+        let mut path_cnt = 0;
+        while rz.to_next_val() && path_cnt < MAX_DEBUG_PATHS  {
+            if let Some(key) = crate::utils::debug::render_debug_path(rz.path(), crate::utils::debug::PathRenderMode::RequireAscii) {
+                dbg_map.entry(&key, rz.val().unwrap());
+                path_cnt += 1;
+            } else {
+                contains_all_ascii = false;
+                break;
+            }
+        }
+        if contains_all_ascii {
+            return dbg_map.finish()
+        }
+
+        //If that failed, render them again with non-ascii paths
+        rz.reset();
+        let mut dbg_struct = f.debug_struct("PathMap");
+        let mut path_cnt = 0;
+        while rz.to_next_val() && path_cnt < MAX_DEBUG_PATHS  {
+            let key = crate::utils::debug::render_debug_path(rz.path(), crate::utils::debug::PathRenderMode::ByteList).unwrap();
+            dbg_struct.field(&key, rz.val().unwrap());
+            path_cnt += 1;
+        }
+        dbg_struct.finish()
+    }
+}
+
 impl<V: Clone + Send + Sync + Unpin> PathMap<V, GlobalAlloc> {
     /// Creates a new empty map
     #[inline]
@@ -222,14 +258,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
         self.ensure_root();
         let root_node = self.root.get_mut().as_mut().unwrap();
         let root_val = self.root_val.get_mut();
-        #[cfg(debug_assertions)]
-        {
-            WriteZipperUntracked::new_with_node_and_path_internal_in(root_node, Some(root_val), &[], 0, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            WriteZipperUntracked::new_with_node_and_path_internal_in(root_node, Some(root_val), &[], 0, self.alloc.clone())
-        }
+        WriteZipperUntracked::new_with_node_and_path_internal_in(root_node, Some(root_val), &[], 0, self.alloc.clone())
     }
 
     /// Creates a new [write zipper](ZipperWriting) with the specified path from the root of the map
@@ -240,14 +269,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
             true => Some(self.root_val.get_mut()),
             false => None
         };
-        #[cfg(debug_assertions)]
-        {
-            WriteZipperUntracked::new_with_node_and_path_in(root_node, root_val, path, path.len(), 0, self.alloc.clone(), None)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            WriteZipperUntracked::new_with_node_and_path_in(root_node, root_val, path, path.len(), 0, self.alloc.clone())
-        }
+        WriteZipperUntracked::new_with_node_and_path_in(root_node, root_val, path, path.len(), 0, self.alloc.clone())
     }
 
     /// Creates a [ZipperHead] at the root of the map

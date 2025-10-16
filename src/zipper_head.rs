@@ -21,11 +21,13 @@ pub trait ZipperCreation<'trie, V: Clone + Send + Sync, A: Allocator = GlobalAll
     /// guarantees that there are and there never will be any conflicts with any [write zippers](ZipperWriting)s at this time
     /// or any time before the returned zipper is dropped
     ///
-    /// The returned type is [ReadZipperTracked] although the tracking logic will be skipped
+    /// The returned type is [ReadZipperTracked] although the tracking logic will be skipped in release mode.
     unsafe fn read_zipper_at_path_unchecked<'a, K: AsRef<[u8]>>(&'a self, path: K) -> ReadZipperTracked<'a, 'static, V, A> where 'trie: 'a;
 
     /// A more efficient version of [read_zipper_at_path_unchecked](ZipperCreation::read_zipper_at_path_unchecked),
     /// where the returned zipper is constrained by the `'path` lifetime
+    ///
+    /// The returned type is [ReadZipperTracked] although the tracking logic will be skipped in release mode.
     unsafe fn read_zipper_at_borrowed_path_unchecked<'a, 'path>(&'a self, path: &'path[u8]) -> ReadZipperTracked<'a, 'path, V, A> where 'trie: 'a;
 
     //GOAT-TrackedOwnedZippers: This is a proposed feature to create owned variants of zippers, but still
@@ -49,7 +51,10 @@ pub trait ZipperCreation<'trie, V: Clone + Send + Sync, A: Allocator = GlobalAll
     /// Creates a new [write zippers](ZipperWriting) with the specified path from the `ZipperHead`, where the
     /// caller guarantees that no existing zippers may access the specified path at any time before the
     /// write zipper is dropped
-    unsafe fn write_zipper_at_exclusive_path_unchecked<'a, K: AsRef<[u8]>>(&'a self, path: K) -> WriteZipperUntracked<'a, 'static, V, A> where 'trie: 'a;
+    ///
+    /// NOTE: Zippers created by this method are still tracked in debug mode.  `_unchecked` isn't permission to
+    /// break the rules, it's just an optimization that affects when to spend time enforcing them.
+    unsafe fn write_zipper_at_exclusive_path_unchecked<'a, K: AsRef<[u8]>>(&'a self, path: K) -> WriteZipperTracked<'a, 'static, V, A> where 'trie: 'a;
 
     //GOAT-TrackedOwnedZippers
     // /// Creates a [WriteZipperOwned] from the specified path by temporarily cutting the trie
@@ -265,10 +270,10 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             let zipper_root_node: &'trie mut TrieNodeODRc<V, A> = unsafe{ &mut *(zipper_root_node as *mut _) };
             let zipper_root_val: &'trie mut Option<V> = unsafe{ &mut *(zipper_root_val as *mut _) };
 
-            Ok(WriteZipperTracked::new_with_node_and_cloned_path_internal_in(zipper_root_node, Some(zipper_root_val), path, path.len(), z.alloc.clone(), zipper_tracker))
+            Ok(WriteZipperTracked::new_with_node_and_cloned_path_internal_in(zipper_root_node, Some(zipper_root_val), path, path.len(), z.alloc.clone(), Some(zipper_tracker)))
         })
     }
-    unsafe fn write_zipper_at_exclusive_path_unchecked<'a, K: AsRef<[u8]>>(&'a self, path: K) -> WriteZipperUntracked<'a, 'static, V, A> where 'trie: 'a {
+    unsafe fn write_zipper_at_exclusive_path_unchecked<'a, K: AsRef<[u8]>>(&'a self, path: K) -> WriteZipperTracked<'a, 'static, V, A> where 'trie: 'a {
         let path = path.as_ref();
         self.with_inner_core_z(|z| {
             let (zipper_root_node, zipper_root_val) = prepare_exclusive_write_path(z, path);
@@ -277,16 +282,14 @@ impl<'trie, Z, V: 'trie + Clone + Send + Sync + Unpin, A: Allocator + 'trie> Zip
             let zipper_root_node: &'trie mut TrieNodeODRc<V, A> = unsafe{ &mut *(zipper_root_node as *mut _) };
             let zipper_root_val: &'trie mut Option<V> = unsafe{ &mut *(zipper_root_val as *mut _) };
 
+            //We still keep the trackers in debug mode
             #[cfg(debug_assertions)]
-            {
-                let tracker = ZipperTracker::<TrackingWrite>::new(self.tracker_paths().clone(), path)
-                    .unwrap_or_else(|conflict| panic!("Fatal error. WriteZipper at {path:?} {conflict}"));
-                WriteZipperUntracked::new_with_node_and_cloned_path_internal_in(zipper_root_node, Some(zipper_root_val), path, path.len(), z.alloc.clone(), Some(tracker))
-            }
+            let tracker = Some(ZipperTracker::<TrackingWrite>::new(self.tracker_paths().clone(), path)
+                .unwrap_or_else(|conflict| panic!("Fatal error. WriteZipper at {path:?} {conflict}")));
             #[cfg(not(debug_assertions))]
-            {
-                WriteZipperUntracked::new_with_node_and_cloned_path_internal_in(zipper_root_node, Some(zipper_root_val), path, path.len(), z.alloc.clone())
-            }
+            let tracker = None;
+
+            WriteZipperTracked::new_with_node_and_cloned_path_internal_in(zipper_root_node, Some(zipper_root_val), path, path.len(), z.alloc.clone(), tracker)
         })
     }
     fn cleanup_write_zipper<ChildZ: ZipperWriting<V, A> + ZipperAbsolutePath>(&self, mut z: ChildZ) {
@@ -534,7 +537,7 @@ mod tests {
 
         std::thread::scope(|scope| {
 
-            let mut zipper_senders: Vec<std::sync::mpsc::Sender<(ReadZipperTracked<'_, '_, usize>, WriteZipperUntracked<'_, '_, usize>)>> = Vec::with_capacity(thread_cnt);
+            let mut zipper_senders: Vec<std::sync::mpsc::Sender<(ReadZipperTracked<'_, '_, usize>, WriteZipperTracked<'_, '_, usize>)>> = Vec::with_capacity(thread_cnt);
             let mut signal_receivers: Vec<std::sync::mpsc::Receiver<bool>> = Vec::with_capacity(thread_cnt);
 
             //Spawn all the threads
