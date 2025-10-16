@@ -2980,7 +2980,6 @@ impl<'a> SliceOrLen<'a> {
 #[cfg(test)]
 pub(crate) mod zipper_moving_tests {
     use crate::trie_map::*;
-    use crate::utils::IntoByteMaskIter;
     use super::*;
 
     /// `$ident` is a unique identifier for the zipper, so the generated tests don't collide
@@ -3160,29 +3159,29 @@ pub(crate) mod zipper_moving_tests {
         assert!(zipper.path_exists()); // focus = rom'  (' is the lowest byte)
         assert!(zipper.to_next_sibling_byte()); // focus = roma  (a is the second byte), but we can't actually guarantee whether we land on 'a' or 'u'
         assert_in_list(zipper.path(), &[b"roma", b"romu"]);
-        assert_eq!(zipper.child_mask().byte_mask_iter().collect::<Vec<_>>(), vec![b'n']); // both follow-ups romane and romanus have n following a
+        assert_eq!(zipper.child_mask().iter().collect::<Vec<_>>(), vec![b'n']); // both follow-ups romane and romanus have n following a
         assert!(zipper.to_next_sibling_byte()); // focus = romu  (u is the third byte)
         assert_in_list(zipper.path(), &[b"roma", b"romu"]);
-        assert_eq!(zipper.child_mask().byte_mask_iter().collect::<Vec<_>>(), vec![b'l']); // and romu is followed by lus
+        assert_eq!(zipper.child_mask().iter().collect::<Vec<_>>(), vec![b'l']); // and romu is followed by lus
         assert!(!zipper.to_next_sibling_byte()); // fails because there were only 3 children ['\'', 'a', 'u']
         assert!(zipper.to_prev_sibling_byte()); // focus = roma or romu (we stepped back)
         assert_in_list(zipper.path(), &[b"roma", b"romu"]);
         assert!(zipper.to_prev_sibling_byte()); // focus = rom' (we stepped back to where we began)
         assert_eq!(zipper.path(), b"rom'");
-        assert_eq!(zipper.child_mask().byte_mask_iter().collect::<Vec<_>>(), vec![b'i']);
+        assert_eq!(zipper.child_mask().iter().collect::<Vec<_>>(), vec![b'i']);
         assert!(zipper.ascend(1)); // focus = rom
-        assert_eq!(zipper.child_mask().byte_mask_iter().collect::<Vec<_>>(), vec![b'\'', b'a', b'u']); // all three options we visited
+        assert_eq!(zipper.child_mask().iter().collect::<Vec<_>>(), vec![b'\'', b'a', b'u']); // all three options we visited
         assert!(zipper.descend_indexed_byte(0)); // focus = rom'
-        assert_eq!(zipper.child_mask().byte_mask_iter().collect::<Vec<_>>(), vec![b'i']);
+        assert_eq!(zipper.child_mask().iter().collect::<Vec<_>>(), vec![b'i']);
         assert!(zipper.ascend(1)); // focus = rom
         assert!(zipper.descend_indexed_byte(1)); // focus = roma
-        assert_eq!(zipper.child_mask().byte_mask_iter().collect::<Vec<_>>(), vec![b'n']);
+        assert_eq!(zipper.child_mask().iter().collect::<Vec<_>>(), vec![b'n']);
         assert!(zipper.ascend(1));
         assert!(zipper.descend_indexed_byte(2)); // focus = romu
-        assert_eq!(zipper.child_mask().byte_mask_iter().collect::<Vec<_>>(), vec![b'l']);
+        assert_eq!(zipper.child_mask().iter().collect::<Vec<_>>(), vec![b'l']);
         assert!(zipper.ascend(1));
         assert!(zipper.descend_indexed_byte(1)); // focus = roma
-        assert_eq!(zipper.child_mask().byte_mask_iter().collect::<Vec<_>>(), vec![b'n']);
+        assert_eq!(zipper.child_mask().iter().collect::<Vec<_>>(), vec![b'n']);
         assert!(zipper.ascend(1));
         // ' < a < u
         // 39 105 117
