@@ -1,12 +1,15 @@
-//! Functionality for applying various morphisms to [PathMap] and [Zipper](crate::zipper::Zipper)s
+//! # Description
 //!
 //! Morphisms are a generalization of the [fold](std::iter::Iterator::fold) pattern, but for a trie or
 //! sub-trie, as opposed to a list / sequence.  Similarly they rely on results being aggregated into
 //! intermediate structures that are themselves joined together to produce a result.
 //!
-//! ### Supported Morphisms:
+//! The paper, [Functional Programming with Bananas, Lenses, Envelopes and Barbed Wire](https://maartenfokkinga.github.io/utwente/mmf91m.pdf),
+//! provides a more precise overview of the concepts used here.
 //!
-//! #### Catamorphism
+//! ## Supported Morphisms:
+//!
+//! ### Catamorphism
 //!
 //! Process a trie from the leaves towards the root.  This algorithm proceeds in a depth-first order,
 //! working from the leaves upward calling a closure on each path in the trie.  A summary "accumulator"
@@ -19,46 +22,48 @@
 //! will stick to this convention in-spite of the Greek meaning.
 //!
 //! **NOTE**: The traversal order, while depth-first, is subtly different from the order of
-//! [ZipperIteration::to_next_val](crate::zipper::ZipperIteration::to_next_val) and
-//! [ZipperMoving::to_next_step](crate::zipper::ZipperMoving::to_next_step).  The
-//! [ZipperIteration](crate::zipper::ZipperIteration) methods visit values first before descending to the
-//! branches below, while the `cata` methods call the `mapper` on the deepest values first, before
-//! returning to higher levels where `collapse` is called.
+//! [`ZipperIteration::to_next_val`](crate::zipper::ZipperIteration::to_next_val) and
+//! [`ZipperMoving::to_next_step`](crate::zipper::ZipperMoving::to_next_step).  The
+//! zipper methods visit values occurring along a path first before descending to the
+//! branches below, while the `cata` methods visit the deepest values first, before
+//! returning to higher levels to aggregate information from deeper in the trie.
 //!
-//! #### Anamorphism
+//! ### Anamorphism
 //!
 //! Generate a trie from the root.  Conceptually it is the inverse of catamorphism.  This algorithm proceeds
 //! from a starting point corresponding to a root of a trie, and generates branches and leaves recursively.
 //!
-//! ### Jumping Morphisms and the `jump` closure
+//! ### Jumping vs Stepping Morphisms
 //!
-//! Ordinary morphism methods conceptually operate on a trie of bytes.  Therefore they execute the `alg`
-//! closure for all non-leaf path positions, regardless of the existence of values.
+//! Ordinary (aka "stepping") morphisms are guaranteed to evaluate the alg once for each individual path byte
+//! in the trie.  By contrast "Jumping" morphisms (with `_jumping` in the method name) are sensitive to
+//! features in the trie (forking paths and values), and will jump over monotinous partial paths without calling
+//! the `alg` closure.
 //!
-//! By contrast, `_jumping` methods conceptually operate on a trie of values.  That means the `alg` closure
-//! is only called at "forking" path positions from which multiple downstream branches descend, and also for
-//! the root.  There is an additional `jump` closure passed to these methods that can process an entire
-//! substring from the path.
+//! In most cases, jumping morphisms will perform substantially better than stepping morphisms, so you should use
+//! them when it is convenient.  It is always possible to re-express an `alg` for a stepping morphism in terms of
+//! an `alg` for a jumping morphism, however sometimes the logic become uglier and / or the performance benefit
+//! is negligible.  Therefore, the stepping methods can be thought of as a convenience API.
 //!
-//! In general, `jumping` methods will perform substantially better, so you should use them if your `alg`
-//! closure simply passes the intermediate structure upwards when there is only one child branch.
+//! ### Side-Effecting vs Cached Iteration
 //!
-//! ### Side-Effecting vs Factored Iteration
+//! Many morphisms come in a `_side_effect` and a `_cached` flavor.  These morphisms have different properties and
+//! which one to use depends on your requirements.
 //!
-//! Many methods come (or will come) with a `_side_effect` and an ordinary or `factored` flavor.  The
-//! algorithm is identical in both variants but the one to use depends on your situation.
+//! | side_effect                                     | cached                                      |
+//! |-------------------------------------------------|---------------------------------------------|
+//! | Visits the entire trie                          | Short-circuits shared branches              |
+//! | Always re-computes subtrie info (e.g. `W`)      | Reuses shared subtrie info                  |
+//! | Guaranteed and deterministic `alg` exec order   | Unpredictable callback `alg` exec order     |
+//! | `alg` may capture and modify environment ([`FnMut`](https://doc.rust-lang.org/std/ops/trait.FnMut.html))      | `alg` must be a pure [`Fn`](https://doc.rust-lang.org/std/ops/trait.Fn.html)           |
+//! | Owned `W` type passed between `alg` invocations | `W` type must implement [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html) |
+//! | `alg` is aware of the entire `path`             | `alg` only sees path byte, or sub-path slice |
 //!
-//! The `_side_effect` flavor of the methods will exhaustively traverse the entire trie, irrespective of
-//! structural sharing within the trie.  So a subtrie that is included `n` times will be visited `n` times.
-//! They take [`FnMut`] closure arguments, meaning the closures can produce side-effects, and making these
-//! methods useful for things like serialization, etc.
+//! All else being equal, `cached` methods are likely to be more efficient because structural sharing
+//! occurs frequently in pathmap tries.  At the extreme, `side_effect` methods may produce a combinitoric
+//! explosion for tries that utilize structural sharing extensively.  e.g. a trie generated by [`utils::ints::gen_int_range`].
 //!
-//! The ordinary `factored` flavor takes sharing into account, and thus will only visit each shared subtrie
-//! once.  The methods take [`Fn`] closure arguments and they may cache and re-use intermediate results.
-//! This means the intermediate result type must implement [`Clone`].
-//!
-//! In general, the ordinary methods should be preferred unless sife-effects are necessary, because many
-//! operations produce structural sharing so the ordinary `factored` methods will likely be more efficient.
+//! However, the `side_effect` methods are useful in the implementation of things like serialization, etc.
 //!
 use core::convert::Infallible;
 use reusing_vec::ReusingQueue;

@@ -18,6 +18,8 @@
     - [Multi-threading](./1.03.01_multithreading.md)
 - [Abstract Zippers and Virtual Tries](./1.04.00_abstract_zippers.md)
 - [Morphisms](./1.05.00_morphisms.md)
+    - [Catamorphism](./1.05.01_catamorphism.md)
+    - [Anamorphism](./1.05.02_anamorphism.md)
 - [Serialization and Deserialization](./1.06.00_serialize_deserilize.md)
 
 # Building a Database on Pathmap
