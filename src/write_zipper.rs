@@ -132,12 +132,18 @@ pub trait ZipperWriting<V: Clone + Send + Sync, A: Allocator = GlobalAlloc>: Wri
     fn join_into_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice;
 
     /// Collapses all the paths below the zipper's focus by removing the leading `byte_cnt` bytes from
-    /// each path and joining together all of the downstream sub-paths
+    /// each path and joins together all of the downstream subtries
     ///
     /// Returns `true` if the focus has at least one downstream continuation, otherwise returns `false`.
     ///
     /// NOTE: for legacy reasons, this operation is sometimes called `drop_head`
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice;
+
+    /// Collapses all the paths below the zipper's focus by removing the leading `byte_cnt` bytes from
+    /// each path and meets together all of the downstream subtries
+    ///
+    /// Returns `true` if the focus has at least one downstream continuation, otherwise returns `false`.
+    fn meet_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice;
 
     /// Deprecated alias for [ZipperWriting::join_k_path_into]
     #[deprecated] //GOAT-old-names
@@ -285,6 +291,7 @@ impl<V: Clone + Send + Sync, Z, A: Allocator> ZipperWriting<V, A> for &mut Z whe
     fn join_map_into(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { (**self).join_map_into(map) }
     fn join_into_take<RZ: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut RZ, prune: bool) -> AlgebraicStatus where V: Lattice { (**self).join_into_take(src_zipper, prune) }
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { (**self).join_k_path_into(byte_cnt, prune) }
+    fn meet_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { (**self).meet_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { (**self).insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { (**self).remove_prefix(n) }
     fn meet_into<RZ: ZipperSubtries<V, A>>(&mut self, read_zipper: &RZ, prune: bool) -> AlgebraicStatus where V: Lattice { (**self).meet_into(read_zipper, prune) }
@@ -437,6 +444,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn join_map_into(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map_into(map) }
     fn join_into_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_into_take(src_zipper, prune) }
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
+    fn meet_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.meet_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { self.z.remove_prefix(n) }
     fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper, prune) }
@@ -586,6 +594,7 @@ impl<'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> ZipperWriting
     fn join_map_into(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map_into(map) }
     fn join_into_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_into_take(src_zipper, prune) }
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
+    fn meet_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.meet_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { self.z.remove_prefix(n) }
     fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper, prune) }
@@ -752,6 +761,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> ZipperWriting<V, A> for Write
     fn join_map_into(&mut self, map: PathMap<V, A>) -> AlgebraicStatus where V: Lattice { self.z.join_map_into(map) }
     fn join_into_take<Z: ZipperSubtries<V, A> + ZipperWriting<V, A>>(&mut self, src_zipper: &mut Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.join_into_take(src_zipper, prune) }
     fn join_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.join_k_path_into(byte_cnt, prune) }
+    fn meet_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice { self.z.meet_k_path_into(byte_cnt, prune) }
     fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool { self.z.insert_prefix(prefix) }
     fn remove_prefix(&mut self, n: usize) -> bool { self.z.remove_prefix(n) }
     fn meet_into<Z: ZipperSubtries<V, A>>(&mut self, read_zipper: &Z, prune: bool) -> AlgebraicStatus where V: Lattice { self.z.meet_into(read_zipper, prune) }
@@ -1508,6 +1518,65 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
         }
         result
     }
+    /// See [ZipperWriting::meet_k_path_into]
+    pub fn meet_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice {
+        //GOAT, this is a provisional implementation with the wrong performance characteristics, but should have the right behavior
+        let temp_map = if self.descend_first_k_path(byte_cnt) {
+            let mut temp_map = self.take_map(prune).unwrap_or_else(|| PathMap::new_in(self.alloc.clone()));
+
+            while self.to_next_k_path(byte_cnt) {
+                if temp_map.is_empty() {
+                    self.ascend(byte_cnt);
+                    break;
+                }
+                let other_map = self.take_map(prune).unwrap_or_else(|| PathMap::new_in(self.alloc.clone()));
+                temp_map = temp_map.meet(&other_map);
+            }
+            temp_map
+        } else {
+            PathMap::new_in(self.alloc.clone())
+        };
+        let was_non_empty = !temp_map.is_empty();
+        self.graft_map(temp_map);
+        was_non_empty
+    }
+
+    /// GOAT.  Trash impl of k_path iteration, to facilitate provisional impl of `meet_k_path_into`
+    fn descend_first_k_path(&mut self, k: usize) -> bool {
+        self.k_path_internal(k, self.path().len())
+    }
+
+    /// GOAT.  Trash impl of k_path iteration, to facilitate provisional impl of `meet_k_path_into`
+    fn to_next_k_path(&mut self, k: usize) -> bool {
+        let base_idx = if self.path().len() >= k {
+            self.path().len() - k
+        } else {
+            return false
+        };
+        self.k_path_internal(k, base_idx)
+    }
+
+    /// GOAT.  Trash impl of k_path iteration, to facilitate provisional impl of `meet_k_path_into`
+    #[inline]
+    fn k_path_internal(&mut self, k: usize, base_idx: usize) -> bool {
+        loop {
+            if self.path().len() < base_idx + k {
+                while self.descend_first_byte() {
+                    if self.path().len() == base_idx + k { return true }
+                }
+            }
+            if self.to_next_sibling_byte() {
+                if self.path().len() == base_idx + k { return true }
+                continue
+            }
+            while self.path().len() > base_idx {
+                self.ascend_byte();
+                if self.path().len() == base_idx { return false }
+                if self.to_next_sibling_byte() { break }
+            }
+        }
+    }
+
     /// See [ZipperWriting::insert_prefix]
     pub fn insert_prefix<K: AsRef<[u8]>>(&mut self, prefix: K) -> bool {
         let prefix = prefix.as_ref();
