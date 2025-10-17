@@ -79,7 +79,7 @@ use crate::gxhash::{HashMap, HashMapExt};
 
 /// Provides methods to perform a catamorphism on types that can reference or contain a trie
 pub trait Catamorphism<V> {
-    /// Applies a catamorphism to the trie descending from the zipper's root, running the `alg_f` at every
+    /// Applies a "stepping" catamorphism to the trie descending from the zipper's root, running the `alg_f` at every
     /// step (at every byte)
     ///
     /// ## Arguments to `alg_f`:
@@ -145,17 +145,16 @@ pub trait Catamorphism<V> {
     fn into_cata_jumping_side_effect_fallible<W, Err, AlgF>(self, alg_f: AlgF) -> Result<W, Err>
         where AlgF: FnMut(&ByteMask, &mut [W], usize, Option<&V>, &[u8]) -> Result<W, Err>;
 
-    /// Applies a catamorphism to the trie descending from the zipper's root, running the `alg_f` at every
-    /// step (at every byte)
+    /// Applies a **cached**, **stepping**, catamorphism to the trie descending from the zipper's
+    /// root, running the `alg_f` at every step (at every byte)
     ///
-    /// The arguments are the same as `into_cata_side_effect`, and this function will re-use
-    /// previous calculations, if the mapping for the node was previously computed.
-    /// This happens when the nodes are shared in different parts of the trie.
+    /// This method may re-use previous calculations of `W`, if the value for a shared subtrie has
+    /// been previously computed.
     ///
-    /// XXX(igor): the last argument to AlgF (path) makes caching invalid
+    /// GOAT, document arguments to `alg_f`
+    ///
+    /// GOAT.  Fix this!!  XXX(igor): the last argument to AlgF (path) makes caching invalid
     /// since the user can calculate values of W depending on path.
-    ///
-    /// We're leaving this for testing purposes, but we should not expose this outside.
     fn into_cata_cached<W, AlgF>(self, alg_f: AlgF) -> W
         where
             W: Clone,
@@ -180,14 +179,13 @@ pub trait Catamorphism<V> {
     /// A "jumping" catamorphism is a form of catamorphism where the `alg_f` "jumps over" (isn't called for)
     /// path bytes in the trie where there isn't either a `value` or a branch where `children.len() > 1`.
     ///
-    /// The arguments are the same as `into_cata_jumping_side_effect`, and this function will re-use
-    /// previous calculations, if the mapping for the node was previously computed.
-    /// This happens when the nodes are shared in different parts of the trie.
+    /// This method may re-use previous calculations of `W`, if the value for a shared subtrie has
+    /// been previously computed.
     ///
-    /// XXX(igor): the last argument to AlgF (path) makes caching invalid
+    /// GOAT, document arguments to `alg_f`
+    ///
+    /// GOAT FIX this!!  XXX(igor): the last argument to AlgF (path) makes caching invalid
     /// since the user can calculate values of W depending on path.
-    ///
-    /// We're leaving this for testing purposes, but we should not expose this outside.
     fn into_cata_jumping_cached<W, AlgF>(self, alg_f: AlgF) -> W
         where
             W: Clone,
