@@ -3334,6 +3334,27 @@ mod tests {
     }
 
     #[test]
+    fn write_zipper_meet_k_path_into_test1() {
+        let keys = [
+            "123:abc:Bob",
+            "123:abc:Jim",
+            "123:abc:Pam",
+            "123:abc:Sue",
+            "123:def:Nan",
+            "123:def:Mel",
+            "123:def:Bob",
+            "123:def:Sue"];
+        let mut map: PathMap<()> = keys.iter().map(|k| (k, ())).collect();
+        let mut wz = map.write_zipper_at_path(b"123:");
+
+        wz.meet_k_path_into(4, true);
+
+        assert_eq!(map.val_count(), 2);
+        assert_eq!(map.get(b"123:Bob"), Some(&()));
+        assert_eq!(map.get(b"123:Sue"), Some(&()));
+    }
+
+    #[test]
     fn write_zipper_insert_prefix_test() {
         let keys = [
             "123:Bob:Fido",
