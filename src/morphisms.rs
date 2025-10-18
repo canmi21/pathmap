@@ -151,7 +151,21 @@ pub trait Catamorphism<V> {
     /// This method may re-use previous calculations of `W`, if the value for a shared subtrie has
     /// been previously computed.
     ///
-    /// GOAT, document arguments to `alg_f`
+    /// ## Arguments to `alg_f`:
+    /// `(child_mask: &`[`ByteMask`]`, children: &mut [W], val: Option<&V>`
+    ///
+    /// - `child_mask`: A [`ByteMask`] indicating the corresponding byte for each downstream branche in
+    /// `children`.
+    ///
+    /// - `children`: A slice containing all the `W` values from previous invocations of `alg_f` for
+    /// downstream branches.
+    ///
+    /// - `value`: A value associated with a given path in the trie, or `None` if the trie has no value at
+    /// that path.
+    ///
+    /// ## Behavior
+    ///
+    /// The focus position of the zipper will be ignored and it will be immediately reset to the root.
     fn into_cata_cached<W, AlgF>(self, alg_f: AlgF) -> W
         where
             W: Clone,
@@ -179,7 +193,24 @@ pub trait Catamorphism<V> {
     /// This method may re-use previous calculations of `W`, if the value for a shared subtrie has
     /// been previously computed.
     ///
-    /// GOAT, document arguments to `alg_f`
+    /// ## Arguments to `alg_f`:
+    /// `(child_mask: &`[`ByteMask`]`, children: &mut [W], value: Option<&V>, sub_path: &[u8]`
+    ///
+    /// - `sub_path`: A slice of path bytes for which the `alf_f` will not be called.  Consider the
+    /// trie below:
+    ///
+    /// ```txt
+    /// ─── c ─── o ─── m ─┬─ e ─── t               → "comet"
+    ///                    ├─ b ─── o               → "combo"
+    ///                    └─ f ─── o ─── r ─── t   → "comfort"
+    /// ```
+    /// The `alg_f` would be called 4 times for this trie.
+    /// 1. `alg_f(ByteMask::EMPTY, &[], Some(&()), b"t")`
+    /// 2. `alg_f(ByteMask::EMPTY, &[], Some(&()), b"o")`
+    /// 3. `alg_f(ByteMask::EMPTY, &[], Some(&()), b"ort")`
+    /// 4. `alg_f(ByteMask::from_iter([b'e', b'b', b'f']), &[..], None, b"com")`
+    ///
+    /// See [into_cata_cached](Catamorphism::into_cata_cached) for explanation of other arguments and behavior
     fn into_cata_jumping_cached<W, AlgF>(self, alg_f: AlgF) -> W
         where
             W: Clone,
