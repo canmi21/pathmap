@@ -384,7 +384,7 @@ impl<'a, Z, V: 'a> Catamorphism<V> for Z where Z: Zipper + ZipperReadOnlyConditi
             AlgF: Fn(&ByteMask, &mut [W], Option<&V>) -> Result<W, E>
     {
         into_cata_cached_body::<Self, V, W, E, _, DoCache, false, false>(self, |mask, children, val, sub_path, _debug_path| {
-            debug_assert!(sub_path.len() <= 1);
+            debug_assert_eq!(sub_path.len(), 0);
             alg_f(mask, children, val)
         })
     }
@@ -1401,7 +1401,7 @@ mod tests {
             // byte of the sub-path, or with the next parent path byte.
             //
             //This code works fine for both stepping and jumping, but is a little more complicated
-            // than the stepping version
+            // than the stepping-only version
             let pure_alg = |child_mask: &ByteMask, children: &mut [(bool, u32)], val: Option<&()>, sub_path: &[u8]| {
                 let mut sum = 0;
                 if val.is_some() {
