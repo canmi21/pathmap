@@ -229,17 +229,6 @@ pub trait Catamorphism<V> {
         where
             W: Clone,
             AlgF: Fn(&ByteMask, &mut [W], Option<&V>, &[u8]) -> Result<W, E>;
-
-    /// A version of [`into_cata_jumping_cached`](Catamorphism::into_cata_jumping_cached) where
-    /// the full path is available to the closure; **For debugging purposes only**
-    ///
-    /// Using data from the full path for your algorithm **will** lead to incorrect behavior.
-    /// You must either adapt your algorithm not to require full path data or use the one of
-    /// the `_side_effect` methods.
-    fn into_cata_jumping_cached_fallible_debug<W, E, AlgF>(self, alg_f: AlgF) -> Result<W, E>
-        where
-            W: Clone,
-            AlgF: Fn(&ByteMask, &mut [W], Option<&V>, &[u8], &[u8]) -> Result<W, E>;
 }
 
 //TODO GOAT!!: It would be nice to get rid of this Default bound on all morphism Ws.  In this case, the plan
@@ -396,13 +385,6 @@ impl<'a, Z, V: 'a> Catamorphism<V> for Z where Z: Zipper + ZipperReadOnlyConditi
         into_cata_cached_body::<Self, V, W, E, _, DoCache, true, false>(self,
             |mask, children, val, sub_path, _debug_path| alg_f(mask, children, val, sub_path))
     }
-    fn into_cata_jumping_cached_fallible_debug<W, E, AlgF>(self, alg_f: AlgF) -> Result<W, E>
-    where
-        W: Clone,
-        AlgF: Fn(&ByteMask, &mut [W], Option<&V>, &[u8], &[u8]) -> Result<W, E>
-    {
-        into_cata_cached_body::<Self, V, W, E, _, DoCache, true, true>(self, alg_f)
-    }
 }
 
 impl<V: 'static + Clone + Send + Sync + Unpin, A: Allocator + 'static> Catamorphism<V> for PathMap<V, A> {
@@ -433,14 +415,6 @@ impl<V: 'static + Clone + Send + Sync + Unpin, A: Allocator + 'static> Catamorph
     {
         let rz = self.into_read_zipper(&[]);
         rz.into_cata_jumping_cached_fallible(alg_f)
-    }
-    fn into_cata_jumping_cached_fallible_debug<W, E, AlgF>(self, alg_f: AlgF) -> Result<W, E>
-        where
-            W: Clone,
-            AlgF: Fn(&ByteMask, &mut [W], Option<&V>, &[u8], &[u8]) -> Result<W, E>
-    {
-        let rz = self.into_read_zipper(&[]);
-        rz.into_cata_jumping_cached_fallible_debug(alg_f)
     }
 }
 
@@ -703,7 +677,7 @@ where
 /// without caching, and avoid polluting every public interface with `W: Clone`.
 ///
 /// This is not intended to be a public interface.
-trait CacheStrategy<W> {
+pub(crate) trait CacheStrategy<W> {
     /// Enable/disable the caching
     const CACHING: bool;
 
@@ -745,14 +719,14 @@ impl<W> CacheStrategy<W> for NoCache {
 }
 
 /// Cache is enabled for `W: Clone`
-struct DoCache;
+pub(crate) struct DoCache;
 
 impl<W: Clone> CacheStrategy<W> for DoCache {
     const CACHING: bool = true;
     fn clone(w: &W) -> W { w.clone() }
 }
 
-fn into_cata_cached_body<'a, Z, V: 'a, W, E, AlgF, Cache, const JUMPING: bool, const DEBUG_PATH: bool>(
+pub(crate) fn into_cata_cached_body<'a, Z, V: 'a, W, E, AlgF, Cache, const JUMPING: bool, const DEBUG_PATH: bool>(
     mut zipper: Z, mut alg_f: AlgF
 ) -> Result<W, E>
     where

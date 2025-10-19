@@ -3,6 +3,9 @@
 mod diff_zipper;
 pub use diff_zipper::DiffZipper;
 
+mod morphism_debug;
+pub use morphism_debug::CatamorphismDebug;
+
 extern crate alloc;
 use alloc::borrow::Cow;
 
