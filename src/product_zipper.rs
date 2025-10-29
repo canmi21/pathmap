@@ -201,8 +201,8 @@ impl<'trie, V: Clone + Send + Sync + Unpin + 'trie, A: Allocator + 'trie> Zipper
         self.z.reset()
     }
     fn val_count(&self) -> usize {
-        //GOAT!!!  I think val_count properly belongs in the morphisms module
-        unimplemented!()
+        assert!(self.focus_factor() == self.factor_count() - 1);
+        self.z.val_count()
     }
     fn descend_to_existing<K: AsRef<[u8]>>(&mut self, k: K) -> usize {
         let k = k.as_ref();
@@ -874,7 +874,7 @@ mod tests {
     use crate::utils::ByteMask;
     use crate::zipper::*;
     use crate::PathMap;
-    use crate::morphisms::{Catamorphism, SplitCata};
+    use crate::morphisms::Catamorphism;
 
     macro_rules! impl_product_zipper_tests {
         ($mod:ident, $ProductZipper:ident, $convert:ident) => {
@@ -1002,6 +1002,8 @@ mod tests {
     }
 
     /// Tests a 3-level product zipper, with a catamorphism, and no funny-business in the tries
+    ///
+    ///TODO: Port this test away from the deprecated `SplitCata` / `SplitCataJumping` API
     #[test]
     fn product_zipper_test2() {
         let lpaths = ["abcdefghijklmnopqrstuvwxyz".as_bytes(), "arrow".as_bytes(), "x".as_bytes()];
@@ -1017,7 +1019,8 @@ mod tests {
 
         let mut map_cnt = 0;
         let mut collapse_cnt = 0;
-        p.into_cata_side_effect(SplitCata::new(
+        #[allow(deprecated)]
+        p.into_cata_side_effect(crate::morphisms::SplitCata::new(
             |_, _p| {
                 // println!("Map  {}", String::from_utf8_lossy(_p));
                 map_cnt += 1;
@@ -1034,6 +1037,8 @@ mod tests {
     }
 
     /// Same as `product_zipper_test2` but with tries that contain values along the paths
+    ///
+    ///TODO: Port this test away from the deprecated `SplitCata` / `SplitCataJumping` API
     #[test]
     fn product_zipper_test3() {
         let lpaths = ["abcdefghijklmnopqrstuvwxyz".as_bytes(), "arrow".as_bytes(), "x".as_bytes(), "arr".as_bytes()];
@@ -1049,7 +1054,8 @@ mod tests {
 
         let mut map_cnt = 0;
         let mut collapse_cnt = 0;
-        p.into_cata_side_effect(SplitCata::new(
+        #[allow(deprecated)]
+        p.into_cata_side_effect(crate::morphisms::SplitCata::new(
             |_, _p| {
                 // println!("Map  {}", String::from_utf8_lossy(_p));
                 map_cnt += 1;

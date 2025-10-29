@@ -16,13 +16,13 @@ pub use fast_slice_utils::find_prefix_overlap;
 pub struct ByteMask(pub [u64; 4]);
 
 impl ByteMask {
-    pub const EMPTY: ByteMask = Self(empty_mask());
+    pub const EMPTY: ByteMask = Self([0u64; 4]);
     pub const FULL: ByteMask = Self([!0u64; 4]);
 
     /// Create a new empty ByteMask
     #[inline]
     pub const fn new() -> Self {
-        Self(empty_mask())
+        Self::EMPTY
     }
     /// Unwraps the `ByteMask` type to yield the inner array
     #[inline]
@@ -32,7 +32,7 @@ impl ByteMask {
     /// Create an iterator over every byte, in ascending order
     #[inline]
     pub fn iter(&self) -> ByteMaskIter {
-        self.byte_mask_iter()
+        ByteMaskIter::from(self.0)
     }
 
     /// Returns how many set bits precede the requested bit
@@ -250,6 +250,7 @@ impl From<ByteMask> for [u64; 4] {
     }
 }
 
+#[allow(deprecated)]
 impl IntoByteMaskIter for ByteMask {
     #[inline]
     fn byte_mask_iter(self) -> ByteMaskIter {
@@ -467,16 +468,20 @@ pub struct ByteMaskIter {
     mask: [u64; 4],
 }
 
+/// Iterate over a [u64; 4].  Deprecated in favor [`ByteMask`]
+#[deprecated]
 pub trait IntoByteMaskIter {
     fn byte_mask_iter(self) -> ByteMaskIter;
 }
 
+#[allow(deprecated)]
 impl IntoByteMaskIter for [u64; 4] {
     fn byte_mask_iter(self) -> ByteMaskIter {
         ByteMaskIter::from(self)
     }
 }
 
+#[allow(deprecated)]
 impl IntoByteMaskIter for &[u64; 4] {
     fn byte_mask_iter(self) -> ByteMaskIter {
         ByteMaskIter::from(*self)
@@ -564,13 +569,14 @@ fn bitmask_algebraic_result(result: [u64; 4], self_mask: &[u64; 4], other_mask: 
 
 /// Returns a new empty mask
 #[inline]
+#[deprecated]
 pub const fn empty_mask() -> [u64; 4] {
     [0; 4]
 }
 
 #[test]
 fn bit_utils_test() {
-    let mut mask = empty_mask();
+    let mut mask = ByteMask::EMPTY;
     assert_eq!(mask.count_bits(), 0);
     assert_eq!(mask.is_empty_mask(), true);
 

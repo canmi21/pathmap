@@ -512,7 +512,7 @@ impl<V: Clone + Send + Sync + Unpin, A: Allocator> PathMap<V, A> {
     //GOAT, do we need to do anything to make sure Merkleization and this hash method are in harmony?
     pub fn hash<VHash : Fn(&V) -> u128>(&self, vhash: VHash) -> u128 {
         unsafe {
-        self.read_zipper().into_cata_cached(|bm, hs, mv, _| {
+        self.read_zipper().into_cata_cached(|bm, hs, mv| {
             let mut state = [0u8; 48];
             state[0..16].clone_from_slice(gxhash128(slice_from_raw_parts(bm.0.as_ptr() as *const u8, 32).as_ref().unwrap(), 0b0100110001110010000010011111010011100011010000101101111001100110i64).to_le_bytes().as_slice());
             state[16..32].clone_from_slice(gxhash128(slice_from_raw_parts(hs.as_ptr() as *const u8, 16*hs.len()).as_ref().unwrap(), 0b0111010001001011011011011111010110111011111101100110101100010000i64).to_le_bytes().as_slice());

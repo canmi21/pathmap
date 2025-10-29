@@ -18,6 +18,8 @@
     - [Multi-threading](./1.03.01_multithreading.md)
 - [Abstract Zippers and Virtual Tries](./1.04.00_abstract_zippers.md)
 - [Morphisms](./1.05.00_morphisms.md)
+    - [Catamorphism](./1.05.01_catamorphism.md)
+    - [Anamorphism](./1.05.02_anamorphism.md)
 - [Serialization and Deserialization](./1.06.00_serialize_deserilize.md)
 
 # Building a Database on Pathmap
@@ -44,4 +46,5 @@ GOAT: Multi-Threaded Map-Reduce
 - [Smart Ptr & Resource Mgmt Improvement](./A.0002_smart_ptr_upgrade.md)
 - [Lattice / Policy API Improvment](./A.0003_policy_API.md)
 - [Scouting WriteZipper](./A.0004_scouting_write_zipper.md)
+- [Cached Cata and Paths](./A.0005_cached_cata_and_path_visibility.md)
 
