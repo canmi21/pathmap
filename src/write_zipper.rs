@@ -3356,7 +3356,7 @@ mod tests {
 
     #[test]
     fn write_zipper_meet_k_path_into_test2() {
-        // {foo, bar}: e0, {foo, cux, baz}: e1, {cux}: e2
+        // keys := {foo, bar}.e0 \/ {foo, cux, baz}.e1 \/ {cux}.e2
         let keys = [
             b"123:foo:e0",
             b"123:foo:e1",
@@ -3367,14 +3367,12 @@ mod tests {
         let mut map: PathMap<()> = PathMap::from_iter(keys);
         let mut wz = map.write_zipper_at_path(b"123:");
 
+        // /\(keys <| {foo, bar}) == {e0}
         wz.restrict(&PathMap::from_iter([&b"foo"[..], &b"bar"[..]]).into_read_zipper(&[]));
         wz.meet_k_path_into(4, true);
-
         drop(wz);
-        println!("wz {:?}", map);
-        // assert_eq!(map.val_count(), 2);
-        // assert_eq!(map.get(b"123:Bob"), Some(&()));
-        // assert_eq!(map.get(b"123:Sue"), Some(&()));
+        assert_eq!(map.val_count(), 1);
+        assert_eq!(map.get(b"123:e0"), Some(&()));
     }
 
     #[test]
