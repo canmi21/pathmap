@@ -1124,7 +1124,12 @@ impl<V: Clone + Send + Sync, A: Allocator, Cf: CoFree<V=V, A=A>> TrieNode<V, A> 
             0 => self.values.len(),
             _ => {
                 //There are two ways we could get a length >=1 key passed in. 1. The entry is a lone value (no children in the CF) or 2. The entry doesn't exist.  Either way, there are no onward child paths
-                debug_assert!(self.get(key[0]).and_then(|cf| cf.rec()).is_none());
+                debug_assert!({
+                    match self.get(key[0]).and_then(|cf| cf.rec()) {
+                        Some(child_node) => child_node.as_tagged().node_is_empty(),
+                        None => true,
+                    }
+                });
                 0
             }
         }

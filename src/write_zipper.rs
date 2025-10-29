@@ -2101,7 +2101,21 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
             let mut focus_node = self.focus_stack.top_mut().unwrap();
             let node_key_start = self.key.node_key_start();
             let next_node_key = &path_buf[node_key_start..node_key_end];
-            let removed = focus_node.node_remove_all_branches(next_node_key, true);
+
+            //The path to the node or subnode we need to remove might not be within the focus node,
+            // so get the actual node that we want to remove the contents from
+            let (mut container_node, next_node_key) = match focus_node.node_get_child_mut(next_node_key) {
+                Some((consumed_bytes, new_focus)) => {
+                    if consumed_bytes < next_node_key.len() {
+                        (new_focus.make_mut(), &next_node_key[consumed_bytes..])
+                    } else {
+                        (focus_node, next_node_key)
+                    }
+                },
+                None => (focus_node, next_node_key)
+            };
+
+            let removed = container_node.node_remove_all_branches(next_node_key, true);
 
             //If we got here, we should have either removed something, or we should be at the top of the zipper
             debug_assert!(removed || self.focus_stack.depth()==1);
@@ -4269,14 +4283,23 @@ mod tests {
         assert_eq!(wz.child_count(), 4);
     }
 
+    /// Tests an edge case in pruning where we end up needing to prune to a point in the
+    /// middle of a multi-node path
     #[test]
     fn write_zipper_prune_test8() {
-        let keys = [
+        let paths = [
             "123:abc:Bob", "123:abc:Jim", "123:abc:Pam", "123:abc:Sue",
             "123:def:Bob", "123:def:Mel", "123:def:Nan", "123:def:Sue",
             "123:ghi:Jan", "123:ghi:Jen", "123:ghi:Jim", "123:ghi:Jon",
+            "123:g1", "123:g2", "123:g3",
         ];
-        let mut map: PathMap<()> = keys.iter().map(|k| (k, ())).collect();
+        let mut map = PathMap::<()>::new();
+        for path in paths {
+            map.create_path(path);
+        }
+        map.prune_path(b"123:g1");
+        map.prune_path(b"123:g2");
+        map.prune_path(b"123:g3");
         let mut wz = map.write_zipper_at_path(b"123:");
 
         wz.descend_to(b"abc:");
@@ -4291,8 +4314,8 @@ mod tests {
         assert_eq!(wz.child_mask(), ByteMask::from(b'J'));
         assert_eq!(wz.child_count(), 1);
         let _ = wz.take_map(true);
-        assert_eq!(wz.child_count(), 0);
         assert_eq!(wz.child_mask(), ByteMask::EMPTY);
+        assert_eq!(wz.child_count(), 0);
     }
 
     /// Tests [`ZipperPriv::get_focus`] and [`ZipperPriv::try_borrow_focus`] internal APIs on [`WriteZipperCore`]
