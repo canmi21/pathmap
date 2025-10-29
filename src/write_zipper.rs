@@ -4269,6 +4269,32 @@ mod tests {
         assert_eq!(wz.child_count(), 4);
     }
 
+    #[test]
+    fn write_zipper_prune_test8() {
+        let keys = [
+            "123:abc:Bob", "123:abc:Jim", "123:abc:Pam", "123:abc:Sue",
+            "123:def:Bob", "123:def:Mel", "123:def:Nan", "123:def:Sue",
+            "123:ghi:Jan", "123:ghi:Jen", "123:ghi:Jim", "123:ghi:Jon",
+        ];
+        let mut map: PathMap<()> = keys.iter().map(|k| (k, ())).collect();
+        let mut wz = map.write_zipper_at_path(b"123:");
+
+        wz.descend_to(b"abc:");
+        let _ = wz.take_map(true);
+        assert_eq!(wz.move_to_path(b"def:"), 0);
+        assert_eq!(wz.child_mask(), ByteMask::from_iter([b'B', b'M', b'N', b'S',]));
+        assert_eq!(wz.child_count(), 4);
+        let _ = wz.take_map(true);
+        assert_eq!(wz.child_count(), 0);
+        assert_eq!(wz.child_mask(), ByteMask::EMPTY);
+        assert_eq!(wz.move_to_path(b"ghi:"), 0);
+        assert_eq!(wz.child_mask(), ByteMask::from(b'J'));
+        assert_eq!(wz.child_count(), 1);
+        let _ = wz.take_map(true);
+        assert_eq!(wz.child_count(), 0);
+        assert_eq!(wz.child_mask(), ByteMask::EMPTY);
+    }
+
     /// Tests [`ZipperPriv::get_focus`] and [`ZipperPriv::try_borrow_focus`] internal APIs on [`WriteZipperCore`]
     #[test]
     fn write_zipper_focus_nodes() {
