@@ -1522,23 +1522,27 @@ impl <'a, 'path, V: Clone + Send + Sync + Unpin, A: Allocator + 'a> WriteZipperC
     pub fn meet_k_path_into(&mut self, byte_cnt: usize, prune: bool) -> bool where V: Lattice {
         //GOAT, this is a provisional implementation with the wrong performance characteristics, but should have the right behavior
         let temp_map = if self.descend_first_k_path(byte_cnt) {
-            let mut temp_map = self.take_map(prune).unwrap_or_else(|| PathMap::new_in(self.alloc.clone()));
+            let mut temp_map = self.take_map(false).unwrap_or_else(|| PathMap::new_in(self.alloc.clone()));
 
             while self.to_next_k_path(byte_cnt) {
                 if temp_map.is_empty() {
                     self.ascend(byte_cnt);
                     break;
                 }
-                let other_map = self.take_map(prune).unwrap_or_else(|| PathMap::new_in(self.alloc.clone()));
+                let other_map = self.take_map(false).unwrap_or_else(|| PathMap::new_in(self.alloc.clone()));
                 temp_map = temp_map.meet(&other_map);
             }
             temp_map
         } else {
             PathMap::new_in(self.alloc.clone())
         };
-        let was_non_empty = !temp_map.is_empty();
-        self.graft_map(temp_map);
-        was_non_empty
+        if temp_map.is_empty() {
+            self.remove_branches(prune);
+            false
+        } else {
+            self.graft_map(temp_map);
+            true
+        }
     }
 
     /// GOAT.  Trash impl of k_path iteration, to facilitate provisional impl of `meet_k_path_into`
