@@ -838,6 +838,25 @@ for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
         SecondaryZ: ZipperIteration,
 { } //Use the default impl for all methods
 
+
+pub trait ProductZipperLike : ZipperMoving + Zipper + ZipperAbsolutePath + ZipperIteration {
+    fn path_indices(&self) -> &[usize];
+}
+
+impl <'factor_z, 'trie, V : crate::TrieValue> ProductZipperLike for ProductZipper<'factor_z, 'trie, V> {
+    fn path_indices(&self) -> &[usize] {
+        ProductZipper::path_indices(self)
+    }
+}
+
+impl <'trie, PZ, SZ, V : crate::TrieValue> ProductZipperLike for ProductZipperG<'trie, PZ, SZ, V> where
+    PZ : ZipperMoving + Zipper + ZipperAbsolutePath + ZipperIteration,
+    SZ : ZipperMoving + Zipper + ZipperAbsolutePath + ZipperIteration {
+    fn path_indices(&self) -> &[usize] {
+        ProductZipperG::path_indices(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use fast_slice_utils::find_prefix_overlap;
