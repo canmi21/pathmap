@@ -329,7 +329,7 @@ impl<'prefix, Z> ZipperMoving for PrefixZipper<'prefix, Z>
     }
 
     fn val_count(&self) -> usize {
-        unimplemented!("method will probably get removed")
+        self.source.val_count()
     }
 
     fn descend_to_existing<K: AsRef<[u8]>>(&mut self, patho: K) -> usize {
