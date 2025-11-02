@@ -7,19 +7,19 @@ PathMap is optimized for large data sets and can be used efficiently in a multi-
 
 This crate provides the low-level data structure for [MORK](https://github.com/trueagi-io/MORK/)
 
+## Usage
+
+Check out the [book](https://pathmap-rs.github.io/).
+
 ## Getting Started
 
-Until we publish version `0.1.0` on [crates.io](crates.io), you'll need to pull pathmap from github by including something like this in your cargo.toml file:
+Until we publish version `0.1.0` on [crates.io](http://crates.io/), you'll need to pull pathmap from github by including something like this in your cargo.toml file:
 
 ```toml
 pathmap = { git = "https://github.com/Adam-Vandervorst/PathMap.git" }
 ```
 
 **NOTE** This is pre-alpha software and there will be API churn.  Make a fork if you need to be insulated from this churn until the initial release.
-
-## Usage
-
-Check out the [book](https://pathmap-rs.github.io/).
 
 ## Optional Cargo features
 
