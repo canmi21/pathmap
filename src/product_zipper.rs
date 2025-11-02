@@ -839,7 +839,17 @@ for ProductZipperG<'trie, PrimaryZ, SecondaryZ, V>
 { } //Use the default impl for all methods
 
 
+/// Implemented on both [ProductZipper] types to provide abstraction across them
 pub trait ProductZipperLike : ZipperMoving + Zipper + ZipperAbsolutePath + ZipperIteration {
+    /// Returns a slice of the path indices that represent the end-points of the portion of the path from each
+    /// factor
+    ///
+    /// The returned slice will have a length of [`focus_factor`](Self::focus_factor), so the factor
+    /// containing the current focus has will not be included.
+    ///
+    /// Indices will be offsets into the buffer returned by [path](ZipperMoving::path).  To get an offset into
+    /// [origin_path](ZipperAbsolutePath::origin_path), add the length of the prefix path from
+    /// [root_prefix_path](ZipperAbsolutePath::root_prefix_path).
     fn path_indices(&self) -> &[usize];
 }
 
