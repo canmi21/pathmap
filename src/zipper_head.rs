@@ -1124,6 +1124,26 @@ mod tests {
         assert_eq!(rz1.val_count(), 2);
     }
 
+    /// A test that mimicks the usage of ZipperHead inside MORK's MM2 evaluator
+    #[test]
+    fn zipper_headj() {
+        let paths: [&[u8]; _] = [
+            &[4, 193, 95, 1, 193, 95, 193, 95, 193, 95],
+            &[4, 193, 95, 2, 193, 95, 193, 95, 193, 95, 193, 95],
+            &[4, 196, 101, 120, 101, 99, 193, 95, 2, 193, 44, 196, 116, 114, 117, 101, 2, 193, 44, 4, 196, 95, 95, 95, 95, 193, 95, 1, 193, 95, 1, 193, 95],
+            &[196, 116, 114, 117, 101],
+        ];
+        let mut space = PathMap::<()>::from_iter(paths.into_iter());
+
+        space.remove([4, 196, 101, 120, 101, 99, 193, 95, 2, 193, 44, 196, 116, 114, 117, 101, 2, 193, 44, 4, 196, 95, 95, 95, 95, 193, 95, 1, 193, 95, 1, 193, 95]);
+
+        let mut read_copy = space.clone();
+        let zh = space.zipper_head();
+        read_copy.insert([4, 196, 101, 120, 101, 99, 193, 95, 2, 193, 44, 196, 116, 114, 117, 101, 2, 193, 44, 4, 196, 95, 95, 95, 95, 193, 95, 1, 193, 95, 1, 193, 95], ());
+
+        let _wz = zh.write_zipper_at_exclusive_path([4, 196, 95, 95, 95, 95, 193, 95, 1, 193, 95, 1, 193, 95]).unwrap();
+    }
+
     #[test]
     fn hierarchical_zipper_heads1() {
         let mut map = PathMap::<isize>::new();

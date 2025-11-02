@@ -285,10 +285,10 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
         };
         mask as u16
     }
-    /// Constructs a header for slot0
+    /// A mask that has all 0 for the slot1 bits.  &= this mask to clear slot1
     #[inline]
     fn header1_inverse() -> u16 {
-        0xafe0
+        0xafc0
     }
     /// Returns `true` if slot_1 is available to be filled with an entry, otherwise `false`.  The reason
     /// `!is_used_1()` is insufficient is because `slot_1` may be empty but the key storage may be fully
@@ -664,6 +664,9 @@ impl<V: Clone + Send + Sync, A: Allocator> LineListNode<V, A> {
         unsafe{ core::ptr::copy_nonoverlapping(key.as_ptr(), dst_ptr, key.len()); }
         self.val_or_child1 = payload;
         self.header |= Self::header1(is_child_ptr, key.len());
+        debug_assert_eq!(self.key_len_1(), key.len());
+        debug_assert_eq!(self.is_child_ptr::<1>(), is_child_ptr);
+        debug_assert_eq!(self.is_used::<1>(), true);
     }
     #[inline]
     pub(crate) unsafe fn set_payload_owned<const SLOT: usize>(&mut self, key: &[u8], payload: ValOrChild<V, A>) where V: Clone {
