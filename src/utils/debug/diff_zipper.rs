@@ -258,16 +258,8 @@ impl<A: Zipper + ZipperIteration, B: Zipper + ZipperIteration> ZipperIteration f
     }
 }
 
-//This is a bit cheezy, but we don't have a trait for ProductZipper inspection methods, and
-// I don't see adding one any time soon.
-impl<V, A, Primary, Secondary> DiffZipper<ProductZipper<'_, '_, V, A>, ProductZipperG<'_, Primary, Secondary, V>>
-where
-A: Allocator,
-V: Clone + Send + Sync + Unpin,
-Primary: ZipperValues<V> + ZipperAbsolutePath + ZipperPathBuffer,
-Secondary: ZipperValues<V> + ZipperAbsolutePath + ZipperPathBuffer,
-{
-    pub fn path_indices(&self) -> &[usize] {
+impl <PZL : ProductZipperLike, PZR : ProductZipperLike> ProductZipperLike for DiffZipper<PZL, PZR> {
+    fn path_indices(&self) -> &[usize] {
         let a = self.a.path_indices();
         let b = self.b.path_indices();
         assert_eq!(a, b);
