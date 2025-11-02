@@ -9,9 +9,17 @@ This crate provides the low-level data structure for [MORK](https://github.com/t
 
 ## Getting Started
 
-GOAT TODO!
+Until we publish version `0.1.0` on [crates.io](crates.io), you'll need to pull pathmap from github by including something like this in your cargo.toml file:
 
-For more details, check out the [book](GOAT! need to host somewhere)
+```toml
+pathmap = { git = "https://github.com/Adam-Vandervorst/PathMap.git" }
+```
+
+**NOTE** This is pre-alpha software and there will be API churn.  Make a fork if you need to be insulated from this churn until the initial release.
+
+## Usage
+
+Check out the [book](https://pathmap-rs.github.io/).
 
 ## Optional Cargo features
 
