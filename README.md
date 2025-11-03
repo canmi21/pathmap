@@ -7,16 +7,26 @@ PathMap is optimized for large data sets and can be used efficiently in a multi-
 
 This crate provides the low-level data structure for [MORK](https://github.com/trueagi-io/MORK/)
 
+The crate name **`pathmap`** was previously used by **Canmi** for a different project —  
+[`kvmap`](https://github.com/canmi21/kvmap) *(formerly published as `pathmap`)*,  
+which is a **SQL-driven key-value store**.
+
+This repository is the **official PathMap** project by Adam Vandervorst and team,  
+providing a high-performance map/trie data structure for path manipulation.
+
+If you are looking for Canmi’s SQL-based KVMap project, please visit:  
+[https://github.com/canmi21/kvmap](https://github.com/canmi21/kvmap)
+
 ## Usage
 
 Check out the [book](https://pathmap-rs.github.io/).
 
 ## Getting Started
 
-Until we publish version `0.1.0` on [crates.io](http://crates.io/), you'll need to pull pathmap from github by including something like this in your cargo.toml file:
+Add the following to your Cargo.toml:
 
 ```toml
-pathmap = { git = "https://github.com/Adam-Vandervorst/PathMap.git" }
+pathmap = "0.1"
 ```
 
 **NOTE** This is pre-alpha software and there will be API churn.  Make a fork if you need to be insulated from this churn until the initial release.
